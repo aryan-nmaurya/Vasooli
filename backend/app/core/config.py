@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     razorpay_key_id: str
     razorpay_key_secret: str
     razorpay_webhook_secret: str
+    #: Minimum gap between Razorpay API calls. Test mode rate-limits aggressively —
+    #: a 60-invoice batch fired flat out trips it within a few requests.
+    razorpay_min_request_interval_seconds: float = 1.5
 
     # --- Gemini via Google AI Studio ---
     # Model IDs are config, not literals: a retired or mistyped ID is a .env edit.

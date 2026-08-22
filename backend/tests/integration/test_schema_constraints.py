@@ -262,11 +262,11 @@ def test_audit_log_survives_an_invoiceless_event(session):
 
 def test_one_virtual_account_per_invoice(session, invoice):
     """A retried provisioning run must not create a second payable account."""
-    from app.models import VirtualAccount
+    from app.models import PaymentLink
 
     for i in range(2):
         session.add(
-            VirtualAccount(
+            PaymentLink(
                 invoice_id=invoice.id,
                 razorpay_va_id=f"va_{uuid.uuid4().hex[:10]}_{i}",
                 razorpay_customer_id="cust_1",

@@ -33,6 +33,13 @@ from app.core.constants import (
 
 DATA_DIR = pathlib.Path(__file__).resolve().parents[1] / "data"
 
+#: Razorpay refuses payment links above this amount on this merchant's account
+#: ("amount exceeds maximum amount allowed"). Verified empirically: ₹50,000 is
+#: accepted, ₹60,000 is not. This is an account limit, not a business rule — a real
+#: B2B ledger would carry far larger invoices. Customer averages below are chosen so
+#: that even a cash-constrained invoice at 3x the customer's norm stays under it.
+MAX_INVOICE_INR = 50_000
+
 Outcome = str  # would_pay_anyway | needs_one_nudge | needs_multiple | would_default
 
 
@@ -196,7 +203,8 @@ def _amount(profile: Profile, avg_inr: int, rng: random.Random) -> Decimal:
     else:
         multiplier = Decimal(str(round(rng.uniform(0.6, 1.4), 2)))
     raw = Decimal(avg_inr) * multiplier
-    return Decimal(int(raw / 500) * 500)  # round to a plausible ₹500 boundary
+    rounded = Decimal(int(raw / 500) * 500)  # round to a plausible ₹500 boundary
+    return min(rounded, Decimal(MAX_INVOICE_INR))
 
 
 REPLY_TEMPLATES = {
@@ -235,7 +243,7 @@ def generate(count: int, seed: int, *, include_boundaries: bool) -> tuple[list[d
             days_over = rng.randint(TIER_1_DAYS_OVERDUE, 35)
 
         history = _history(profile, rng)
-        avg_inr = rng.choice([15_000, 22_000, 35_000, 48_000, 60_000, 85_000])
+        avg_inr = rng.choice([5_000, 8_000, 11_000, 14_000, 16_000])
         amount = _amount(profile, avg_inr, rng)
 
         terms = rng.choice([15, 30, 45])

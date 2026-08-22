@@ -87,7 +87,7 @@ _TABLES = (
     "reconciliation_events",
     "promises",
     "reminders",
-    "virtual_accounts",
+    "payment_links",
     "invoices",
     "customers",
     "merchants",
