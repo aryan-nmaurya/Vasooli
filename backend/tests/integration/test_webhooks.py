@@ -11,6 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import select
 
+from app.core.config import settings
 from app.core.constants import InvoiceStatus, PromiseStatus
 from app.integrations.razorpay_signature import compute_signature
 from app.main import create_app
@@ -23,7 +24,10 @@ from app.models import (
     ReconciliationEvent,
 )
 
-SECRET = "PLACEHOLDER"  # matches RAZORPAY_WEBHOOK_SECRET in the test environment
+#: Read from settings, never hardcoded. A literal here matches whatever happens to
+#: be in the developer's .env and silently fails everywhere else — CI sets its own
+#: secret, so every signature check would reject and every test would 400.
+SECRET = settings.razorpay_webhook_secret
 
 
 @pytest.fixture
