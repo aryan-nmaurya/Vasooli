@@ -62,3 +62,24 @@ def days_overdue(due_at: datetime, *, as_of: datetime | None = None) -> int:
     """
     reference = as_of or utcnow()
     return max(0, (to_ist_date(reference) - to_ist_date(due_at)).days)
+
+
+def ist_midnight(day: date) -> datetime:
+    """The UTC instant at which `day` begins in India.
+
+    Invoice due dates are calendar dates, not instants — "due 1 August" means the
+    close of 1 August in the merchant's own timezone. Anchoring to IST midnight and
+    storing the UTC equivalent is what makes `days_overdue` tick over at the right
+    moment; anchoring to UTC midnight would shift every boundary by 5.5 hours.
+    """
+    return datetime(day.year, day.month, day.day, tzinfo=IST).astimezone(UTC)
+
+
+def due_date_for_days_overdue(days: int, *, as_of: date | None = None) -> datetime:
+    """The due date an invoice needs in order to be exactly `days` overdue today.
+
+    Used by the seeder to rebase generated ledgers onto the current date, so a demo
+    CSV written last week still lands invoices on the tier boundaries today.
+    """
+    reference = as_of or today_ist()
+    return ist_midnight(reference - timedelta(days=days))
