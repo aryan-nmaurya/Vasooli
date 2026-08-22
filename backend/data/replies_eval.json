@@ -1,0 +1,367 @@
+{
+  "EVL-2000": {
+    "day_offset": 2,
+    "body": "Sorry for the delay \u2014 cash is tight this month. I'll clear this by the 22th.",
+    "kind": "promise"
+  },
+  "EVL-2004": null,
+  "EVL-2005": null,
+  "EVL-2011": {
+    "day_offset": 5,
+    "body": "We were billed for 12 units but received 9. Please check before we pay.",
+    "kind": "complaint"
+  },
+  "EVL-2014": {
+    "day_offset": 4,
+    "body": "We were billed for 12 units but received 9. Please check before we pay.",
+    "kind": "complaint"
+  },
+  "EVL-2015": {
+    "day_offset": 3,
+    "body": "We were billed for 12 units but received 9. Please check before we pay.",
+    "kind": "complaint"
+  },
+  "EVL-2016": {
+    "day_offset": 3,
+    "body": "Apologies, we've been short this cycle. Can pay by the 20th without fail.",
+    "kind": "promise"
+  },
+  "EVL-2018": {
+    "day_offset": 3,
+    "body": "Sorry for the delay \u2014 cash is tight this month. I'll clear this by the 25th.",
+    "kind": "promise"
+  },
+  "EVL-2022": {
+    "day_offset": 4,
+    "body": "Payment is scheduled from our side. You'll have it by the 22th.",
+    "kind": "promise"
+  },
+  "EVL-2024": {
+    "day_offset": 2,
+    "body": "This invoice doesn't match the PO we signed. Sending our copy \u2014 please review.",
+    "kind": "complaint"
+  },
+  "EVL-2025": null,
+  "EVL-2026": null,
+  "EVL-2027": {
+    "day_offset": 5,
+    "body": "Apologies, we've been short this cycle. Can pay by the 20th without fail.",
+    "kind": "promise"
+  },
+  "EVL-2028": {
+    "day_offset": 2,
+    "body": "Sorry for the delay \u2014 cash is tight this month. I'll clear this by the 22th.",
+    "kind": "promise"
+  },
+  "EVL-2029": null,
+  "EVL-2031": {
+    "day_offset": 4,
+    "body": "Apologies, we've been short this cycle. Can pay by the 15th without fail.",
+    "kind": "promise"
+  },
+  "EVL-2032": {
+    "day_offset": 6,
+    "body": "Apologies, we've been short this cycle. Can pay by the 25th without fail.",
+    "kind": "promise"
+  },
+  "EVL-2033": {
+    "day_offset": 2,
+    "body": "We were billed for 12 units but received 9. Please check before we pay.",
+    "kind": "complaint"
+  },
+  "EVL-2034": {
+    "day_offset": 3,
+    "body": "Sorry for the delay \u2014 cash is tight this month. I'll clear this by the 20th.",
+    "kind": "promise"
+  },
+  "EVL-2035": null,
+  "EVL-2036": null,
+  "EVL-2037": {
+    "day_offset": 3,
+    "body": "Payment is scheduled from our side. You'll have it by the 22th.",
+    "kind": "promise"
+  },
+  "EVL-2038": null,
+  "EVL-2039": {
+    "day_offset": 3,
+    "body": "Payment is scheduled from our side. You'll have it by the 22th.",
+    "kind": "promise"
+  },
+  "EVL-2040": {
+    "day_offset": 6,
+    "body": "Sorry for the delay \u2014 cash is tight this month. I'll clear this by the 15th.",
+    "kind": "promise"
+  },
+  "EVL-2041": {
+    "day_offset": 2,
+    "body": "We were billed for 12 units but received 9. Please check before we pay.",
+    "kind": "complaint"
+  },
+  "EVL-2042": {
+    "day_offset": 3,
+    "body": "Apologies, we've been short this cycle. Can pay by the 22th without fail.",
+    "kind": "promise"
+  },
+  "EVL-2043": null,
+  "EVL-2044": {
+    "day_offset": 2,
+    "body": "Apologies, we've been short this cycle. Can pay by the 18th without fail.",
+    "kind": "promise"
+  },
+  "EVL-2045": {
+    "day_offset": 4,
+    "body": "There's a pricing mismatch here versus what was agreed. Holding payment for now.",
+    "kind": "complaint"
+  },
+  "EVL-2046": {
+    "day_offset": 6,
+    "body": "Payment is scheduled from our side. You'll have it by the 25th.",
+    "kind": "promise"
+  },
+  "EVL-2047": null,
+  "EVL-2048": null,
+  "EVL-2049": {
+    "day_offset": 4,
+    "body": "Payment is scheduled from our side. You'll have it by the 22th.",
+    "kind": "promise"
+  },
+  "EVL-2050": {
+    "day_offset": 4,
+    "body": "Sorry for the delay \u2014 cash is tight this month. I'll clear this by the 28th.",
+    "kind": "promise"
+  },
+  "EVL-2051": null,
+  "EVL-2052": {
+    "day_offset": 3,
+    "body": "Sorry for the delay \u2014 cash is tight this month. I'll clear this by the 25th.",
+    "kind": "promise"
+  },
+  "EVL-2055": {
+    "day_offset": 3,
+    "body": "Sorry for the delay \u2014 cash is tight this month. I'll clear this by the 15th.",
+    "kind": "promise"
+  },
+  "EVL-2057": {
+    "day_offset": 4,
+    "body": "This invoice doesn't match the PO we signed. Sending our copy \u2014 please review.",
+    "kind": "complaint"
+  },
+  "EVL-2059": {
+    "day_offset": 3,
+    "body": "Apologies, we've been short this cycle. Can pay by the 15th without fail.",
+    "kind": "promise"
+  },
+  "EVL-2060": null,
+  "EVL-2061": {
+    "day_offset": 5,
+    "body": "We were billed for 12 units but received 9. Please check before we pay.",
+    "kind": "complaint"
+  },
+  "EVL-2062": {
+    "day_offset": 5,
+    "body": "Apologies, we've been short this cycle. Can pay by the 18th without fail.",
+    "kind": "promise"
+  },
+  "EVL-2064": {
+    "day_offset": 4,
+    "body": "Apologies, we've been short this cycle. Can pay by the 22th without fail.",
+    "kind": "promise"
+  },
+  "EVL-2065": {
+    "day_offset": 2,
+    "body": "We were billed for 12 units but received 9. Please check before we pay.",
+    "kind": "complaint"
+  },
+  "EVL-2066": {
+    "day_offset": 6,
+    "body": "Payment is scheduled from our side. You'll have it by the 28th.",
+    "kind": "promise"
+  },
+  "EVL-2067": null,
+  "EVL-2069": null,
+  "EVL-2073": null,
+  "EVL-2075": null,
+  "EVL-2076": null,
+  "EVL-2077": {
+    "day_offset": 5,
+    "body": "There's a pricing mismatch here versus what was agreed. Holding payment for now.",
+    "kind": "complaint"
+  },
+  "EVL-2079": {
+    "day_offset": 3,
+    "body": "Payment is scheduled from our side. You'll have it by the 18th.",
+    "kind": "promise"
+  },
+  "EVL-2082": {
+    "day_offset": 5,
+    "body": "Sorry for the delay \u2014 cash is tight this month. I'll clear this by the 28th.",
+    "kind": "promise"
+  },
+  "EVL-2084": {
+    "day_offset": 3,
+    "body": "We were billed for 12 units but received 9. Please check before we pay.",
+    "kind": "complaint"
+  },
+  "EVL-2085": null,
+  "EVL-2087": {
+    "day_offset": 2,
+    "body": "There's a pricing mismatch here versus what was agreed. Holding payment for now.",
+    "kind": "complaint"
+  },
+  "EVL-2088": {
+    "day_offset": 2,
+    "body": "Sorry for the delay \u2014 cash is tight this month. I'll clear this by the 22th.",
+    "kind": "promise"
+  },
+  "EVL-2089": {
+    "day_offset": 3,
+    "body": "Payment is scheduled from our side. You'll have it by the 25th.",
+    "kind": "promise"
+  },
+  "EVL-2090": {
+    "day_offset": 3,
+    "body": "Sorry for the delay \u2014 cash is tight this month. I'll clear this by the 25th.",
+    "kind": "promise"
+  },
+  "EVL-2091": null,
+  "EVL-2095": {
+    "day_offset": 3,
+    "body": "Payment is scheduled from our side. You'll have it by the 28th.",
+    "kind": "promise"
+  },
+  "EVL-2096": {
+    "day_offset": 4,
+    "body": "There's a pricing mismatch here versus what was agreed. Holding payment for now.",
+    "kind": "complaint"
+  },
+  "EVL-2097": {
+    "day_offset": 6,
+    "body": "Apologies, we've been short this cycle. Can pay by the 15th without fail.",
+    "kind": "promise"
+  },
+  "EVL-2098": null,
+  "EVL-2099": {
+    "day_offset": 4,
+    "body": "There's a pricing mismatch here versus what was agreed. Holding payment for now.",
+    "kind": "complaint"
+  },
+  "EVL-2102": {
+    "day_offset": 5,
+    "body": "We were billed for 12 units but received 9. Please check before we pay.",
+    "kind": "complaint"
+  },
+  "EVL-2103": {
+    "day_offset": 2,
+    "body": "There's a pricing mismatch here versus what was agreed. Holding payment for now.",
+    "kind": "complaint"
+  },
+  "EVL-2104": null,
+  "EVL-2105": {
+    "day_offset": 3,
+    "body": "We were billed for 12 units but received 9. Please check before we pay.",
+    "kind": "complaint"
+  },
+  "EVL-2106": {
+    "day_offset": 5,
+    "body": "This invoice doesn't match the PO we signed. Sending our copy \u2014 please review.",
+    "kind": "complaint"
+  },
+  "EVL-2107": null,
+  "EVL-2109": {
+    "day_offset": 3,
+    "body": "We were billed for 12 units but received 9. Please check before we pay.",
+    "kind": "complaint"
+  },
+  "EVL-2112": {
+    "day_offset": 4,
+    "body": "Payment is scheduled from our side. You'll have it by the 18th.",
+    "kind": "promise"
+  },
+  "EVL-2114": {
+    "day_offset": 5,
+    "body": "Payment is scheduled from our side. You'll have it by the 18th.",
+    "kind": "promise"
+  },
+  "EVL-2115": {
+    "day_offset": 5,
+    "body": "This invoice doesn't match the PO we signed. Sending our copy \u2014 please review.",
+    "kind": "complaint"
+  },
+  "EVL-2117": {
+    "day_offset": 4,
+    "body": "There's a pricing mismatch here versus what was agreed. Holding payment for now.",
+    "kind": "complaint"
+  },
+  "EVL-2121": null,
+  "EVL-2122": {
+    "day_offset": 3,
+    "body": "Payment is scheduled from our side. You'll have it by the 22th.",
+    "kind": "promise"
+  },
+  "EVL-2124": {
+    "day_offset": 3,
+    "body": "Apologies, we've been short this cycle. Can pay by the 15th without fail.",
+    "kind": "promise"
+  },
+  "EVL-2126": {
+    "day_offset": 4,
+    "body": "We were billed for 12 units but received 9. Please check before we pay.",
+    "kind": "complaint"
+  },
+  "EVL-2128": null,
+  "EVL-2129": {
+    "day_offset": 3,
+    "body": "Sorry for the delay \u2014 cash is tight this month. I'll clear this by the 20th.",
+    "kind": "promise"
+  },
+  "EVL-2131": {
+    "day_offset": 6,
+    "body": "Sorry for the delay \u2014 cash is tight this month. I'll clear this by the 20th.",
+    "kind": "promise"
+  },
+  "EVL-2132": {
+    "day_offset": 5,
+    "body": "Apologies, we've been short this cycle. Can pay by the 25th without fail.",
+    "kind": "promise"
+  },
+  "EVL-2134": null,
+  "EVL-2135": {
+    "day_offset": 2,
+    "body": "Payment is scheduled from our side. You'll have it by the 18th.",
+    "kind": "promise"
+  },
+  "EVL-2136": null,
+  "EVL-2137": {
+    "day_offset": 4,
+    "body": "Apologies, we've been short this cycle. Can pay by the 22th without fail.",
+    "kind": "promise"
+  },
+  "EVL-2138": {
+    "day_offset": 4,
+    "body": "This invoice doesn't match the PO we signed. Sending our copy \u2014 please review.",
+    "kind": "complaint"
+  },
+  "EVL-2140": {
+    "day_offset": 4,
+    "body": "Sorry for the delay \u2014 cash is tight this month. I'll clear this by the 28th.",
+    "kind": "promise"
+  },
+  "EVL-2141": {
+    "day_offset": 5,
+    "body": "Apologies, we've been short this cycle. Can pay by the 20th without fail.",
+    "kind": "promise"
+  },
+  "EVL-2143": null,
+  "EVL-2146": {
+    "day_offset": 5,
+    "body": "Payment is scheduled from our side. You'll have it by the 22th.",
+    "kind": "promise"
+  },
+  "EVL-2147": {
+    "day_offset": 6,
+    "body": "Payment is scheduled from our side. You'll have it by the 20th.",
+    "kind": "promise"
+  },
+  "EVL-2148": null,
+  "EVL-2149": null
+}

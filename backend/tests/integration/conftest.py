@@ -15,14 +15,65 @@ from sqlalchemy import text
 from sqlmodel import Session
 
 from alembic import command
+from app.core.config import settings
 from app.core.db import engine
 from app.models import Customer, Invoice, Merchant
 
 
+def _ensure_test_database_exists() -> None:
+    """Create the test database if it is not there yet.
+
+    Tries the target database first and only reaches for the `postgres` maintenance
+    database when that fails. In CI the database is created by the service container,
+    where the connecting role may not be allowed to CREATE DATABASE at all — so the
+    happy path must not depend on that privilege.
+    """
+    import psycopg
+    from sqlalchemy.engine import make_url
+
+    url = make_url(settings.database_url)
+    dsn = url.render_as_string(hide_password=False).replace(
+        "postgresql+psycopg://", "postgresql://"
+    )
+
+    try:
+        with psycopg.connect(dsn, connect_timeout=5):
+            return  # already there
+    except psycopg.OperationalError as exc:
+        if "does not exist" not in str(exc):
+            raise RuntimeError(
+                f"Cannot reach the test database at {url.render_as_string()}.\n"
+                f"  {exc}\n"
+                "  Is Postgres running? Check DATABASE_URL / VASOOLI_TEST_DATABASE_URL."
+            ) from exc
+
+    admin_dsn = (
+        url.set(database="postgres")
+        .render_as_string(hide_password=False)
+        .replace("postgresql+psycopg://", "postgresql://")
+    )
+    try:
+        with psycopg.connect(admin_dsn, autocommit=True, connect_timeout=5) as conn:
+            conn.execute(f'CREATE DATABASE "{url.database}"')
+    except psycopg.Error as exc:
+        raise RuntimeError(
+            f"Test database {url.database!r} does not exist and could not be created.\n"
+            f"  {exc}\n"
+            f"  Create it manually: createdb {url.database}"
+        ) from exc
+
+
 @pytest.fixture(scope="session", autouse=True)
 def migrated_database():
-    """Bring the schema to head once per session."""
+    """Bring the test schema to head once per session."""
+    assert "test" in settings.database_url, (
+        f"Refusing to run integration tests against {settings.database_url!r}. "
+        "These tests truncate every table; see tests/conftest.py."
+    )
+    _ensure_test_database_exists()
+
     cfg = Config("alembic.ini")
+    cfg.set_main_option("sqlalchemy.url", settings.database_url)
     command.upgrade(cfg, "head")
     yield
 
@@ -43,6 +94,12 @@ _TABLES = (
 )
 
 
+def _truncate_all() -> None:
+    with Session(engine) as s:
+        s.exec(text(f"TRUNCATE {', '.join(_TABLES)} RESTART IDENTITY CASCADE"))
+        s.commit()
+
+
 @pytest.fixture
 def session(migrated_database):
     """A real session, truncated after each test.
@@ -51,12 +108,11 @@ def session(migrated_database):
     IntegrityError, which aborts the surrounding transaction and would take a
     savepoint-based rollback strategy down with it.
     """
+    _truncate_all()
     with Session(engine) as s:
         yield s
         s.rollback()
-    with Session(engine) as s:
-        s.exec(text(f"TRUNCATE {', '.join(_TABLES)} RESTART IDENTITY CASCADE"))
-        s.commit()
+    _truncate_all()
 
 
 @pytest.fixture

@@ -1,0 +1,149 @@
+{
+  "INV-2000": {
+    "day_offset": 6,
+    "body": "Sorry for the delay \u2014 cash is tight this month. I'll clear this by the 28th.",
+    "kind": "promise"
+  },
+  "INV-2001": {
+    "day_offset": 6,
+    "body": "Sorry for the delay \u2014 cash is tight this month. I'll clear this by the 25th.",
+    "kind": "promise"
+  },
+  "INV-2002": null,
+  "INV-2003": {
+    "day_offset": 3,
+    "body": "There's a pricing mismatch here versus what was agreed. Holding payment for now.",
+    "kind": "complaint"
+  },
+  "INV-2004": null,
+  "INV-2005": {
+    "day_offset": 4,
+    "body": "There's a pricing mismatch here versus what was agreed. Holding payment for now.",
+    "kind": "complaint"
+  },
+  "INV-2007": null,
+  "INV-2010": {
+    "day_offset": 6,
+    "body": "Sorry for the delay \u2014 cash is tight this month. I'll clear this by the 28th.",
+    "kind": "promise"
+  },
+  "INV-2011": {
+    "day_offset": 2,
+    "body": "Payment is scheduled from our side. You'll have it by the 22th.",
+    "kind": "promise"
+  },
+  "INV-2012": null,
+  "INV-2013": null,
+  "INV-2015": {
+    "day_offset": 4,
+    "body": "Apologies, we've been short this cycle. Can pay by the 18th without fail.",
+    "kind": "promise"
+  },
+  "INV-2016": {
+    "day_offset": 5,
+    "body": "There's a pricing mismatch here versus what was agreed. Holding payment for now.",
+    "kind": "complaint"
+  },
+  "INV-2018": null,
+  "INV-2021": {
+    "day_offset": 3,
+    "body": "We were billed for 12 units but received 9. Please check before we pay.",
+    "kind": "complaint"
+  },
+  "INV-2022": {
+    "day_offset": 4,
+    "body": "Apologies, we've been short this cycle. Can pay by the 15th without fail.",
+    "kind": "promise"
+  },
+  "INV-2025": null,
+  "INV-2027": {
+    "day_offset": 6,
+    "body": "Apologies, we've been short this cycle. Can pay by the 20th without fail.",
+    "kind": "promise"
+  },
+  "INV-2028": null,
+  "INV-2029": {
+    "day_offset": 2,
+    "body": "Apologies, we've been short this cycle. Can pay by the 18th without fail.",
+    "kind": "promise"
+  },
+  "INV-2031": {
+    "day_offset": 5,
+    "body": "We were billed for 12 units but received 9. Please check before we pay.",
+    "kind": "complaint"
+  },
+  "INV-2032": {
+    "day_offset": 6,
+    "body": "Apologies, we've been short this cycle. Can pay by the 28th without fail.",
+    "kind": "promise"
+  },
+  "INV-2037": {
+    "day_offset": 4,
+    "body": "Apologies, we've been short this cycle. Can pay by the 28th without fail.",
+    "kind": "promise"
+  },
+  "INV-2038": {
+    "day_offset": 6,
+    "body": "Payment is scheduled from our side. You'll have it by the 28th.",
+    "kind": "promise"
+  },
+  "INV-2041": null,
+  "INV-2042": {
+    "day_offset": 3,
+    "body": "Payment is scheduled from our side. You'll have it by the 15th.",
+    "kind": "promise"
+  },
+  "INV-2043": {
+    "day_offset": 2,
+    "body": "There's a pricing mismatch here versus what was agreed. Holding payment for now.",
+    "kind": "complaint"
+  },
+  "INV-2045": {
+    "day_offset": 5,
+    "body": "Payment is scheduled from our side. You'll have it by the 28th.",
+    "kind": "promise"
+  },
+  "INV-2047": {
+    "day_offset": 4,
+    "body": "Apologies, we've been short this cycle. Can pay by the 25th without fail.",
+    "kind": "promise"
+  },
+  "INV-2048": null,
+  "INV-2049": {
+    "day_offset": 6,
+    "body": "Payment is scheduled from our side. You'll have it by the 25th.",
+    "kind": "promise"
+  },
+  "INV-2050": {
+    "day_offset": 3,
+    "body": "Apologies, we've been short this cycle. Can pay by the 28th without fail.",
+    "kind": "promise"
+  },
+  "INV-2051": null,
+  "INV-2053": {
+    "day_offset": 4,
+    "body": "Apologies, we've been short this cycle. Can pay by the 18th without fail.",
+    "kind": "promise"
+  },
+  "INV-2054": {
+    "day_offset": 4,
+    "body": "Payment is scheduled from our side. You'll have it by the 15th.",
+    "kind": "promise"
+  },
+  "INV-2055": null,
+  "INV-2056": {
+    "day_offset": 4,
+    "body": "Sorry for the delay \u2014 cash is tight this month. I'll clear this by the 15th.",
+    "kind": "promise"
+  },
+  "INV-2057": {
+    "day_offset": 3,
+    "body": "Apologies, we've been short this cycle. Can pay by the 18th without fail.",
+    "kind": "promise"
+  },
+  "INV-2058": {
+    "day_offset": 4,
+    "body": "There's a pricing mismatch here versus what was agreed. Holding payment for now.",
+    "kind": "complaint"
+  }
+}
