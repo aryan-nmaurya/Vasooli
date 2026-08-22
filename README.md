@@ -103,5 +103,19 @@ These are load-bearing — the plan's later phases assume them.
 All settings are in `app/core/config.py`. A missing required variable fails at import
 with a message naming it — the app will not boot half-configured.
 
-`GEMINI_PRIMARY_MODEL` / `GEMINI_FALLBACK_MODEL` are config values, not code. Verify
-the exact model IDs your Google AI Studio key serves before Phase 6.
+### AI provider
+
+Google AI Studio, with a three-step failover chain:
+
+| Step | Model | Triggered by |
+|---|---|---|
+| 1 | `gemini-3.7-flash` (`GEMINI_PRIMARY_MODEL`) | — |
+| 2 | `gemini-3.6-flash` (`GEMINI_FALLBACK_MODEL`) | RPM/RPD quota, timeout, 5xx, or a schema-validation failure that survives one repair attempt |
+| 3 | Rule-based diagnosis + templated copy | both models unavailable |
+
+Step 3 is why a quota wall is a footnote rather than a broken demo: the four reason
+categories are defined as rules, so the model supplies explanation quality, not core
+capability. Every failover is written to the audit log.
+
+Model IDs are config, not code — a retired or mistyped ID is a `.env` edit. Verify the
+exact IDs your Google AI Studio key serves before Phase 6.
