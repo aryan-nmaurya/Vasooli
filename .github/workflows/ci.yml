@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: vasooli
+          POSTGRES_PASSWORD: vasooli
+          POSTGRES_DB: vasooli_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    env:
+      ENVIRONMENT: test
+      DATABASE_URL: postgresql://vasooli:vasooli@localhost:5432/vasooli_test
+      RAZORPAY_KEY_ID: rzp_test_ci
+      RAZORPAY_KEY_SECRET: ci
+      RAZORPAY_WEBHOOK_SECRET: ci
+      GOOGLE_API_KEY: ci
+      RESEND_API_KEY: ci
+      ADMIN_API_KEY: ci
+      EMAIL_DRY_RUN: "true"
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - run: uv sync --locked
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Format check
+        run: uv run ruff format --check .
+
+      - name: Migrations apply cleanly
+        run: uv run alembic upgrade head
+
+      - name: Tests
+        run: uv run pytest -q
+
+      - name: Secret scan
+        working-directory: .
+        run: |
+          # Placeholder keys are fine; real ones must never reach the repo.
+          if git grep -nE 'rzp_(live|test)_[A-Za-z0-9]{10,}|AIza[A-Za-z0-9_-]{30,}|re_[A-Za-z0-9]{20,}' \
+             -- ':!*.lock' ':!.github/*'; then
+            echo "::error::Possible real credential committed"
+            exit 1
+          fi
