@@ -1,0 +1,22 @@
+# Local Postgres only. The app itself runs on the host via `uvicorn` for fast reload.
+# Skip this entirely if you already have Postgres on :5432 — see README.
+services:
+  db:
+    image: postgres:16
+    container_name: vasooli-db
+    environment:
+      POSTGRES_USER: vasooli
+      POSTGRES_PASSWORD: vasooli
+      POSTGRES_DB: vasooli
+    ports:
+      - "5432:5432"
+    volumes:
+      - vasooli_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vasooli -d vasooli"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  vasooli_pgdata:

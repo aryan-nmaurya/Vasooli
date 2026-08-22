@@ -1,0 +1,51 @@
+[project]
+name = "vasooli"
+version = "0.1.0"
+description = "AI-powered B2B receivables recovery agent"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "sqlmodel>=0.0.22",
+    "alembic>=1.14",
+    "psycopg[binary]>=3.2",
+    "pydantic[email]>=2.9",
+    "pydantic-settings>=2.6",
+    "structlog>=24.4",
+    "httpx>=0.27",
+    "razorpay>=1.4",
+    "resend>=2.4",
+    "apscheduler>=3.10",
+    "tenacity>=9.0",
+    "google-genai>=1.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.8",
+    "pandas>=2.2",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "N"]
+ignore = ["B008"]  # FastAPI Depends() in defaults is idiomatic
+
+[tool.ruff.lint.per-file-ignores]
+"alembic/versions/*" = ["E501"]
+# env.py needs settings imported before the models side-effect import.
+"alembic/env.py" = ["E402", "I001"]
+"tests/*" = ["N812"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.uv]
+package = false
