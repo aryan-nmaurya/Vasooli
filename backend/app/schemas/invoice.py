@@ -138,6 +138,10 @@ class InvoiceRead(BaseModel):
     reason_category: ReasonCategory | None
     reason_explanation: str | None
 
+    # Where the customer actually pays. Null until Phase 3 provisioning runs.
+    payment_url: str | None = None
+    payment_link_status: str | None = None
+
     reminders_sent: int
     current_tier: int
     last_reminder_at: datetime | None
@@ -145,11 +149,15 @@ class InvoiceRead(BaseModel):
     recovered_at: datetime | None
 
     @classmethod
-    def from_invoice(cls, invoice, customer_name: str | None = None) -> "InvoiceRead":
+    def from_invoice(
+        cls, invoice, customer_name: str | None = None, payment_link=None
+    ) -> "InvoiceRead":
         return cls(
             id=invoice.id,
             invoice_number=invoice.invoice_number,
             customer_name=customer_name,
+            payment_url=payment_link.short_url if payment_link else None,
+            payment_link_status=payment_link.status if payment_link else None,
             amount_paise=invoice.amount_paise,
             amount_paid_paise=invoice.amount_paid_paise,
             outstanding_paise=invoice.outstanding_paise,
