@@ -17,9 +17,7 @@ from app.integrations.razorpay_client import (
 
 @pytest.fixture
 def client(monkeypatch):
-    monkeypatch.setattr(
-        "app.integrations.razorpay_client.razorpay.Client", lambda **kw: object()
-    )
+    monkeypatch.setattr("app.integrations.razorpay_client.razorpay.Client", lambda **kw: object())
     c = RazorpayClient(key_id="rzp_test_x", key_secret="s")
     c._min_interval = 0  # don't pace inside unit tests
     return c
@@ -74,9 +72,7 @@ def test_network_failures_are_transient(client):
 
 def test_pacing_spaces_out_calls(monkeypatch):
     """Every caller is throttled, not just the batch loop."""
-    monkeypatch.setattr(
-        "app.integrations.razorpay_client.razorpay.Client", lambda **kw: object()
-    )
+    monkeypatch.setattr("app.integrations.razorpay_client.razorpay.Client", lambda **kw: object())
     c = RazorpayClient(key_id="rzp_test_x", key_secret="s")
     c._min_interval = 0.05
 
