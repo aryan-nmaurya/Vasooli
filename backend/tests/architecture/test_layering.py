@@ -168,18 +168,35 @@ def test_time_is_read_only_through_the_clock_module():
 
 
 def test_no_floats_on_money_paths():
-    """Money is integer paise. A float balance is an invoice that never closes."""
-    offenders = [
-        f"{path.relative_to(APP.parent)}"
-        for path in APP.rglob("*.py")
-        if path.name != "money.py"
-        and ("float(" in path.read_text() or ": float" in path.read_text())
-    ]
-    # `reason_confidence: float` is legitimate — confidence is not money. Allowlist it
-    # explicitly so the rule keeps biting everywhere else.
-    allowed = {"app/models/invoice.py", "app/ai/schemas.py", "app/core/config.py"}
-    unexpected = [o for o in offenders if o not in allowed]
-    assert not unexpected, f"floats found outside allowlisted files: {unexpected}"
+    """Money is integer paise. A float balance is an invoice that never closes.
+
+    Checked by field name rather than by an allowlist of files, because the rule is
+    about what a value MEANS, not where it lives. `reason_confidence: float` is fine —
+    a confidence is not money — while `amount_paise: float` anywhere would be a defect,
+    including in a file that happens to be allowlisted today.
+    """
+    money_words = ("paise", "amount", "price", "rupee", "balance", "total_paid")
+    offenders = []
+
+    for path in APP.rglob("*.py"):
+        if path.name == "money.py":
+            continue
+        tree = ast.parse(path.read_text(), filename=str(path))
+        for node in ast.walk(tree):
+            # Annotated field whose name reads as money, typed float.
+            if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+                name = node.target.id.lower()
+                if any(w in name for w in money_words) and "float" in ast.unparse(node.annotation):
+                    offenders.append(f"{path.relative_to(APP.parent)}:{node.lineno} {name}")
+            # A bare float() cast anywhere in app code.
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "float"
+            ):
+                offenders.append(f"{path.relative_to(APP.parent)}:{node.lineno} float() cast")
+
+    assert not offenders, "floats on money paths:\n  " + "\n  ".join(offenders)
 
 
 def test_schema_is_defined_by_migrations_not_create_all():

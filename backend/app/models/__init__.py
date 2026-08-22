@@ -1,10 +1,30 @@
-"""SQLModel entities.
+"""SQLModel entities. Doc §8.
 
-Every model MUST be imported here — Alembic autogenerate only sees tables that are
-registered on SQLModel.metadata at import time, and silently emits an empty migration
-for anything it misses.
-
-Populated in Phase 1.
+Every model MUST be imported here. Alembic autogenerate only sees tables registered on
+SQLModel.metadata at import time and will silently emit an empty migration for
+anything it misses — a failure mode that looks like "the migration worked" right up
+until the first query.
 """
 
-__all__: list[str] = []
+from app.models.audit_log import AuditAction, AuditActor, AuditLog
+from app.models.customer import Customer
+from app.models.invoice import Invoice
+from app.models.merchant import Merchant
+from app.models.promise import Promise
+from app.models.reconciliation_event import ReconciliationEvent
+from app.models.reminder import Reminder
+from app.models.virtual_account import VirtualAccount, VirtualAccountStatus
+
+__all__ = [
+    "AuditAction",
+    "AuditActor",
+    "AuditLog",
+    "Customer",
+    "Invoice",
+    "Merchant",
+    "Promise",
+    "ReconciliationEvent",
+    "Reminder",
+    "VirtualAccount",
+    "VirtualAccountStatus",
+]

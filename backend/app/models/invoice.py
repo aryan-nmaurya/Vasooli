@@ -1,0 +1,138 @@
+"""Invoices — the centre of the recovery loop. Doc §8."""
+
+import uuid
+from datetime import datetime
+
+from sqlalchemy import CheckConstraint
+from sqlmodel import Field, SQLModel
+
+from app.core.clock import days_overdue as _days_overdue
+from app.core.constants import (
+    MAX_AUTOMATED_REMINDERS,
+    InvoiceStatus,
+    ReasonCategory,
+)
+from app.core.money import format_inr
+from app.models.base import (
+    bool_column,
+    enum_column,
+    fk_column,
+    money_column,
+    pk_column,
+    timestamp_column,
+    updated_at_column,
+)
+
+
+class Invoice(SQLModel, table=True):
+    __tablename__ = "invoices"
+    __table_args__ = (
+        # The reminder cap is enforced at the database, not only in app.policy. A cap
+        # that lives solely in Python survives exactly until someone writes a second
+        # code path — and "never more than 3 automated contacts" is a compliance
+        # promise (Doc §3), not a preference.
+        #
+        # The literal below is rendered from MAX_AUTOMATED_REMINDERS at import time.
+        # The generated migration bakes in today's value, so changing the constant
+        # needs a new migration, not just an edit.
+        CheckConstraint(
+            f"reminders_sent >= 0 AND reminders_sent <= {MAX_AUTOMATED_REMINDERS}",
+            name="ck_invoices_reminder_cap",
+        ),
+        CheckConstraint(
+            f"current_tier >= 0 AND current_tier <= {MAX_AUTOMATED_REMINDERS}",
+            name="ck_invoices_tier_range",
+        ),
+        CheckConstraint("amount_paise > 0", name="ck_invoices_amount_positive"),
+        # Reconciliation only ever adds. A negative balance means a bug upstream.
+        CheckConstraint("amount_paid_paise >= 0", name="ck_invoices_paid_non_negative"),
+        CheckConstraint("due_at >= issued_at", name="ck_invoices_due_after_issue"),
+    )
+
+    id: uuid.UUID = Field(sa_column=pk_column())
+    merchant_id: uuid.UUID = Field(sa_column=fk_column("merchants.id"))
+    customer_id: uuid.UUID = Field(sa_column=fk_column("customers.id"))
+
+    invoice_number: str = Field(index=True, unique=True)  # "INV-2291"
+    amount_paise: int = Field(sa_column=money_column())
+    amount_paid_paise: int = Field(default=0, sa_column=money_column(default=0))
+    currency: str = "INR"
+
+    issued_at: datetime = Field(sa_column=timestamp_column())
+    due_at: datetime = Field(sa_column=timestamp_column(index=True))
+    terms_days: int = 30
+
+    status: InvoiceStatus = Field(
+        default=InvoiceStatus.PENDING,
+        sa_column=enum_column(default=InvoiceStatus.PENDING.value, index=True),
+    )
+
+    # --- Diagnosis (Phase 6 writes these; Doc §3 Stage 2) ---
+    reason_category: ReasonCategory | None = Field(
+        default=None, sa_column=enum_column(nullable=True)
+    )
+    reason_explanation: str | None = None
+    reason_confidence: float | None = None
+    reason_diagnosed_at: datetime | None = Field(sa_column=timestamp_column(nullable=True))
+    #: Set when the LLM's category differed from the rule-based result. The rule wins;
+    #: the disagreement is kept because it is a reported eval metric (Phase 11).
+    reason_llm_disagreed: bool = Field(default=False, sa_column=bool_column())
+
+    # --- Cadence counters, denormalized for the policy engine ---
+    # app.policy is a pure function of its arguments, so it cannot run a COUNT(*).
+    # These are maintained by app.services whenever a reminder is sent.
+    reminders_sent: int = 0
+    current_tier: int = 0
+    last_reminder_at: datetime | None = Field(sa_column=timestamp_column(nullable=True))
+
+    escalated_to_human_at: datetime | None = Field(sa_column=timestamp_column(nullable=True))
+    escalation_reason: str | None = None
+
+    #: A dispute recorded before Vasooli ever contacted the customer. One of the two
+    #: routes into `dispute_likely`; the other is a complaint detected in a reply.
+    has_prior_dispute_note: bool = Field(default=False, sa_column=bool_column())
+
+    recovered_at: datetime | None = Field(sa_column=timestamp_column(nullable=True))
+
+    created_at: datetime = Field(sa_column=timestamp_column(default_now=True))
+    updated_at: datetime = Field(sa_column=updated_at_column())
+
+    # ------------------------------------------------------------------
+    # Derived values. Read-only — no DB access, safe to call from app.policy.
+    # ------------------------------------------------------------------
+
+    @property
+    def days_overdue(self) -> int:
+        """Whole days past due on the IST calendar. Never negative."""
+        return _days_overdue(self.due_at)
+
+    @property
+    def outstanding_paise(self) -> int:
+        return max(0, self.amount_paise - self.amount_paid_paise)
+
+    @property
+    def is_fully_paid(self) -> bool:
+        """Deliberately `>=`, not `==`.
+
+        An overpayment settles the invoice. Treating it as unpaid would leave the
+        invoice in the chase queue after the customer has already sent money — the
+        single worst false positive this system can produce.
+        """
+        return self.amount_paid_paise >= self.amount_paise
+
+    @property
+    def amount_display(self) -> str:
+        return format_inr(self.amount_paise)
+
+    @property
+    def outstanding_display(self) -> str:
+        return format_inr(self.outstanding_paise)
+
+    @property
+    def is_in_automation(self) -> bool:
+        """False once the invoice is resolved or has been handed to a human."""
+        return self.status not in {
+            InvoiceStatus.RECOVERED,
+            InvoiceStatus.WRITTEN_OFF,
+            InvoiceStatus.HUMAN_REVIEW,
+        }

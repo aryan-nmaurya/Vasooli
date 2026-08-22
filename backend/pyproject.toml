@@ -41,6 +41,8 @@ ignore = ["B008"]  # FastAPI Depends() in defaults is idiomatic
 # env.py needs settings imported before the models side-effect import.
 "alembic/env.py" = ["E402", "I001"]
 "tests/*" = ["N812"]
+# PgUUID aliases sqlalchemy's UUID type; the alias avoids shadowing stdlib uuid.UUID.
+"app/models/base.py" = ["N811"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
