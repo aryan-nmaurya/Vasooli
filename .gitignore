@@ -1,1 +1,29 @@
 Docs/
+
+# Secrets — must stay first-class ignored, before any key is ever pasted.
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Node / Next.js (Phase 10)
+node_modules/
+.next/
+frontend/out/
+
+# Local data + eval output
+eval/out/
+*.log
+
+# OS
+.DS_Store
