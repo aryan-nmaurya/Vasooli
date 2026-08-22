@@ -15,14 +15,42 @@ from sqlalchemy import text
 from sqlmodel import Session
 
 from alembic import command
+from app.core.config import settings
 from app.core.db import engine
 from app.models import Customer, Invoice, Merchant
 
 
+def _ensure_test_database_exists() -> None:
+    """Create the test database if it is not there yet.
+
+    Keeps `uv run pytest` working on a fresh checkout without a manual createdb step.
+    """
+    import psycopg
+    from sqlalchemy.engine import make_url
+
+    url = make_url(settings.database_url)
+    admin = url.set(database="postgres").render_as_string(hide_password=False)
+    admin = admin.replace("postgresql+psycopg://", "postgresql://")
+
+    with psycopg.connect(admin, autocommit=True) as conn:
+        exists = conn.execute(
+            "SELECT 1 FROM pg_database WHERE datname = %s", (url.database,)
+        ).fetchone()
+        if not exists:
+            conn.execute(f'CREATE DATABASE "{url.database}"')
+
+
 @pytest.fixture(scope="session", autouse=True)
 def migrated_database():
-    """Bring the schema to head once per session."""
+    """Bring the test schema to head once per session."""
+    assert "test" in settings.database_url, (
+        f"Refusing to run integration tests against {settings.database_url!r}. "
+        "These tests truncate every table; see tests/conftest.py."
+    )
+    _ensure_test_database_exists()
+
     cfg = Config("alembic.ini")
+    cfg.set_main_option("sqlalchemy.url", settings.database_url)
     command.upgrade(cfg, "head")
     yield
 
@@ -43,6 +71,12 @@ _TABLES = (
 )
 
 
+def _truncate_all() -> None:
+    with Session(engine) as s:
+        s.exec(text(f"TRUNCATE {', '.join(_TABLES)} RESTART IDENTITY CASCADE"))
+        s.commit()
+
+
 @pytest.fixture
 def session(migrated_database):
     """A real session, truncated after each test.
@@ -51,12 +85,11 @@ def session(migrated_database):
     IntegrityError, which aborts the surrounding transaction and would take a
     savepoint-based rollback strategy down with it.
     """
+    _truncate_all()
     with Session(engine) as s:
         yield s
         s.rollback()
-    with Session(engine) as s:
-        s.exec(text(f"TRUNCATE {', '.join(_TABLES)} RESTART IDENTITY CASCADE"))
-        s.commit()
+    _truncate_all()
 
 
 @pytest.fixture
