@@ -23,21 +23,44 @@ from app.models import Customer, Invoice, Merchant
 def _ensure_test_database_exists() -> None:
     """Create the test database if it is not there yet.
 
-    Keeps `uv run pytest` working on a fresh checkout without a manual createdb step.
+    Tries the target database first and only reaches for the `postgres` maintenance
+    database when that fails. In CI the database is created by the service container,
+    where the connecting role may not be allowed to CREATE DATABASE at all — so the
+    happy path must not depend on that privilege.
     """
     import psycopg
     from sqlalchemy.engine import make_url
 
     url = make_url(settings.database_url)
-    admin = url.set(database="postgres").render_as_string(hide_password=False)
-    admin = admin.replace("postgresql+psycopg://", "postgresql://")
+    dsn = url.render_as_string(hide_password=False).replace(
+        "postgresql+psycopg://", "postgresql://"
+    )
 
-    with psycopg.connect(admin, autocommit=True) as conn:
-        exists = conn.execute(
-            "SELECT 1 FROM pg_database WHERE datname = %s", (url.database,)
-        ).fetchone()
-        if not exists:
+    try:
+        with psycopg.connect(dsn, connect_timeout=5):
+            return  # already there
+    except psycopg.OperationalError as exc:
+        if "does not exist" not in str(exc):
+            raise RuntimeError(
+                f"Cannot reach the test database at {url.render_as_string()}.\n"
+                f"  {exc}\n"
+                "  Is Postgres running? Check DATABASE_URL / VASOOLI_TEST_DATABASE_URL."
+            ) from exc
+
+    admin_dsn = (
+        url.set(database="postgres")
+        .render_as_string(hide_password=False)
+        .replace("postgresql+psycopg://", "postgresql://")
+    )
+    try:
+        with psycopg.connect(admin_dsn, autocommit=True, connect_timeout=5) as conn:
             conn.execute(f'CREATE DATABASE "{url.database}"')
+    except psycopg.Error as exc:
+        raise RuntimeError(
+            f"Test database {url.database!r} does not exist and could not be created.\n"
+            f"  {exc}\n"
+            f"  Create it manually: createdb {url.database}"
+        ) from exc
 
 
 @pytest.fixture(scope="session", autouse=True)
