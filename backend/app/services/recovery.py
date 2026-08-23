@@ -32,6 +32,7 @@ from app.core.constants import (
     PromiseStatus,
     ReasonCategory,
 )
+from app.core.db import engine
 from app.core.logging import get_logger
 from app.models import (
     AuditAction,
@@ -248,12 +249,21 @@ def run_recovery_cycle(
     # `.one()` yields a Row, not a bool — and `not (False,)` is False, because a
     # non-empty tuple is truthy. Unpacking is what makes this lock do anything at all;
     # without it the guard silently passed and two workers could both run a cycle.
+    #
+    # The lock is held on its OWN connection, not the ORM session's. A Postgres
+    # advisory lock belongs to the connection that took it, and `session.commit()`
+    # hands the session's connection back to the pool mid-cycle — so unlocking through
+    # the session releases a lock on a different connection than the one still holding
+    # it. That leak makes every later cycle in the process report "already running"
+    # and quietly do nothing.
+    lock_conn = engine.connect()
     got_lock = bool(
-        session.exec(text("SELECT pg_try_advisory_lock(:key)").bindparams(key=CYCLE_LOCK_ID)).one()[
-            0
-        ]
+        lock_conn.execute(
+            text("SELECT pg_try_advisory_lock(:key)"), {"key": CYCLE_LOCK_ID}
+        ).scalar()
     )
     if not got_lock:
+        lock_conn.close()
         log.warning("recovery.cycle_already_running")
         report.errors.append({"invoice_number": "-", "error": "cycle already running"})
         return report
@@ -286,8 +296,9 @@ def run_recovery_cycle(
                 report.errors.append({"invoice_number": invoice.invoice_number, "error": str(exc)})
                 log.exception("recovery.invoice_failed", invoice_number=invoice.invoice_number)
     finally:
-        session.exec(text("SELECT pg_advisory_unlock(:key)").bindparams(key=CYCLE_LOCK_ID)).one()
-        session.commit()
+        lock_conn.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": CYCLE_LOCK_ID})
+        lock_conn.commit()
+        lock_conn.close()
 
     log.info("recovery.cycle_complete", **report.as_dict())
     return report

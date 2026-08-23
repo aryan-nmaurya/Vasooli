@@ -1,0 +1,67 @@
+@import "tailwindcss";
+
+/*
+ * Theming.
+ *
+ * Two mechanisms, each for a different job:
+ *
+ * 1. Semantic tokens (--color-surface, --color-ink, …) for page chrome. Tailwind
+ *    generates utilities that reference these as CSS variables, so redefining the
+ *    variables under [data-theme="dark"] re-themes the whole app at runtime with no
+ *    rebuild and no per-element dark: variant.
+ *
+ * 2. A `dark:` variant for the coloured badges, where light and dark need genuinely
+ *    different treatments — a soft tint on white, a translucent glow on near-black.
+ *    One token cannot express both.
+ */
+
+@custom-variant dark ([data-theme="dark"] &);
+
+@theme {
+  /* Light values are the defaults; the dark block below overrides them. */
+  --color-surface: #fafafa; /* page background */
+  --color-panel: #ffffff; /* cards, tables */
+  --color-panel-2: #f4f4f5; /* hover rows, insets */
+  --color-line: #e4e4e7; /* borders */
+  --color-line-2: #f1f1f3; /* row dividers */
+  --color-ink: #18181b; /* primary text */
+  --color-ink-2: #3f3f46; /* secondary text */
+  --color-ink-3: #71717a; /* labels, meta */
+  --color-ink-4: #a1a1aa; /* faintest */
+  --color-accent: #0369a1; /* links */
+  --color-invert: #18181b; /* filled buttons */
+  --color-invert-ink: #fafafa;
+}
+
+[data-theme="dark"] {
+  --color-surface: #09090b;
+  --color-panel: rgba(24, 24, 27, 0.4);
+  --color-panel-2: rgba(24, 24, 27, 0.7);
+  --color-line: #27272a;
+  --color-line-2: rgba(39, 39, 42, 0.7);
+  --color-ink: #e4e4e7;
+  --color-ink-2: #d4d4d8;
+  --color-ink-3: #a1a1aa;
+  --color-ink-4: #71717a;
+  --color-accent: #38bdf8;
+  --color-invert: #fafafa;
+  --color-invert-ink: #18181b;
+}
+
+html {
+  color-scheme: light;
+}
+html[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+body {
+  background: var(--color-surface);
+  color: var(--color-ink);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Wide content scrolls inside its own container; the page never scrolls sideways. */
+.scroll-x {
+  overflow-x: auto;
+}

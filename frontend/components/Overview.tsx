@@ -1,0 +1,245 @@
+"use client";
+
+/**
+ * Overview and recovery queue. Doc §7.
+ *
+ * Polls every three seconds. The demo's highest-impact moment is a real payment
+ * landing and the recovered counter moving without anyone touching the page, and
+ * polling gets that with no socket to keep alive — one fewer thing that can fail on
+ * stage, and it degrades to "slightly late" rather than "stopped working".
+ */
+
+import Link from "next/link";
+import { useEffect, useRef, useState } from "react";
+
+import { ReasonBadge, StatusBadge, TierBadge } from "@/components/badges";
+import { getOverview, getQueue, type Overview, type QueueRow } from "@/lib/api";
+
+const POLL_MS = 3000;
+
+/** Value colours, matching the promise tracker's stat cards. */
+const TONE: Record<string, string> = {
+  good: "text-emerald-700 dark:text-emerald-300",
+  bad: "text-rose-700 dark:text-rose-300",
+  plain: "text-ink",
+};
+
+function Metric({
+  label,
+  value,
+  sub,
+  flash,
+  tone = "plain",
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  flash?: boolean;
+  tone?: keyof typeof TONE;
+}) {
+  return (
+    <div
+      // The transition exists for the payment flash. It is applied only while
+      // flashing: left on permanently it also animates every theme switch, and the
+      // toggle spends most of a second looking half-broken.
+      className={`rounded-xl border border-line bg-panel px-5 py-4 ${
+        flash
+          ? "border-emerald-400 bg-emerald-50 transition-colors duration-700 dark:border-emerald-500/60 dark:bg-emerald-500/10"
+          : ""
+      }`}
+    >
+      <div className="text-xs uppercase tracking-wider text-ink-3">{label}</div>
+      <div className={`mt-1 text-2xl font-semibold tabular-nums tracking-tight ${TONE[tone]}`}>
+        {value}
+      </div>
+      {sub ? <div className="mt-0.5 text-xs text-ink-3">{sub}</div> : null}
+    </div>
+  );
+}
+
+export function OverviewClient({
+  initialOverview,
+  initialQueue,
+}: {
+  initialOverview: Overview;
+  initialQueue: QueueRow[];
+}) {
+  const [overview, setOverview] = useState(initialOverview);
+  const [queue, setQueue] = useState(initialQueue);
+  const [filter, setFilter] = useState<string | null>(null);
+  const [flash, setFlash] = useState(false);
+  const lastRecovered = useRef(initialOverview.recovered_paise);
+
+  useEffect(() => {
+    let alive = true;
+    const tick = async () => {
+      try {
+        const [o, q] = await Promise.all([
+          getOverview(),
+          getQueue(filter ? `&reason=${filter}` : ""),
+        ]);
+        if (!alive) return;
+        // Highlight the tile when money actually arrives — the 1:40 beat in the demo.
+        if (o.recovered_paise > lastRecovered.current) {
+          setFlash(true);
+          setTimeout(() => setFlash(false), 2200);
+        }
+        lastRecovered.current = o.recovered_paise;
+        setOverview(o);
+        setQueue(q);
+      } catch {
+        // A failed poll is not worth surfacing; the next one is three seconds away.
+      }
+    };
+    const id = setInterval(tick, POLL_MS);
+    void tick();
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, [filter]);
+
+  const reasons = Object.entries(overview.counts_by_reason).sort((a, b) => b[1] - a[1]);
+
+  return (
+    <div className="space-y-7">
+      <div>
+        <h1 className="text-lg font-semibold text-ink">Recovery overview</h1>
+        <p className="mt-1 text-sm text-ink-3">
+          Recovery rate is measured by value, not by invoice count — forty small wins and one
+          large miss is not a success.
+        </p>
+      </div>
+
+      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <Metric
+          label="Total overdue"
+          value={overview.total_overdue_display}
+          sub={`${overview.invoices_total} invoices`}
+        />
+        <Metric
+          label="Recovered"
+          value={overview.recovered_display}
+          sub={`${overview.invoices_recovered} settled`}
+          flash={flash}
+          tone="good"
+        />
+        <Metric
+          label="Recovery rate"
+          value={overview.recovery_rate_display}
+          sub="by value, not count"
+        />
+        <Metric
+          label="Avg days to recovery"
+          value={overview.avg_days_to_recovery?.toFixed(1) ?? "—"}
+          sub={`${overview.automation_rate_display} without a human`}
+        />
+      </section>
+
+      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <Metric label="Active promises" value={String(overview.active_promises)} />
+        <Metric
+          label="Broken promises"
+          value={String(overview.broken_promises)}
+          sub={overview.broken_promises ? "flagged" : undefined}
+          tone={overview.broken_promises ? "bad" : "plain"}
+        />
+        <Metric
+          label="Needs a human"
+          value={String(overview.invoices_in_human_review)}
+          sub="outside the automated cadence"
+          tone={overview.invoices_in_human_review ? "bad" : "plain"}
+        />
+        <Metric
+          label="Automation rate"
+          value={overview.automation_rate_display}
+          sub="resolved without human touch"
+        />
+      </section>
+
+      <section>
+        <h2 className="mb-2.5 text-sm font-semibold text-ink">Recovery queue</h2>
+        <div className="mb-3 flex flex-wrap items-center gap-1.5">
+          <button
+            onClick={() => setFilter(null)}
+            className={`rounded-md px-2.5 py-1 text-xs ring-1 ring-inset transition ${
+              filter === null
+                ? "bg-panel-2 font-medium text-ink ring-line"
+                : "text-ink-3 ring-line hover:bg-panel-2 hover:text-ink"
+            }`}
+          >
+            All
+          </button>
+          {reasons.map(([reason, count]) => (
+            <button
+              key={reason}
+              onClick={() => setFilter(reason === filter ? null : reason)}
+              className={`rounded-md px-2.5 py-1 text-xs ring-1 ring-inset transition ${
+                filter === reason
+                  ? "bg-panel-2 font-medium text-ink ring-line"
+                  : "text-ink-3 ring-line hover:bg-panel-2 hover:text-ink"
+              }`}
+            >
+              {reason.replace(/_/g, " ")} ({count})
+            </button>
+          ))}
+        </div>
+
+        <div className="scroll-x rounded-xl border border-line">
+          <table className="w-full min-w-[860px] text-sm">
+            <thead className="border-b border-line text-left text-xs uppercase tracking-wider text-ink-3">
+              <tr>
+                <th className="px-4 py-2.5 font-medium">Invoice</th>
+                <th className="px-4 py-2.5 font-medium">Customer</th>
+                <th className="px-4 py-2.5 text-right font-medium">Amount</th>
+                <th className="px-4 py-2.5 text-right font-medium">Overdue</th>
+                <th className="px-4 py-2.5 font-medium">Tier</th>
+                <th className="px-4 py-2.5 font-medium">Reason</th>
+                <th className="px-4 py-2.5 font-medium">Status</th>
+                <th className="px-4 py-2.5 font-medium">Next</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-line-2">
+              {queue.map((row) => (
+                <tr key={row.id} className="transition hover:bg-panel-2">
+                  <td className="px-4 py-2.5">
+                    <Link
+                      href={`/invoices/${row.id}`}
+                      className="font-mono text-[13px] text-accent hover:underline"
+                    >
+                      {row.invoice_number}
+                    </Link>
+                  </td>
+                  <td className="px-4 py-2.5 text-ink-2">{row.customer_name}</td>
+                  <td className="px-4 py-2.5 text-right font-medium tabular-nums text-ink">
+                    {row.amount_display}
+                  </td>
+                  <td className="px-4 py-2.5 text-right tabular-nums text-ink-3">
+                    {row.days_overdue}d
+                  </td>
+                  <td className="px-4 py-2.5">
+                    <TierBadge label={row.tier_label} />
+                  </td>
+                  <td className="px-4 py-2.5">
+                    <ReasonBadge reason={row.reason_category} />
+                  </td>
+                  <td className="px-4 py-2.5">
+                    <StatusBadge status={row.status} />
+                  </td>
+                  <td className="px-4 py-2.5 text-xs text-ink-3">{row.next_action}</td>
+                </tr>
+              ))}
+              {queue.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="px-4 py-10 text-center text-sm text-ink-3">
+                    Nothing in the queue.
+                  </td>
+                </tr>
+              ) : null}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  );
+}

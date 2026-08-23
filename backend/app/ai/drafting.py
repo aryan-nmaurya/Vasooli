@@ -86,8 +86,7 @@ _TEMPLATES = {
         "Hello {customer_name},\n\n"
         "This is a gentle reminder that invoice {invoice_number} for Rs {amount} "
         "was due on {due_date} and is showing as unpaid.\n\n"
-        "If it has already been sent, please ignore this note. Otherwise you can "
-        "settle it here:\n{payment_url}\n\n"
+        "If it has already been sent, please ignore this note.{payment_block}\n\n"
         "Thanks very much,\n{merchant_name}",
     ),
     2: (
@@ -96,7 +95,7 @@ _TEMPLATES = {
         "Invoice {invoice_number} for Rs {amount} was due on {due_date} and is now "
         "{days_overdue} days overdue.\n\n"
         "Could you confirm when we can expect payment, or let us know if something "
-        "is holding it up? You can pay here:\n{payment_url}\n\n"
+        "is holding it up?{payment_block}\n\n"
         "Thanks,\n{merchant_name}",
     ),
     3: (
@@ -106,7 +105,7 @@ _TEMPLATES = {
         "and remains unpaid despite our earlier messages.\n\n"
         "This is the last automated reminder we will send. A colleague will follow up "
         "with you directly. If payment has already been made, please let us know so we "
-        "can update our records.\n\nPayment link:\n{payment_url}\n\n"
+        "can update our records.{payment_block}\n\n"
         "Regards,\n{merchant_name}",
     ),
 }
@@ -127,6 +126,12 @@ def template_draft(inputs: DraftInputs) -> Draft:
         "due_date": inputs.due_date,
         "days_overdue": inputs.days_overdue,
         "payment_url": inputs.payment_url,
+        # Omitted entirely when provisioning has not run, rather than leaving a
+        # dangling "Payment link:" with nothing after it — which is what a customer
+        # would see if the label were unconditional.
+        "payment_block": (
+            f"\n\nYou can pay here:\n{inputs.payment_url}" if inputs.payment_url else ""
+        ),
     }
     return Draft(
         subject=subject_tpl.format(**fields),

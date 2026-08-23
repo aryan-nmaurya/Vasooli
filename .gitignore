@@ -22,7 +22,7 @@ node_modules/
 frontend/out/
 
 # Local data + eval output
-eval/out/
+**/eval/out/
 *.log
 
 # OS

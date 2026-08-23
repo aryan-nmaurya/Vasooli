@@ -310,22 +310,35 @@ def test_one_bad_invoice_does_not_stop_the_cycle(session, merchant, customer, mo
 
 def test_a_second_cycle_cannot_run_concurrently(session, merchant, customer):
     """APScheduler's max_instances only guards one process; a second Railway worker
-    would happily run a parallel cycle and both would approve the same send."""
+    would happily run a parallel cycle and both would approve the same send.
+
+    Uses pg_try_advisory_lock, not pg_advisory_lock: the blocking variant waits
+    forever if a previous run died holding the lock, which turns a failing test into
+    a hung test suite.
+    """
+    from sqlalchemy import text
     from sqlmodel import Session as RawSession
 
     from app.core.db import engine
+    from app.services.recovery import CYCLE_LOCK_ID
 
     make_invoice(session, merchant, customer, overdue=TIER_1_DAYS_OVERDUE)
 
-    with RawSession(engine) as holder:
-        from sqlalchemy import text
+    holder = RawSession(engine)
+    try:
+        acquired = bool(
+            holder.exec(text("SELECT pg_try_advisory_lock(:k)").bindparams(k=CYCLE_LOCK_ID)).one()[
+                0
+            ]
+        )
+        assert acquired, "another session is holding the cycle lock"
 
-        holder.exec(text("SELECT pg_advisory_lock(:k)").bindparams(k=0x7A500111)).one()
         report = cycle(session)
-        holder.exec(text("SELECT pg_advisory_unlock(:k)").bindparams(k=0x7A500111)).one()
-
-    assert report.sent == 0
-    assert any("already running" in e["error"] for e in report.errors)
+        assert report.sent == 0
+        assert any("already running" in e["error"] for e in report.errors)
+    finally:
+        holder.exec(text("SELECT pg_advisory_unlock_all()")).one()
+        holder.close()
 
 
 # ===========================================================================
