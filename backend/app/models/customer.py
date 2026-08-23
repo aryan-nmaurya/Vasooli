@@ -41,7 +41,7 @@ class Customer(SQLModel, table=True):
     name: str
     email: str = Field(index=True)
     # Razorpay's Customers API expects a contact number; a customer without one cannot
-    # be created there, which would fail virtual-account provisioning in Phase 3.
+    # be created there, and Razorpay rejects a Payment Link customer without one.
     phone: str | None = None
     razorpay_customer_id: str | None = Field(default=None, index=True)
 

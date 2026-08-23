@@ -104,12 +104,9 @@ class RazorpayClient:
     """
 
     def __init__(self, key_id: str | None = None, key_secret: str | None = None) -> None:
-        self._client = razorpay.Client(
-            auth=(
-                key_id or settings.razorpay_key_id,
-                key_secret or settings.razorpay_key_secret,
-            )
-        )
+        self._api_key_id = key_id or settings.razorpay_key_id
+        self._api_key_secret = key_secret or settings.razorpay_key_secret
+        self._client = razorpay.Client(auth=(self._api_key_id, self._api_key_secret))
         self._min_interval = settings.razorpay_min_request_interval_seconds
         self._last_call_at = 0.0
         self._pace_lock = threading.Lock()
@@ -130,7 +127,22 @@ class RazorpayClient:
     # distinction that matters to us is 4xx vs 5xx, not the exception class.
     # ------------------------------------------------------------------
 
+    def _is_configured(self) -> bool:
+        """Real credentials, or a placeholder?
+
+        Mirrors app.ai.client. Without this check a test run or a half-configured
+        deploy makes real HTTP calls with junk credentials, sits through the
+        transient-retry backoff, and takes thirty seconds to learn what is knowable
+        immediately — and quietly makes the test suite depend on the network.
+        """
+        return bool(self._api_key_id) and "PLACEHOLDER" not in self._api_key_id
+
     def _call(self, fn, *args, **kwargs):
+        if not self._is_configured():
+            # Permanent, not transient: retrying a placeholder key cannot help.
+            raise RazorpayPermanentError(
+                "Razorpay is not configured (RAZORPAY_KEY_ID is a placeholder)"
+            )
         self._pace()
         try:
             return fn(*args, **kwargs)

@@ -99,8 +99,8 @@ class InvoiceIngestRow(BaseModel):
 class BatchIngestRequest(BaseModel):
     merchant_id: uuid.UUID | None = None
     invoices: list[InvoiceIngestRow]
-    #: Phase 3 wires this up. Accepted now so the contract does not change later.
-    provision_virtual_accounts: bool = False
+    #: Create a Razorpay Payment Link for each invoice as it is ingested.
+    provision_payment_links: bool = False
     #: Recompute due dates so the ledger lands on today's tier boundaries. Lets a CSV
     #: generated last week still produce a demo with invoices at day 3, 10, and 21.
     rebase_dates: bool = False

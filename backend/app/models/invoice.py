@@ -85,6 +85,18 @@ class Invoice(SQLModel, table=True):
     current_tier: int = 0
     last_reminder_at: datetime | None = Field(sa_column=timestamp_column(nullable=True))
 
+    # --- Customer replies (Doc §3 Stage 2/4) ---------------------------------
+    #: Whether the customer has ever answered, and when.
+    #:
+    #: Persisted on the invoice rather than derived from the audit log, because
+    #: diagnosis needs it on every cycle. "Unresponsive" is DEFINED as no reply after
+    #: the Tier 2 reminder, so a customer who wrote "I cannot pay until Friday" and is
+    #: then classified unresponsive is not a cosmetic error: it changes the tone of the
+    #: next message and whether the invoice is handed to a human.
+    reply_count: int = 0
+    last_reply_at: datetime | None = Field(sa_column=timestamp_column(nullable=True))
+    last_reply_excerpt: str | None = None
+
     escalated_to_human_at: datetime | None = Field(sa_column=timestamp_column(nullable=True))
     escalation_reason: str | None = None
 
@@ -127,6 +139,11 @@ class Invoice(SQLModel, table=True):
     @property
     def outstanding_display(self) -> str:
         return format_inr(self.outstanding_paise)
+
+    @property
+    def has_replied(self) -> bool:
+        """Has this customer ever answered a reminder?"""
+        return self.reply_count > 0
 
     @property
     def is_in_automation(self) -> bool:

@@ -4,8 +4,12 @@ Run these as modules from `backend/`, e.g. `uv run python -m scripts.seed`.
 
 | Script | Purpose |
 |---|---|
-| `check_razorpay.py` | Pre-flight: is Smart Collect usable on this account? Run before Phase 3 |
-| `generate_synthetic.py` | Write the demo and eval ledgers + reply fixtures (Phase 2) |
-| `seed.py` | Load a ledger CSV into the database, idempotently (Phase 2) |
-| `replay_webhook.py` | Sign and POST a saved Razorpay payload locally (Phase 4) |
-| `demo_reset.py` | Wipe, seed, provision, fast-forward to demo state (Phase 13) |
+| `check_razorpay.py` | Pre-flight: can this account create Payment Links? |
+| `generate_synthetic.py` | Write the demo and eval ledgers + reply fixtures |
+| `seed.py` | Load a ledger CSV into the database, idempotently |
+| `demo_reset.py` | Wipe and seed the curated 8-invoice demo set, with payment links |
+| `replay_webhook.py` | Sign and POST a Razorpay-shaped payload locally (**demo simulation**) |
+
+`replay_webhook.py` builds a payload in Razorpay's shape and signs it with the real
+webhook secret. It proves our handling is correct; it does **not** prove Razorpay sends
+what we think. Use a genuine test payment for that at least once.

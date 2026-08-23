@@ -5,22 +5,17 @@ import uuid
 from fastapi import APIRouter, HTTPException, status
 from sqlmodel import select
 
-from app.api.deps import AdminRequired
+from app.api.deps import OperatorRequired
 from app.core.db import SessionDep
 from app.models import Customer, Invoice, PaymentLink
 from app.schemas.invoice import BatchIngestRequest, BatchIngestResponse, InvoiceRead
 from app.services.ingestion import ingest_batch
 from app.services.provisioning import ProvisioningError, provision_batch, provision_for_invoice
 
-router = APIRouter(prefix="/api/invoices", tags=["invoices"])
+router = APIRouter(prefix="/api/invoices", tags=["invoices"], dependencies=[OperatorRequired])
 
 
-@router.post(
-    "/batch",
-    response_model=BatchIngestResponse,
-    status_code=status.HTTP_202_ACCEPTED,
-    dependencies=[AdminRequired],
-)
+@router.post("/batch", response_model=BatchIngestResponse, status_code=status.HTTP_202_ACCEPTED)
 def ingest_invoices(payload: BatchIngestRequest, session: SessionDep) -> BatchIngestResponse:
     """Ingest a batch of overdue invoices.
 
@@ -66,7 +61,7 @@ def list_invoices(session: SessionDep, limit: int = 50, offset: int = 0) -> list
     ]
 
 
-@router.post("/{invoice_id}/provision", dependencies=[AdminRequired])
+@router.post("/{invoice_id}/provision")
 def provision_invoice(invoice_id: uuid.UUID, session: SessionDep) -> dict[str, str]:
     """Create this invoice's payment link, or return the existing one.
 
@@ -84,7 +79,7 @@ def provision_invoice(invoice_id: uuid.UUID, session: SessionDep) -> dict[str, s
     }
 
 
-@router.post("/provision-batch", dependencies=[AdminRequired])
+@router.post("/provision-batch")
 def provision_all(session: SessionDep, limit: int | None = None) -> dict:
     """Provision every invoice that has no payment link yet."""
     return provision_batch(session, limit=limit)

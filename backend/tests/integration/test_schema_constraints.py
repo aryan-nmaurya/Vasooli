@@ -20,8 +20,8 @@ from app.models import AuditLog, Invoice, Promise, ReconciliationEvent, Reminder
 def _event(event_id: str = "evt_test_001") -> ReconciliationEvent:
     return ReconciliationEvent(
         provider_event_id=event_id,
-        event_type="virtual_account.credited",
-        raw_payload={"event": "virtual_account.credited"},
+        event_type="payment_link.paid",
+        raw_payload={"event": "payment_link.paid"},
         signature_verified=True,
     )
 
@@ -256,11 +256,11 @@ def test_audit_log_survives_an_invoiceless_event(session):
 
 
 # ---------------------------------------------------------------------------
-# Virtual accounts. Doc §4.
+# Payment links. Doc §4.
 # ---------------------------------------------------------------------------
 
 
-def test_one_virtual_account_per_invoice(session, invoice):
+def test_one_payment_link_per_invoice(session, invoice):
     """A retried provisioning run must not create a second payable account."""
     from app.models import PaymentLink
 

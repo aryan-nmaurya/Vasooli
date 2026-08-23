@@ -2,28 +2,44 @@
 
 from typing import Annotated
 
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Cookie, Depends, Header, HTTPException, status
 
-from app.core.config import settings
+from app.core.security import check_admin_key, verify_session_token
 
 
-def require_admin(x_admin_key: Annotated[str | None, Header()] = None) -> None:
-    """Guard for endpoints that mutate state or trigger outbound work.
+def require_operator(
+    x_admin_key: Annotated[str | None, Header()] = None,
+    vasooli_session: Annotated[str | None, Cookie()] = None,
+) -> str:
+    """Every endpoint that touches merchant data or changes state.
 
-    Compared with `secrets.compare_digest` so the check does not leak key length or a
-    matching prefix through response timing.
+    Accepts either credential:
 
-    This key must never reach the browser. The Phase 10 dashboard calls these
-    endpoints through a Next.js route handler that holds the key server-side; a
-    NEXT_PUBLIC_ variable would ship it in the client bundle.
+    * `X-Admin-Key` — scripts, the scheduler, and the dashboard's server-side proxy.
+    * A session cookie — a browser that has logged in.
+
+    Applied to reads as well as writes. An invoice ledger is customer names, email
+    addresses, amounts owed, and a full audit trail; leaving that readable to anyone
+    who knows the URL is a data breach whether or not they can also change anything.
+
+    Returns 401 (not 403): the caller is unauthenticated, and 403 would imply a
+    recognised identity that lacks permission.
     """
-    import secrets
+    if check_admin_key(x_admin_key):
+        return "service"
 
-    if not x_admin_key or not secrets.compare_digest(x_admin_key, settings.admin_api_key):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing or invalid X-Admin-Key",
-        )
+    subject = verify_session_token(vasooli_session)
+    if subject:
+        return subject
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Authentication required",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
 
 
-AdminRequired = Depends(require_admin)
+OperatorRequired = Depends(require_operator)
+
+#: Retained so existing call sites keep working. Same gate — Vasooli has one role.
+AdminRequired = OperatorRequired

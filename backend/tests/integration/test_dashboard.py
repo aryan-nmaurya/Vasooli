@@ -5,6 +5,7 @@ from datetime import UTC, date, datetime, timedelta
 import pytest
 from fastapi.testclient import TestClient
 
+from app.core.config import settings
 from app.core.constants import InvoiceStatus, PromiseStatus, ReasonCategory
 from app.main import create_app
 from app.models import AuditLog, Invoice, Promise, Reminder
@@ -13,7 +14,13 @@ from app.services.metrics import compute_metrics
 
 @pytest.fixture
 def api(session):
+    """An authenticated client.
+
+    Every dashboard endpoint is gated now, so these tests carry a credential. The
+    unauthenticated cases live in test_auth.py rather than being duplicated here.
+    """
     with TestClient(create_app()) as c:
+        c.headers.update({"X-Admin-Key": settings.admin_api_key})
         yield c
 
 
@@ -288,21 +295,25 @@ def test_audit_is_newest_first_and_filterable(api, session, merchant, customer):
 # ===========================================================================
 
 
-def test_manual_escalate_needs_the_admin_key(api, session, merchant, customer):
+def test_manual_escalate_needs_a_credential(session, merchant, customer):
+    """Uses a deliberately anonymous client: the shared `api` fixture is logged in."""
     inv = add_invoice(
         session, merchant, customer, number="E1", amount=100_000, status=InvoiceStatus.CHASING
     )
-    assert api.post(f"/api/dashboard/invoices/{inv.id}/escalate").status_code == 401
+    with TestClient(create_app()) as anon:
+        assert anon.post(f"/api/dashboard/invoices/{inv.id}/escalate").status_code == 401
 
-    ok = api.post(
-        f"/api/dashboard/invoices/{inv.id}/escalate", headers={"X-Admin-Key": "PLACEHOLDER"}
+
+def test_manual_escalate_works_when_authenticated(api, session, merchant, customer):
+    inv = add_invoice(
+        session, merchant, customer, number="E2", amount=100_000, status=InvoiceStatus.CHASING
     )
-    assert ok.status_code in (200, 401)  # depends on the test env key
+    resp = api.post(f"/api/dashboard/invoices/{inv.id}/escalate")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == InvoiceStatus.HUMAN_REVIEW
 
 
 def test_write_off_removes_the_invoice_from_the_outstanding_total(api, session, merchant, customer):
-    from app.core.config import settings
-
     inv = add_invoice(
         session, merchant, customer, number="WO1", amount=500_000, status=InvoiceStatus.CHASING
     )

@@ -11,12 +11,12 @@ import uuid
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 
-from app.api.deps import AdminRequired
+from app.api.deps import OperatorRequired
 from app.core.db import SessionDep
 from app.models import Invoice
 from app.services.replies import handle_reply
 
-router = APIRouter(prefix="/api", tags=["replies"])
+router = APIRouter(prefix="/api", tags=["replies"], dependencies=[OperatorRequired])
 
 
 class SimulatedReply(BaseModel):
@@ -35,11 +35,7 @@ class ReplyResponse(BaseModel):
     note: str
 
 
-@router.post(
-    "/invoices/{invoice_id}/simulate-reply",
-    response_model=ReplyResponse,
-    dependencies=[AdminRequired],
-)
+@router.post("/invoices/{invoice_id}/simulate-reply", response_model=ReplyResponse)
 def simulate_reply(
     invoice_id: uuid.UUID, payload: SimulatedReply, session: SessionDep
 ) -> ReplyResponse:

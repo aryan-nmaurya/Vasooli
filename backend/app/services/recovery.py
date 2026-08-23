@@ -26,6 +26,7 @@ from sqlmodel import Session, select
 from app.ai import DiagnosisInputs, DraftInputs, diagnose, draft_reminder
 from app.core.clock import days_overdue as days_overdue_for
 from app.core.clock import today_ist, utcnow
+from app.core.config import settings
 from app.core.constants import (
     PROMISE_GRACE_DAYS,
     InvoiceStatus,
@@ -47,7 +48,9 @@ from app.models import (
 )
 from app.policy import RequiredAction, evaluate_reminder, next_tier_for
 from app.policy.banned_language import find_banned_phrases
-from app.services.messaging import deliver_reminder
+from app.services.closure import retry_pending_closures
+from app.services.messaging import deliver_reminder, retry_failed_deliveries
+from app.services.reconciliation import retry_failed_events
 
 log = get_logger("recovery")
 
@@ -66,6 +69,12 @@ class CycleReport:
     promises_broken: int = 0
     diagnosed: int = 0
     skipped_no_tier: int = 0
+    deliveries_retried: int = 0
+    deliveries_recovered: int = 0
+    closures_retried: int = 0
+    closures_completed: int = 0
+    events_retried: int = 0
+    events_recovered: int = 0
     errors: list[dict[str, str]] = field(default_factory=list)
 
     def as_dict(self) -> dict:
@@ -77,6 +86,12 @@ class CycleReport:
             "promises_broken": self.promises_broken,
             "diagnosed": self.diagnosed,
             "skipped_no_tier": self.skipped_no_tier,
+            "deliveries_retried": self.deliveries_retried,
+            "deliveries_recovered": self.deliveries_recovered,
+            "closures_retried": self.closures_retried,
+            "closures_completed": self.closures_completed,
+            "events_retried": self.events_retried,
+            "events_recovered": self.events_recovered,
             "errors": self.errors,
         }
 
@@ -171,7 +186,20 @@ def _ensure_diagnosis(
     no reply after Tier 2, so the same invoice can legitimately change category as it
     ages. Not run on every tick — only when the cycle is about to act.
     """
-    has_reply = False  # Phase 7 wires inbound replies in.
+    # Real reply history, not a placeholder.
+    #
+    # This was hardcoded False, which meant every customer who wrote back was still
+    # classified "unresponsive" after Tier 2 — the category reserved for people who
+    # ignore you. It changed the tone of the next reminder and could hand a
+    # cooperative customer to a human as a defaulter.
+    has_reply = invoice.has_replied
+    # A complaint sets DISPUTE_LIKELY and escalates at the time it arrives; carrying
+    # that forward keeps the classification stable on later cycles.
+    reply_has_complaint = (
+        invoice.reason_category == ReasonCategory.DISPUTE_LIKELY
+        or invoice.escalation_reason == "complaint_in_reply"
+    )
+
     inputs = DiagnosisInputs(
         total_invoices=customer.total_invoices,
         invoices_paid_late=customer.invoices_paid_late,
@@ -182,7 +210,7 @@ def _ensure_diagnosis(
         days_overdue=days_overdue_for(invoice.due_at),
         has_prior_dispute_note=invoice.has_prior_dispute_note,
         has_reply=has_reply,
-        reply_has_complaint=False,
+        reply_has_complaint=reply_has_complaint,
         current_tier=invoice.current_tier,
     )
     result = diagnose(inputs, invoice_number=invoice.invoice_number, use_llm=use_llm)
@@ -193,6 +221,27 @@ def _ensure_diagnosis(
     invoice.reason_diagnosed_at = utcnow()
     invoice.reason_llm_disagreed = result.llm_disagreed
     session.add(invoice)
+
+    if use_llm and result.source == "rule_based":
+        # The model was unavailable and deterministic rules produced this. Recorded so
+        # a plainer explanation on the dashboard is explained rather than mysterious.
+        session.add(
+            AuditLog(
+                invoice_id=invoice.id,
+                actor=AuditActor.AI,
+                action=AuditAction.LLM_UNAVAILABLE,
+                detail={"task": "diagnose", "fell_back_to_deterministic": True},
+            )
+        )
+    elif use_llm and result.source != settings.gemini_primary_model:
+        session.add(
+            AuditLog(
+                invoice_id=invoice.id,
+                actor=AuditActor.AI,
+                action=AuditAction.LLM_FAILOVER,
+                detail={"task": "diagnose", "answered_by": result.source},
+            )
+        )
 
     session.add(
         AuditLog(
@@ -257,11 +306,21 @@ def run_recovery_cycle(
     # it. That leak makes every later cycle in the process report "already running"
     # and quietly do nothing.
     lock_conn = engine.connect()
+    # An orphaned lock connection would otherwise hold the lock forever and disable
+    # every future cycle — a failure that looks like "the scheduler stopped working"
+    # with nothing in the logs. Postgres closes an idle session after this timeout,
+    # which releases the lock on its own.
+    lock_conn.execute(text("SET idle_session_timeout = '10min'"))
     got_lock = bool(
         lock_conn.execute(
             text("SELECT pg_try_advisory_lock(:key)"), {"key": CYCLE_LOCK_ID}
         ).scalar()
     )
+    # Commit immediately. The advisory lock is session-scoped and survives this, but
+    # leaving the transaction open parks the connection in "idle in transaction",
+    # where the idle-session timeout does not apply and the lock cannot self-heal.
+    lock_conn.commit()
+
     if not got_lock:
         lock_conn.close()
         log.warning("recovery.cycle_already_running")
@@ -271,6 +330,25 @@ def run_recovery_cycle(
     try:
         sweep_promises(session, report)
         session.commit()
+
+        # Re-attempt failed deliveries before choosing new tiers. A customer owed a
+        # Tier 1 reminder that bounced should get that one, not skip to Tier 2.
+        if not dry_run:
+            retry = retry_failed_deliveries(session)
+            report.deliveries_retried = retry["attempted"]
+            report.deliveries_recovered = retry["recovered"]
+
+            # A recovered invoice whose link is still live is a customer who can pay
+            # twice. Transient Razorpay failures during reconciliation land here.
+            closures = retry_pending_closures(session)
+            report.closures_retried = closures["attempted"]
+            report.closures_completed = closures["closed"]
+
+            # Webhooks that failed reconciliation. Razorpay has stopped redelivering
+            # them (we returned 200), so this sweep is the only thing that will.
+            events = retry_failed_events(session)
+            report.events_retried = events["attempted"]
+            report.events_recovered = events["recovered"]
 
         merchant = session.exec(select(Merchant)).first()
         merchant_name = merchant.name if merchant else "Vasooli"
@@ -296,9 +374,13 @@ def run_recovery_cycle(
                 report.errors.append({"invoice_number": invoice.invoice_number, "error": str(exc)})
                 log.exception("recovery.invoice_failed", invoice_number=invoice.invoice_number)
     finally:
-        lock_conn.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": CYCLE_LOCK_ID})
-        lock_conn.commit()
-        lock_conn.close()
+        try:
+            lock_conn.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": CYCLE_LOCK_ID})
+            lock_conn.commit()
+        finally:
+            # Closing is what actually guarantees release, even if the unlock
+            # statement itself failed on a broken connection.
+            lock_conn.close()
 
     log.info("recovery.cycle_complete", **report.as_dict())
     return report
@@ -315,13 +397,35 @@ def _process_invoice(
 ) -> None:
     """Decide and act on one invoice. Committed by the caller."""
     days_overdue = days_overdue_for(invoice.due_at)
+    # Successfully DELIVERED tiers only. A reminder row whose send failed has
+    # `sent_at` NULL and must not count: counting it made the cycle believe the tier
+    # was done, so the customer never received that reminder and the invoice was
+    # never chased again — a silent strand with no error anywhere.
     sent_tiers = frozenset(
         r.tier
-        for r in session.exec(select(Reminder).where(Reminder.invoice_id == invoice.id)).all()
+        for r in session.exec(
+            select(Reminder).where(
+                Reminder.invoice_id == invoice.id,
+                Reminder.sent_at.is_not(None),  # type: ignore[union-attr]
+            )
+        ).all()
+    )
+
+    # A tier already attempted and awaiting retry must not be re-drafted as a new
+    # send: the customer is owed the message policy already approved, and the unique
+    # constraint on (invoice_id, tier) would reject the duplicate anyway.
+    pending_tiers = frozenset(
+        r.tier
+        for r in session.exec(
+            select(Reminder).where(
+                Reminder.invoice_id == invoice.id,
+                Reminder.sent_at.is_(None),  # type: ignore[union-attr]
+            )
+        ).all()
     )
 
     tier = next_tier_for(days_overdue=days_overdue, sent_tiers=sent_tiers)
-    if tier is None:
+    if tier is None or tier in pending_tiers:
         report.skipped_no_tier += 1
         return
 
@@ -330,6 +434,17 @@ def _process_invoice(
         raise ValueError("invoice has no customer")
 
     _ensure_diagnosis(session, invoice, customer, report, use_llm=use_llm)
+
+    # Commit the diagnosis before drafting.
+    #
+    # Writing to the invoice takes a row lock that Postgres holds until commit. Left
+    # open, it would span the drafting call — an external HTTP request to the model —
+    # and a payment webhook arriving in that window would block on the invoice row
+    # until the model replied. A slow model would stall reconciliation of real money.
+    #
+    # Same rule as the Razorpay closure: never hold a database lock across a network
+    # call to a third party.
+    session.commit()
 
     # Dispute-likely never reaches a drafting call. Doc §3 Stage 2 routes it straight
     # to a human, and generating copy we will not send is wasted tokens and a
@@ -358,6 +473,27 @@ def _process_invoice(
         tier=tier,
     )
     draft = draft_reminder(draft_inputs, use_llm=use_llm)
+
+    if use_llm and draft.generated_by == "template_fallback":
+        # Either no model answered, or one did and its figures did not match the
+        # invoice. Both end here, and both are worth a human being able to see.
+        session.add(
+            AuditLog(
+                invoice_id=invoice.id,
+                actor=AuditActor.AI,
+                action=AuditAction.DETERMINISTIC_FALLBACK,
+                detail={"task": "draft_reminder", "tier": tier},
+            )
+        )
+    elif use_llm and draft.degraded:
+        session.add(
+            AuditLog(
+                invoice_id=invoice.id,
+                actor=AuditActor.AI,
+                action=AuditAction.LLM_FAILOVER,
+                detail={"task": "draft_reminder", "answered_by": draft.generated_by},
+            )
+        )
 
     decision = evaluate_reminder(
         invoice_number=invoice.invoice_number,
@@ -428,9 +564,46 @@ def _process_invoice(
         report.sent += 1
         return
 
+    # Final check under a row lock, immediately before sending.
+    #
+    # Everything between tier selection and here involved external calls — diagnosis
+    # and drafting both hit the model — and a payment or a promise can land in that
+    # window. Chasing a customer who has already paid is the worst false positive this
+    # system can produce, and it is the one a merchant hears about.
+    #
+    # The lock is taken here rather than around the whole function deliberately: held
+    # across the LLM calls it would pin the invoice row for the length of a network
+    # request, and a slow model would block reconciliation of a real payment.
+    # populate_existing is what makes this a real check.
+    #
+    # Without it SQLAlchemy hands back the object already in the identity map, carrying
+    # the attribute values it was loaded with — so the row gets locked, the SQL runs,
+    # and the guard still reads a stale `status` and `amount_paid_paise` from before
+    # the payment. The lock would be real and the check would be theatre.
+    fresh = session.exec(
+        select(Invoice)
+        .where(Invoice.id == invoice.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).one()
+    if fresh.is_fully_paid or fresh.status in (
+        InvoiceStatus.RECOVERED,
+        InvoiceStatus.WRITTEN_OFF,
+        InvoiceStatus.HUMAN_REVIEW,
+        InvoiceStatus.PROMISE_ACTIVE,
+    ):
+        log.info(
+            "recovery.aborted_before_send",
+            invoice_number=fresh.invoice_number,
+            status=str(fresh.status),
+            paid=fresh.is_fully_paid,
+        )
+        report.held += 1
+        return
+
     deliver_reminder(
         session,
-        invoice=invoice,
+        invoice=fresh,
         customer=customer,
         tier=tier,
         draft=draft,
@@ -441,5 +614,5 @@ def _process_invoice(
     # Tier 3 both sends AND hands over. Doc §3: Vasooli does not escalate beyond this
     # on its own, so the final notice goes out and a human takes it from there.
     if tier == 3:
-        escalate_to_human(session, invoice, "tier_3_reached")
+        escalate_to_human(session, fresh, "tier_3_reached")
         report.escalated += 1

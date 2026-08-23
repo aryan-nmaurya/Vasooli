@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 
 import { ProvenanceBadge, ReasonBadge, StatusBadge } from "@/components/badges";
 import { PolicyCard } from "@/components/PolicyCard";
+import { ProvisionButton } from "@/components/ProvisionButton";
 import { SimulateReply } from "@/components/SimulateReply";
 import { getInvoice } from "@/lib/api";
 
@@ -88,7 +89,9 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
             Razorpay status: {invoice.payment_link_status ?? "—"}
           </div>
         </section>
-      ) : null}
+      ) : (
+        <ProvisionButton invoiceId={invoice.id} />
+      )}
 
       <div className="grid gap-6 lg:grid-cols-[1.15fr_1fr]">
         <section>

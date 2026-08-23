@@ -12,17 +12,19 @@ rather than a new code path appearing on demo day.
 """
 
 from dataclasses import dataclass
+from datetime import timedelta
 
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from app.ai.drafting import Draft
 from app.core.clock import utcnow
 from app.core.config import settings
-from app.core.constants import TONE_FOR_TIER
+from app.core.constants import TONE_FOR_TIER, InvoiceStatus
 from app.core.logging import get_logger
 from app.integrations.email.base import EmailProvider
 from app.integrations.email.resend_client import ResendProvider
 from app.models import AuditAction, AuditActor, AuditLog, Customer, Invoice, Reminder
+from app.models.reminder import MAX_DELIVERY_ATTEMPTS
 from app.policy import PolicyDecision
 
 log = get_logger("messaging")
@@ -118,6 +120,68 @@ def _send_email(
     )
 
 
+def _backoff_seconds(attempt: int) -> int:
+    """Bounded exponential backoff: 5m, 10m, 20m, 40m, capped at 2h.
+
+    Bounded on purpose. An unbounded retry loop against a failing mail provider is a
+    self-inflicted denial of service, and one that arrives with our own API key
+    attached.
+    """
+    return min(300 * (2 ** max(0, attempt - 1)), 7200)
+
+
+def _record_attempt(reminder: Reminder, result: DeliveryResult) -> None:
+    """Fold one delivery outcome into the reminder row."""
+    reminder.attempt_count += 1
+    reminder.last_attempt_at = utcnow()
+
+    if result.sent:
+        reminder.sent_at = utcnow()
+        reminder.send_error = None
+        reminder.next_retry_at = None
+    else:
+        reminder.sent_at = None
+        reminder.send_error = (result.error or "unknown")[:500]
+        reminder.next_retry_at = (
+            utcnow() + timedelta(seconds=_backoff_seconds(reminder.attempt_count))
+            if reminder.attempt_count < MAX_DELIVERY_ATTEMPTS
+            else None  # exhausted; a human decides what happens next
+        )
+    reminder.provider = result.provider
+    reminder.provider_message_id = result.message_id
+
+
+def _audit_attempt(
+    session: Session,
+    invoice: Invoice,
+    reminder: Reminder,
+    customer: Customer,
+    result: DeliveryResult,
+) -> None:
+    session.add(
+        AuditLog(
+            invoice_id=invoice.id,
+            actor=AuditActor.SYSTEM,
+            action=AuditAction.REMINDER_SENT if result.sent else AuditAction.REMINDER_FAILED,
+            detail={
+                "tier": reminder.tier,
+                "tone": str(reminder.tone),
+                "subject": reminder.subject,
+                "provider": result.provider,
+                "generated_by": reminder.generated_by,
+                "llm_degraded": reminder.llm_degraded,
+                "to": customer.email,
+                "attempt": reminder.attempt_count,
+                "error": result.error,
+                "next_retry_at": (
+                    reminder.next_retry_at.isoformat() if reminder.next_retry_at else None
+                ),
+                "exhausted": (not result.sent and reminder.attempt_count >= MAX_DELIVERY_ATTEMPTS),
+            },
+        )
+    )
+
+
 def deliver_reminder(
     session: Session,
     *,
@@ -128,11 +192,13 @@ def deliver_reminder(
     decision: PolicyDecision,
     provider: EmailProvider | None = None,
 ) -> Reminder:
-    """Record and send one approved reminder, then advance the cadence counters.
+    """Attempt one reminder, recording the outcome either way.
 
-    The counters are denormalized onto the invoice because app.policy is pure and
-    cannot run a COUNT(*). They are updated here, in the same transaction as the
-    reminder row, so a crash between the two is not possible.
+    The row is written whether or not delivery succeeds, because an attempt that
+    failed is information a human needs. What the row does NOT do on failure is count
+    as a sent reminder: `sent_at` stays NULL, the invoice's cadence counters are
+    untouched, and the tier remains owed. Before that distinction existed, a bounced
+    email silently consumed the tier and the invoice was never chased again.
     """
     result = _send_email(
         to=customer.email,
@@ -149,37 +215,99 @@ def deliver_reminder(
         subject=draft.subject,
         body=draft.body,
         channel="email",
-        provider=result.provider,
-        provider_message_id=result.message_id,
         policy_decision=decision.to_dict(),
         generated_by=draft.generated_by,
         llm_degraded=draft.degraded,
-        sent_at=utcnow() if result.sent else None,
-        send_error=result.error,
     )
+    _record_attempt(reminder, result)
     session.add(reminder)
 
     if result.sent:
+        # Cadence counters advance only on a delivery a provider accepted. They are
+        # denormalized onto the invoice because app.policy is pure and cannot COUNT(*).
         invoice.reminders_sent += 1
         invoice.current_tier = tier
         invoice.last_reminder_at = utcnow()
         session.add(invoice)
 
-    session.add(
-        AuditLog(
-            invoice_id=invoice.id,
-            actor=AuditActor.SYSTEM,
-            action=AuditAction.REMINDER_SENT if result.sent else AuditAction.REMINDER_FAILED,
-            detail={
-                "tier": tier,
-                "tone": TONE_FOR_TIER[tier].value,
-                "subject": draft.subject,
-                "provider": result.provider,
-                "generated_by": draft.generated_by,
-                "llm_degraded": draft.degraded,
-                "to": customer.email,
-                "error": result.error,
-            },
-        )
-    )
+    _audit_attempt(session, invoice, reminder, customer, result)
     return reminder
+
+
+def retry_failed_deliveries(
+    session: Session,
+    *,
+    provider: EmailProvider | None = None,
+    limit: int = 50,
+) -> dict[str, int]:
+    """Re-attempt reminders whose delivery failed and whose backoff has elapsed.
+
+    Retries the SAME row rather than drafting a new message: the customer is owed the
+    message that was already approved by policy, and re-drafting would re-run the LLM
+    and produce different copy for the same tier.
+
+    Cooldown is not re-checked here, and does not need to be. `last_reminder_at`
+    advances only on a successful send, so a retry of a never-delivered message cannot
+    contact anyone twice inside the cooldown window.
+    """
+    now = utcnow()
+    due = session.exec(
+        select(Reminder)
+        .where(
+            Reminder.sent_at.is_(None),  # type: ignore[union-attr]
+            Reminder.attempt_count < MAX_DELIVERY_ATTEMPTS,
+            Reminder.next_retry_at.is_not(None),  # type: ignore[union-attr]
+            Reminder.next_retry_at <= now,  # type: ignore[operator]
+        )
+        .limit(limit)
+    ).all()
+
+    recovered = 0
+    still_failing = 0
+
+    for reminder in due:
+        invoice = session.get(Invoice, reminder.invoice_id)
+        if invoice is None:
+            continue
+
+        # An invoice settled or handed over since the attempt no longer needs chasing.
+        if invoice.status in (InvoiceStatus.RECOVERED, InvoiceStatus.WRITTEN_OFF):
+            reminder.next_retry_at = None
+            reminder.send_error = "abandoned: invoice no longer being chased"
+            session.add(reminder)
+            continue
+
+        customer = session.get(Customer, invoice.customer_id)
+        if customer is None:
+            continue
+
+        result = _send_email(
+            to=customer.email,
+            subject=reminder.subject,
+            body=reminder.body,
+            invoice_number=invoice.invoice_number,
+            provider=provider,
+        )
+        _record_attempt(reminder, result)
+        session.add(reminder)
+
+        if result.sent:
+            invoice.reminders_sent += 1
+            invoice.current_tier = max(invoice.current_tier, reminder.tier)
+            invoice.last_reminder_at = utcnow()
+            session.add(invoice)
+            recovered += 1
+        else:
+            still_failing += 1
+
+        _audit_attempt(session, invoice, reminder, customer, result)
+
+    session.commit()
+    if due:
+        log.info(
+            "messaging.retry_complete",
+            attempted=len(due),
+            recovered=recovered,
+            still_failing=still_failing,
+        )
+    return {"attempted": len(due), "recovered": recovered, "still_failing": still_failing}

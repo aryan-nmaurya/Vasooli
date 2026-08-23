@@ -81,12 +81,27 @@ def handle_reply(
     """Record a reply and act on what it says."""
     body = strip_quoted_text(raw_body)
 
+    # Record the reply on the invoice BEFORE deciding what it means.
+    #
+    # Diagnosis reads this on every later cycle. "Unresponsive" is defined as no reply
+    # after Tier 2, so a customer who answered — even vaguely — must never be
+    # classified that way. Before this existed, `has_reply` was hardcoded False and
+    # every replying customer eventually became "unresponsive".
+    invoice.reply_count += 1
+    invoice.last_reply_at = utcnow()
+    invoice.last_reply_excerpt = body[:400]
+    session.add(invoice)
+
     session.add(
         AuditLog(
             invoice_id=invoice.id,
             actor=AuditActor.SYSTEM,
             action=AuditAction.REPLY_RECEIVED,
-            detail={"excerpt": body[:400], "raw_length": len(raw_body)},
+            detail={
+                "excerpt": body[:400],
+                "raw_length": len(raw_body),
+                "reply_number": invoice.reply_count,
+            },
         )
     )
 
@@ -165,7 +180,15 @@ def handle_reply(
     )
     session.add(promise)
 
-    invoice.status = InvoiceStatus.PROMISE_ACTIVE
+    # A promise does NOT pull an invoice back out of human review.
+    #
+    # Contradictory replies happen: a customer disputes an invoice and then, later,
+    # offers to pay. Both are recorded — the promise is real information for whoever
+    # is handling the dispute — but only a person decides the dispute is settled. A
+    # keyword match on a later message must not quietly restart automated chasing on a
+    # bill the customer has contested.
+    if invoice.status != InvoiceStatus.HUMAN_REVIEW:
+        invoice.status = InvoiceStatus.PROMISE_ACTIVE
     session.add(invoice)
 
     session.add(
@@ -177,6 +200,7 @@ def handle_reply(
                 "promised_date": str(extraction.promised_date),
                 "confidence": extraction.confidence,
                 "tier_at_pause": invoice.current_tier,
+                "invoice_status": str(invoice.status),
                 "excerpt": extraction.excerpt[:300],
                 "source": extraction.source,
             },

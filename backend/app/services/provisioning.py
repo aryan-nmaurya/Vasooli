@@ -133,7 +133,7 @@ def provision_for_invoice(
             AuditLog(
                 invoice_id=invoice.id,
                 actor=AuditActor.RAZORPAY,
-                action=AuditAction.VA_PROVISION_FAILED,
+                action=AuditAction.PAYMENT_LINK_FAILED,
                 detail={
                     "invoice_number": invoice.invoice_number,
                     "error": str(exc),
@@ -160,7 +160,7 @@ def provision_for_invoice(
         AuditLog(
             invoice_id=invoice.id,
             actor=AuditActor.RAZORPAY,
-            action=AuditAction.VA_PROVISIONED,
+            action=AuditAction.PAYMENT_LINK_CREATED,
             detail={
                 "invoice_number": invoice.invoice_number,
                 "payment_link_id": result.id,

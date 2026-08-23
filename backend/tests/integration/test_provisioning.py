@@ -138,7 +138,7 @@ def test_permanent_failure_is_recorded_and_retryable_later(session, invoice):
     assert session.exec(select(PaymentLink)).all() == []
 
     entry = session.exec(
-        select(AuditLog).where(AuditLog.action == AuditAction.VA_PROVISION_FAILED)
+        select(AuditLog).where(AuditLog.action == AuditAction.PAYMENT_LINK_FAILED)
     ).one()
     assert entry.detail["retryable"] is False
 
@@ -153,7 +153,7 @@ def test_transient_failure_is_marked_retryable(session, invoice):
         provision_for_invoice(session, invoice.id, client=broken)
 
     entry = session.exec(
-        select(AuditLog).where(AuditLog.action == AuditAction.VA_PROVISION_FAILED)
+        select(AuditLog).where(AuditLog.action == AuditAction.PAYMENT_LINK_FAILED)
     ).one()
     assert entry.detail["retryable"] is True
 
@@ -237,7 +237,7 @@ def test_batch_respects_a_limit(session, merchant, customer, fake):
 def test_provisioning_is_audited(session, invoice, fake):
     link = provision_for_invoice(session, invoice.id, client=fake)
     entry = session.exec(
-        select(AuditLog).where(AuditLog.action == AuditAction.VA_PROVISIONED)
+        select(AuditLog).where(AuditLog.action == AuditAction.PAYMENT_LINK_CREATED)
     ).one()
     assert entry.detail["payment_link_id"] == link.razorpay_payment_link_id
     assert entry.detail["short_url"] == link.short_url

@@ -22,7 +22,7 @@ from app.core.db import SessionDep
 from app.core.logging import get_logger
 from app.integrations.razorpay_signature import verify_signature
 from app.models import AuditAction, AuditActor, AuditLog, ReconciliationEvent
-from app.services.reconciliation import process_event
+from app.services.reconciliation import begin_attempt, mark_event_failed, process_event
 
 router = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
 log = get_logger("webhooks")
@@ -91,18 +91,27 @@ async def razorpay_webhook(request: Request, session: SessionDep) -> dict[str, s
 
     session.refresh(event)
 
+    begin_attempt(session, event)
+    attempts = event.attempts
+    session.commit()
+
     try:
         process_event(session, event)
     except Exception as exc:  # noqa: BLE001
         # Record the failure rather than returning 5xx. A 5xx makes Razorpay retry,
-        # and retrying into an unhandled bug amplifies it. The event is stored, so the
-        # payment surfaces in the dashboard as needing attention instead of vanishing.
+        # and retrying into an unhandled bug amplifies it.
+        #
+        # But a 200 also means Razorpay stops trying, so the failure has to become OUR
+        # responsibility: mark_event_failed stores the error, counts the attempt, and
+        # schedules a retry. The event then appears in the reconciliation exceptions
+        # queue rather than existing only as a log line nobody reads.
         session.rollback()
         session.refresh(event)
-        event.processing_error = f"{type(exc).__name__}: {exc}"
-        session.add(event)
-        session.commit()
+        # The rollback undid the attempt counter too; restore it so the backoff and
+        # the retry limit still advance.
+        event.attempts = attempts
+        mark_event_failed(session, event, f"{type(exc).__name__}: {exc}")
         log.exception("webhook.processing_failed", event_id=event_id)
-        return {"status": "recorded_with_error", "event_id": event_id}
+        return {"status": "recorded_for_retry", "event_id": event_id}
 
     return {"status": "processed", "event_id": event_id}

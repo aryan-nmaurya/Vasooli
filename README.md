@@ -1,118 +1,240 @@
 # Vasooli
 
-**AI-powered B2B receivables recovery agent.** Chase. Track. Reconcile. Recover.
-
-Vasooli ingests overdue B2B invoices, diagnoses why each is at risk, chases them on a
-bounded and compliant escalation schedule, tracks the promises customers make to pay,
-and reconciles real incoming payments the moment Razorpay confirms them.
-
-**Current status: Phase 0 complete** — foundation, config, logging, health, CI.
+**AI-assisted B2B receivables recovery.** Chase. Track. Reconcile. Recover.
 
 ---
 
-## Quick start
+## 1. The problem
 
-Requires Python 3.12 or 3.13 and [uv](https://docs.astral.sh/uv/).
+Indian SMEs write off unpaid invoices not because customers refuse to pay, but because
+nobody has time to chase them properly. Chasing well means remembering who promised
+what, stopping when someone disputes an invoice, not nagging a customer who already
+paid, and knowing the moment money actually arrives. Done by hand, it is tedious and
+error-prone. Done by a naive script, it is worse: it nags everyone forever and
+damages the relationships the business runs on.
+
+## 2. The solution
+
+Vasooli chases overdue invoices on a bounded, auditable schedule. It diagnoses *why*
+each invoice is unpaid, writes a reminder in a tone that matches, stops the moment a
+customer promises to pay or disputes the bill, and stops permanently the moment money
+lands — confirmed by a signed webhook, not by a model's opinion.
+
+**The measured result** (150 held-out invoices, 45 simulated days — see §9):
+
+| | No chasing | Naive chaser | **Vasooli** |
+|---|---|---|---|
+| Recovery rate (by value) | 8.4% | 85.0% | **65.1%** |
+| Contacts per invoice | 0 | 5.17 | **1.10** |
+| Compliance breaches | 0 | **92** | **0** |
+
+Read that honestly: a naive chaser recovers more, by contacting people five times each
+and never stopping. Vasooli recovers 77% of that with **one-fifth the contacts** and
+zero breaches of its own rules. The claim is not "recovers the most" — it is "recovers
+most of it without behaviour you would be embarrassed to defend."
+
+## 3. Architecture
+
+```
+OVERDUE INVOICE
+      ↓
+  DIAGNOSIS ................ AI explains, deterministic rules decide
+      ↓
+  POLICY ENGINE ............ pure Python, 9 checks, no model involved
+      ↓
+  REMINDER ................. AI drafts, policy approves, then it sends
+      ↓
+  CUSTOMER REPLY ........... AI extracts, deterministic code acts
+      ↓
+  PROMISE / DISPUTE ........ pause escalation, or hand to a human
+      ↓
+  RAZORPAY PAYMENT LINK
+      ↓
+  SIGNED WEBHOOK ........... HMAC verified against the raw body
+      ↓
+  IDEMPOTENT RECONCILIATION  unique event id, running-total semantics
+      ↓
+  INVOICE RECOVERED
+      ↓
+  PAYMENT LINK CANCELLED ... recovery stops at the payment route too
+      ↓
+  APPEND-ONLY AUDIT TRAIL
+```
+
+**Layers**, enforced by tests that parse imports (`tests/architecture/`):
+
+```
+core  →  models  →  schemas  →  policy  →  ai  →  integrations  →  services  →  api
+```
+
+`app/ai` cannot import the database, the mailer, or the Razorpay client. That is not a
+convention — a test fails the build if it ever does.
+
+## 4. AI vs deterministic responsibilities
+
+| Decision | Owner | Why |
+|---|---|---|
+| Whether money arrived | **Deterministic** | Only a signature-verified Razorpay webhook |
+| How much was paid | **Deterministic** | Integer paise, running total, `max()` |
+| Whether to send a reminder | **Deterministic** | `app/policy` — 9 checks, pure functions |
+| Which tier / tone | **Deterministic** | Locked schedule: day 3, 10, 21 |
+| Whether to stop | **Deterministic** | Cap, cooldown, promise, dispute, payment |
+| Reason category | **Deterministic** | The four categories are rules over history |
+| *Explaining* the reason | AI | Plain-language sentence for the dashboard |
+| *Drafting* the reminder | AI | Tone and phrasing, then policy-checked |
+| *Reading* a customer reply | AI | Extracts a date; the system decides what it means |
+
+**The model can never mark an invoice paid.** Not by convention — the code that could
+do it is not reachable from `app/ai`.
+
+If both Gemini models are unavailable, Vasooli still diagnoses, still drafts (from
+templates), still sends, and still recovers. The output reads more plainly. Nothing
+stops.
+
+## 5. Razorpay integration
+
+**Payment Links.** Not Smart Collect / Virtual Accounts — Razorpay confirmed that
+product is unavailable for this merchant's business type, so it is not used and not
+claimed anywhere.
+
+- One Payment Link per invoice, idempotent on `reference_id`
+- `accept_partial: true` — a customer paying half is a customer paying
+- Matching is deterministic and never uses the amount: `payment_link_id`, then
+  `notes.invoice_id`, then `reference_id`. If none match, it goes to a human
+- Webhooks: `payment_link.paid`, `payment_link.partially_paid`
+- Signature: HMAC-SHA256 over the **raw request body**, compared with `compare_digest`
+- On full payment the link is **cancelled**, so no second payment can arrive
+
+**Account limits found by testing, not assumption:**
+- Payment Links are capped at **₹50,000** on this account (₹50,000 works, ₹60,000 does not)
+- Test mode allows roughly **6 link creations per minute**; the client paces itself
+
+## 6. Recovery workflow
+
+| Day overdue | Action | Tone |
+|---|---|---|
+| 3 | Tier 1 reminder | Polite |
+| 10 | Tier 2 reminder | Firm |
+| 21 | Tier 3 reminder **+ handover to a human** | Final |
+
+At most **3 automated contacts, ever**. At least **7 days** between any two. A promise
+pauses escalation until 2 days after the promised date; a broken promise resumes at
+the tier it paused at, never back at polite. A dispute never enters the cadence at all.
+
+## 7. Safety mechanisms
+
+- **Reminder cap** — enforced by a database `CHECK`, not just code. The naive baseline
+  in our own evaluation could not be recorded, because the schema refused a 4th reminder
+- **Cooldown** — 7 days minimum, outranks the tier schedule
+- **Banned language** — 30+ patterns, matched on normalized text so spacing,
+  punctuation, and unicode lookalikes do not evade it. Runs on the model's output
+- **Dispute routing** — straight to a human, never drafted
+- **Append-only audit log** — a database trigger rejects `UPDATE`/`DELETE` for every
+  role, including the owner
+- **Auth** — every endpoint serving customer data or changing state requires a session
+  cookie or admin key. Health checks are the only exception
+- **Prompt injection** — customer replies are wrapped and labelled as data, but the
+  real defence is structural: the extraction function returns a value and has no
+  access to money, mail, or invoice status
+
+## 8. Failure handling
+
+| Failure | What happens |
+|---|---|
+| Email bounces | Recorded as a failed *attempt*. Tier is **not** consumed. Retried with backoff (5m→2h, 5 attempts), then surfaced to an operator |
+| Webhook processing fails | Stored with `status=failed`, retried with backoff (30s→15m, 6 attempts), visible in the exceptions queue, manually retryable |
+| Duplicate webhook | Rejected by a unique index on the provider event id. Answered 200 so Razorpay stops |
+| Out-of-order webhook | Amounts applied with `max()` — a stale event cannot walk a balance backwards |
+| Payment Link cancellation fails | The payment stays recorded. Cancellation becomes a retryable task; it can never undo reconciliation |
+| Gemini unavailable | Fails over to the fallback model, then to deterministic rules and templates |
+| Razorpay rate limit | Recognised as transient (Razorpay labels 429 as a *bad request*) and retried with backoff |
+| Two cycles at once | A Postgres advisory lock on a dedicated connection, with an idle-session timeout so a crashed run self-heals |
+
+## 9. Evaluation
+
+```bash
+cd backend && uv run python -m eval.run_eval --compare-baselines
+```
+
+Runs the **real** policy engine, recovery cycle, and webhook handler against 150
+held-out invoices over 45 simulated days. Razorpay and email are mocked at the
+integration boundary; nothing else is. Ground-truth labels live only in the CSV and are
+stripped at the ingestion boundary, so the classifier cannot see what it is scored
+against.
+
+Fixed seed → identical results. The behaviour model was fixed before any result was
+looked at, and is stated in `eval/config.py`.
+
+## 10. Setup
+
+**Requires:** Python 3.13, `uv`, Node 20+, PostgreSQL 17.
 
 ```bash
 cd backend
 uv sync
-cp .env.example .env      # then fill in the values
-```
-
-**Database** — either use the local Postgres you already have:
-
-```bash
+cp .env.example .env          # fill in the values below
 createdb vasooli
+uv run alembic upgrade head
+uv run python -m scripts.demo_reset
+uv run uvicorn app.main:app --reload
 ```
-
-...or start one in Docker (leave `DATABASE_URL` pointed at `localhost:5432`):
 
 ```bash
-docker compose up -d db
+cd frontend
+npm install
+cp .env.example .env.local    # NEXT_PUBLIC_API_URL, ADMIN_API_KEY, SESSION_SECRET, DASHBOARD_PASSWORD
+npm run dev
 ```
 
-**Run it:**
+**Environment variables**
 
-```bash
-uv run uvicorn app.main:app --reload   # from backend/
-```
-
-- Health: http://localhost:8000/health
-- API docs: http://localhost:8000/docs
-
----
-
-## Development
-
-```bash
-uv run pytest -q          # tests
-uv run ruff check .       # lint
-uv run ruff format .      # format
-uv run alembic upgrade head   # apply migrations
-```
-
----
-
-## Layout
-
-```
-backend/
-  app/
-    core/          config, constants, clock, money, logging, db — no business logic
-    models/        SQLModel entities                            (Phase 1)
-    schemas/       API request/response DTOs                    (Phase 2)
-    policy/        deterministic decisions — pure, no I/O        (Phase 5)
-    ai/            LLM tasks — advisory only, cannot send        (Phase 6)
-    integrations/  Razorpay, email, Gemini transport             (Phase 3, 6, 7)
-    services/      orchestration — the only layer that writes
-    api/           HTTP routers (health.py so far)
-    scheduler/     APScheduler jobs                              (Phase 8)
-  alembic/         migrations; URL comes from app settings, not alembic.ini
-  eval/            evaluation harness                            (Phase 11)
-  tests/           unit / integration / architecture
-  scripts/
-frontend/          Next.js dashboard                             (Phase 10)
-Docs/              product spec + implementation plan
-```
-
-Layers are ordered by what they may import, and the rule is enforced by
-`tests/architecture/test_layering.py` rather than by review: `ai/` cannot reach the
-email sender or Razorpay, and `policy/` cannot reach the database, the network, or a
-clock. That makes "the model recommends, deterministic code decides" a property of the
-import graph instead of a comment.
-
-## Conventions
-
-These are load-bearing — the plan's later phases assume them.
-
-| Rule | Why |
-|---|---|
-| Money is **integer paise**, never float | Float rupees produce reconciliation mismatches; Razorpay's API is already paise |
-| Cadence values (3 / 10 / 21) live only in `app/core/constants.py` | Enforced by a test; the plan's §0.1 rule |
-| Schema changes go through Alembic — no `create_all()` | Otherwise local and deployed schemas diverge silently |
-| All timestamps `TIMESTAMPTZ`, stored UTC; day math in `Asia/Kolkata` | Overdue counts must match what the merchant sees |
-| `EMAIL_DRY_RUN=true` until Phase 7 passes | Synthetic customers must never reach real inboxes |
-| The LLM never sends, never writes invoice status | The policy engine decides; the model only drafts and explains |
-
-## Configuration
-
-All settings are in `app/core/config.py`. A missing required variable fails at import
-with a message naming it — the app will not boot half-configured.
-
-### AI provider
-
-Google AI Studio, with a three-step failover chain:
-
-| Step | Model | Triggered by |
+| Variable | Purpose | Notes |
 |---|---|---|
-| 1 | `gemini-3.7-flash` (`GEMINI_PRIMARY_MODEL`) | — |
-| 2 | `gemini-3.6-flash` (`GEMINI_FALLBACK_MODEL`) | RPM/RPD quota, timeout, 5xx, or a schema-validation failure that survives one repair attempt |
-| 3 | Rule-based diagnosis + templated copy | both models unavailable |
+| `DATABASE_URL` | Postgres connection | |
+| `RAZORPAY_KEY_ID` / `_SECRET` | Payment Links | **Test keys only** (`rzp_test_…`) |
+| `RAZORPAY_WEBHOOK_SECRET` | Signature verification | From the dashboard webhook |
+| `GOOGLE_API_KEY` | Gemini | Free tier is **20 requests/day per model** |
+| `RESEND_API_KEY` | Email | |
+| `EMAIL_DRY_RUN` | Record without sending | `true` unless demoing |
+| `EMAIL_REDIRECT_TO` | Send everything here instead | **Required** to send live |
+| `ADMIN_API_KEY` | Service credential | Never exposed to the browser |
+| `DASHBOARD_PASSWORD` | Dashboard login | ≥12 chars in production |
+| `SESSION_SECRET` | Signs session cookies | ≥32 random chars in production |
 
-Step 3 is why a quota wall is a footnote rather than a broken demo: the four reason
-categories are defined as rules, so the model supplies explanation quality, not core
-capability. Every failover is written to the audit log.
+## 11. Demo instructions
 
-Model IDs are config, not code — a retired or mistyped ID is a `.env` edit. Verify the
-exact IDs your Google AI Studio key serves before Phase 6.
+See [`docs/DEMO.md`](docs/DEMO.md).
+
+## 12. Testing
+
+```bash
+cd backend
+uv run pytest                    # 473 tests
+uv run ruff check . && uv run ruff format --check .
+uv run alembic check             # no schema drift
+```
+
+Tests are hermetic: `tests/conftest.py` pins every external integration to a
+placeholder and asserts at session start that live email and live LLM calls are
+impossible. They never touch the network, the dev database, or your inbox.
+
+## 13. Known limitations
+
+Stated plainly, because a smaller honest demo beats a fake impressive one.
+
+- **Smart Collect is not used.** Razorpay does not offer it for this business type.
+  Collection is via Payment Links
+- **Payment Links are capped at ₹50,000** on this account, so the synthetic ledger uses
+  smaller invoices than a real B2B book would
+- **Inbound email is simulated.** Customer replies are fed through
+  `POST /api/invoices/{id}/simulate-reply`, which runs the identical extraction and
+  promise-pausing code a real inbound email would. Real inbound parsing needs a
+  verified domain and is **not implemented**. The dashboard labels this **Demo Controls**
+- **All outbound email is redirected** to a single inbox. The 60 synthetic customers
+  have invented domains
+- **Gemini free tier is 20 requests/day per model.** A full cycle over 8 invoices uses
+  roughly 14. When exhausted, Vasooli falls back to deterministic templates — visibly
+  labelled in the UI
+- **Single merchant, single operator role.** No multi-tenancy, no per-user accounts
+- **The evaluation's customers are simulated**, driven by a stated behaviour model. It
+  measures the policy, not real human behaviour

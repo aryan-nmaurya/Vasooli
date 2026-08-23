@@ -30,7 +30,9 @@ class Settings(BaseSettings):
     database_url: str
     db_echo: bool = False
 
-    # --- Razorpay (Smart Collect / Virtual Accounts) ---
+    # --- Razorpay (Payment Links) ---
+    # Smart Collect / Virtual Accounts is NOT used: Razorpay confirmed it is
+    # unavailable for this merchant's business type. See README.
     razorpay_key_id: str
     razorpay_key_secret: str
     razorpay_webhook_secret: str
@@ -66,6 +68,12 @@ class Settings(BaseSettings):
     # --- Ops ---
     scheduler_enabled: bool = True
     admin_api_key: str
+    #: Password for the dashboard login. Exchanged once for a signed session cookie;
+    #: never stored by the browser and never sent again after login.
+    dashboard_password: str = ""
+    #: HMAC key for session tokens. Rotating it invalidates every live session, which
+    #: is the intended way to force everyone out.
+    session_secret: str = ""
     # NoDecode: without it the dotenv source tries to JSON-parse this field before
     # our validator runs, so a comma-separated CORS_ORIGINS would be a hard error.
     cors_origins: Annotated[list[str], NoDecode] = Field(
@@ -113,6 +121,14 @@ class Settings(BaseSettings):
             )
         if self.admin_api_key in {"", "changeme", "local-dev-key"}:
             raise RuntimeError("ADMIN_API_KEY must be set to a real secret in production")
+        if not self.dashboard_password or len(self.dashboard_password) < 12:
+            raise RuntimeError(
+                "DASHBOARD_PASSWORD must be set to at least 12 characters in production"
+            )
+        if not self.session_secret or len(self.session_secret) < 32:
+            raise RuntimeError(
+                "SESSION_SECRET must be set to at least 32 random characters in production"
+            )
 
     def assert_safe_to_send(self) -> None:
         """Refuse to send live mail without a redirect target.

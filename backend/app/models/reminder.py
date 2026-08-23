@@ -1,4 +1,10 @@
-"""Escalation log — one row per reminder attempt. Doc §8."""
+"""Escalation log — one row per reminder tier, carrying its delivery attempts. Doc §8.
+
+A row is created when a send is ATTEMPTED, and `sent_at` is stamped only when a
+provider accepts it. The distinction matters: before it existed, a failed send still
+occupied the tier slot, the recovery cycle treated that tier as done, and the invoice
+was stranded — a customer who never received a reminder was never chased again.
+"""
 
 import uuid
 from datetime import datetime
@@ -16,6 +22,10 @@ from app.models.base import (
     pk_column,
     timestamp_column,
 )
+
+#: Give up after this many failed deliveries and leave it for a human. An address that
+#: has bounced five times is not going to start working.
+MAX_DELIVERY_ATTEMPTS = 5
 
 
 class Reminder(SQLModel, table=True):
@@ -54,11 +64,29 @@ class Reminder(SQLModel, table=True):
     generated_by: str = "template_fallback"
     llm_degraded: bool = Field(default=False, sa_column=bool_column())
 
+    #: Set only when a provider accepted the message. This — not the row's existence —
+    #: is what makes a tier "sent". A row with sent_at NULL is an attempt that failed
+    #: and is still owed to the customer.
     sent_at: datetime | None = Field(sa_column=timestamp_column(nullable=True))
     send_error: str | None = None
+
+    # --- Delivery attempts ---------------------------------------------------
+    #: Every attempt, successful or not. A row can be retried in place, so this is the
+    #: only record of how hard we tried.
+    attempt_count: int = 0
+    last_attempt_at: datetime | None = Field(sa_column=timestamp_column(nullable=True))
+    #: When the next retry becomes eligible. Bounded exponential backoff, so a provider
+    #: outage produces a handful of spaced attempts rather than a retry storm that
+    #: looks like an attack on our own mail provider.
+    next_retry_at: datetime | None = Field(sa_column=timestamp_column(nullable=True))
 
     created_at: datetime = Field(sa_column=timestamp_column(default_now=True))
 
     @property
     def was_sent(self) -> bool:
         return self.sent_at is not None
+
+    @property
+    def needs_retry(self) -> bool:
+        """A recorded attempt that never reached the customer."""
+        return self.sent_at is None and self.attempt_count < MAX_DELIVERY_ATTEMPTS

@@ -10,6 +10,7 @@ amount-based match would resolve it by guessing.
 """
 
 import uuid
+from datetime import timedelta
 from typing import Any
 
 from sqlmodel import Session, select
@@ -27,6 +28,8 @@ from app.models import (
     Promise,
     ReconciliationEvent,
 )
+from app.models.reconciliation_event import MAX_EVENT_ATTEMPTS, EventStatus
+from app.services.closure import close_link_for_invoice
 
 log = get_logger("reconciliation")
 
@@ -122,7 +125,11 @@ def process_event(session: Session, event: ReconciliationEvent) -> None:
     payload = event.raw_payload
 
     if event.event_type not in PAYMENT_EVENTS:
+        # Not an error. Cancellations and creations are stored for the audit trail and
+        # deliberately move no money.
+        event.status = EventStatus.IGNORED
         event.processed_at = utcnow()
+        event.next_retry_at = None
         session.add(event)
         session.commit()
         return
@@ -130,6 +137,11 @@ def process_event(session: Session, event: ReconciliationEvent) -> None:
     invoice, link, strategy = match_invoice(session, payload)
 
     if invoice is None:
+        # Terminal, not retryable: retrying cannot conjure a matching invoice. It needs
+        # a human to identify what this payment was for.
+        event.status = EventStatus.FAILED
+        event.attempts = MAX_EVENT_ATTEMPTS
+        event.next_retry_at = None
         event.processing_error = "unmatched_payment"
         event.processed_at = utcnow()
         session.add(event)
@@ -180,6 +192,9 @@ def process_event(session: Session, event: ReconciliationEvent) -> None:
     event.matched_invoice_id = locked.id
     event.match_strategy = strategy
     event.amount_paise = reported_paid - previous_paid
+    event.status = EventStatus.PROCESSED
+    event.processing_error = None
+    event.next_retry_at = None
     event.processed_at = utcnow()
     session.add(event)
     session.add(locked)
@@ -202,6 +217,23 @@ def process_event(session: Session, event: ReconciliationEvent) -> None:
     )
     session.commit()
 
+    # --- External side effect, strictly after the money is committed ---------
+    #
+    # The payment is now durable. Closing the link is a separate step that can fail
+    # without touching it. Doing this inside the transaction above would hold a lock
+    # on the invoice row across an HTTP call, and a Razorpay timeout would roll back a
+    # payment that genuinely arrived.
+    #
+    # Only on FULL payment: a partially paid invoice still needs its link open for the
+    # customer to pay the balance.
+    if locked.is_fully_paid:
+        try:
+            close_link_for_invoice(session, locked.id)
+        except Exception:  # noqa: BLE001
+            # Never let a closure problem surface as a reconciliation failure. The
+            # money is recorded; the link is flagged for retry inside close_*.
+            log.exception("reconciliation.closure_failed", invoice_number=locked.invoice_number)
+
     log.info(
         "reconciliation.applied",
         invoice_number=locked.invoice_number,
@@ -209,3 +241,128 @@ def process_event(session: Session, event: ReconciliationEvent) -> None:
         status=locked.status,
         match_strategy=strategy,
     )
+
+
+def _event_backoff(attempt: int) -> timedelta:
+    """Bounded exponential backoff: 30s, 1m, 2m, 4m, 8m, capped at 15m."""
+    return timedelta(seconds=min(30 * (2 ** max(0, attempt - 1)), 900))
+
+
+def begin_attempt(session: Session, event: ReconciliationEvent) -> None:
+    """Count an attempt before processing starts.
+
+    Counted here, at the boundary, rather than inside `process_event`: a failure
+    raised before the counter would otherwise leave `attempts` at zero, the backoff
+    would never widen, and the retry limit would never be reached.
+    """
+    event.attempts += 1
+    event.last_attempt_at = utcnow()
+    session.add(event)
+
+
+def mark_event_failed(session: Session, event: ReconciliationEvent, error: str) -> None:
+    """Record a processing failure so it can be found and retried.
+
+    Called when reconciliation raises. The webhook was already acknowledged with 200 —
+    that is what stops Razorpay redelivering — so without this the failure would exist
+    only in a log line, and a genuinely received payment would look like an unpaid
+    invoice forever.
+    """
+    event.status = EventStatus.FAILED
+    event.processing_error = f"{error}"[:500]
+    event.last_attempt_at = utcnow()
+    event.next_retry_at = (
+        utcnow() + _event_backoff(event.attempts)
+        if event.attempts < MAX_EVENT_ATTEMPTS
+        else None  # exhausted: an operator has to look at it
+    )
+    session.add(event)
+    session.add(
+        AuditLog(
+            invoice_id=event.matched_invoice_id,
+            actor=AuditActor.RAZORPAY,
+            action=AuditAction.RECONCILIATION_FAILED,
+            detail={
+                "event_id": event.provider_event_id,
+                "event_type": event.event_type,
+                "error": event.processing_error,
+                "attempts": event.attempts,
+                "next_retry_at": (event.next_retry_at.isoformat() if event.next_retry_at else None),
+                "exhausted": event.attempts >= MAX_EVENT_ATTEMPTS,
+            },
+        )
+    )
+    session.commit()
+    log.warning(
+        "reconciliation.failed",
+        event_id=event.provider_event_id,
+        attempts=event.attempts,
+        error=event.processing_error,
+    )
+
+
+def reprocess_event(session: Session, event: ReconciliationEvent) -> bool:
+    """Re-run reconciliation for one failed event. Returns True on success.
+
+    Safe to call repeatedly. `process_event` reads the running total Razorpay reports
+    and applies it with `max()`, so re-running against an invoice that already settled
+    changes nothing — the same property that makes duplicate webhooks harmless makes
+    retries harmless.
+    """
+    if event.status == EventStatus.PROCESSED:
+        return True
+
+    begin_attempt(session, event)
+    attempts = event.attempts
+    session.commit()
+
+    try:
+        process_event(session, event)
+    except Exception as exc:  # noqa: BLE001
+        session.rollback()
+        session.refresh(event)
+        # The rollback undid the attempt counter too; restore it so the backoff and
+        # the retry limit still advance.
+        event.attempts = attempts
+        mark_event_failed(session, event, f"{type(exc).__name__}: {exc}")
+        return False
+
+    session.refresh(event)
+    return event.status == EventStatus.PROCESSED
+
+
+def retry_failed_events(
+    session: Session, *, limit: int = 50, force_ids: list[str] | None = None
+) -> dict[str, int]:
+    """Reprocess failed events whose backoff has elapsed.
+
+    `force_ids` bypasses the backoff for an operator pressing "retry" on a specific
+    event — including exhausted ones, which is the whole point of a manual retry.
+    """
+    if force_ids:
+        due = list(
+            session.exec(
+                select(ReconciliationEvent).where(
+                    ReconciliationEvent.provider_event_id.in_(force_ids)  # type: ignore[attr-defined]
+                )
+            ).all()
+        )
+    else:
+        now = utcnow()
+        due = list(
+            session.exec(
+                select(ReconciliationEvent)
+                .where(
+                    ReconciliationEvent.status == EventStatus.FAILED,
+                    ReconciliationEvent.attempts < MAX_EVENT_ATTEMPTS,
+                    ReconciliationEvent.next_retry_at.is_not(None),  # type: ignore[union-attr]
+                    ReconciliationEvent.next_retry_at <= now,  # type: ignore[operator]
+                )
+                .limit(limit)
+            ).all()
+        )
+
+    recovered = sum(1 for event in due if reprocess_event(session, event))
+    if due:
+        log.info("reconciliation.retry_complete", attempted=len(due), recovered=recovered)
+    return {"attempted": len(due), "recovered": recovered}

@@ -9,12 +9,25 @@
 export const API_BASE =
   process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") ?? "http://localhost:8000";
 
-async function get<T>(path: string, revalidate = 0): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
-    // The demo turns on payments live; a cached overview would show stale totals.
-    cache: "no-store",
-    next: { revalidate },
-  });
+/**
+ * One fetch helper, two paths.
+ *
+ * On the server the backend is called directly with the admin key, which stays in the
+ * Node process. In the browser the same logical call goes through /api/proxy, which
+ * checks the session cookie before attaching any credential — so the client bundle
+ * never contains a backend key and the backend is never a public read API.
+ */
+async function get<T>(path: string): Promise<T> {
+  const onServer = typeof window === "undefined";
+
+  const url = onServer ? `${API_BASE}${path}` : path.replace(/^\/api\//, "/api/proxy/");
+  const headers: Record<string, string> = {};
+  if (onServer) {
+    const key = process.env.ADMIN_API_KEY;
+    if (key) headers["X-Admin-Key"] = key;
+  }
+
+  const res = await fetch(url, { cache: "no-store", headers });
   if (!res.ok) throw new Error(`${path} → ${res.status}`);
   return res.json() as Promise<T>;
 }
@@ -49,6 +62,9 @@ export type QueueRow = {
   reason_category: string | null;
   payment_url: string | null;
   next_action: string;
+  why: string;
+  why_next: string;
+  why_state: string;
 };
 
 export type TimelineEntry = {
@@ -105,6 +121,12 @@ export type InvoiceDetail = {
   recovered_at: string | null;
   payment_url: string | null;
   payment_link_status: string | null;
+  why: string;
+  why_next: string;
+  why_state: string;
+  reply_count: number;
+  last_reply_at: string | null;
+  last_reply_excerpt: string | null;
   reminders: ReminderView[];
   promises: PromiseView[];
   timeline: TimelineEntry[];
@@ -126,3 +148,49 @@ export const getInvoice = (id: string) => get<InvoiceDetail>(`/api/dashboard/inv
 export const getPromises = (status?: string) =>
   get<PromiseView[]>(`/api/dashboard/promises${status ? `?status=${status}` : ""}`);
 export const getAudit = (qs = "") => get<AuditEntry[]>(`/api/dashboard/audit?limit=200${qs}`);
+
+
+export type ReconciliationException = {
+  id: string;
+  event_id: string;
+  event_type: string;
+  invoice_number: string | null;
+  amount_display: string | null;
+  error: string | null;
+  attempts: number;
+  last_attempt_at: string | null;
+  next_retry_at: string | null;
+  exhausted: boolean;
+  received_at: string;
+};
+
+export type CommunicationException = {
+  id: string;
+  invoice_number: string;
+  customer_name: string;
+  tier: number;
+  tone: string;
+  error: string | null;
+  attempts: number;
+  last_attempt_at: string | null;
+  next_retry_at: string | null;
+  exhausted: boolean;
+};
+
+export type UnclosedLink = {
+  id: string;
+  invoice_number: string;
+  payment_link_id: string;
+  error: string | null;
+  attempts: number;
+  next_retry_at: string | null;
+};
+
+export type Exceptions = {
+  reconciliation: ReconciliationException[];
+  communication: CommunicationException[];
+  unclosed_links: UnclosedLink[];
+  total: number;
+};
+
+export const getExceptions = () => get<Exceptions>("/api/dashboard/exceptions");

@@ -13,6 +13,7 @@ failure case.
 """
 
 import json
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -46,8 +47,39 @@ class LLMUnavailableError(Exception):
     """Raised internally when a model cannot answer. Never escapes the client."""
 
 
-def _is_configured() -> bool:
-    key = settings.google_api_key
+#: Faults worth re-asking the same model about. Everything else is permanent for
+#: that model, and the caller should fail over rather than burn quota on it.
+_RETRYABLE_MARKERS = (
+    "timeout",
+    "timed out",
+    "deadline",
+    "429",
+    "resource_exhausted",
+    "rate limit",
+    "quota",
+    "500",
+    "502",
+    "503",
+    "504",
+    "unavailable",
+    "internal error",
+    "connection",
+    "temporarily",
+)
+
+
+def _is_retryable(message: str) -> bool:
+    lowered = message.lower()
+    return any(marker in lowered for marker in _RETRYABLE_MARKERS)
+
+
+def _key_is_configured(key: str | None) -> bool:
+    """A real key, or a placeholder?
+
+    Takes the key rather than reading settings, so a client constructed with an
+    explicit key behaves consistently — the same instance-scoped check the Razorpay
+    client uses.
+    """
     return bool(key) and "PLACEHOLDER" not in key
 
 
@@ -79,6 +111,13 @@ class LLMClient:
                     response_schema=response_model,
                     temperature=0.3,
                     max_output_tokens=1024,
+                    # Enforced, not decorative. LLM_TIMEOUT_SECONDS existed in config
+                    # and was never passed to the SDK. Without it a hung call blocks
+                    # the recovery cycle, which runs synchronously — and a scheduled
+                    # run that never returns looks exactly like one never scheduled.
+                    http_options=types.HttpOptions(
+                        timeout=int(settings.llm_timeout_seconds * 1000)
+                    ),
                 ),
             )
         except Exception as exc:  # transport, quota, bad model id, timeout
@@ -89,6 +128,33 @@ class LLMClient:
             raise LLMUnavailableError("empty response")
         return response_model.model_validate_json(text)
 
+    def _retrying_generate[T: BaseModel](
+        self, model: str, prompt: str, response_model: type[T]
+    ) -> T:
+        """One model, with bounded retries on transient faults.
+
+        Timeouts, 429s and 5xx are worth re-asking the SAME model before giving up on
+        it — failing over on the first blip spends the primary model's better output
+        on a problem that clears in a second. Anything that cannot change on a retry
+        (a bad model id, a malformed request) is raised immediately.
+
+        LLM_MAX_RETRIES existed in config and was never read.
+        """
+        last: Exception | None = None
+        for attempt in range(settings.llm_max_retries + 1):
+            try:
+                return self._generate_once(model, prompt, response_model)
+            except LLMUnavailableError as exc:
+                last = exc
+                if not _is_retryable(str(exc)) or attempt == settings.llm_max_retries:
+                    raise
+                # Bounded, and capped at the timeout: a stuck model must not stall the
+                # cycle for longer than one call was allowed to take.
+                delay = min(0.5 * (2**attempt), settings.llm_timeout_seconds)
+                log.info("llm.retrying", model=model, attempt=attempt + 1, delay=delay)
+                time.sleep(delay)
+        raise last  # unreachable, but keeps the type checker honest
+
     def generate_structured[T: BaseModel](
         self,
         *,
@@ -98,7 +164,7 @@ class LLMClient:
         invoice_number: str | None = None,
     ) -> LLMResult[T]:
         """Try each model in turn. Never raises."""
-        if not _is_configured():
+        if not _key_is_configured(self._api_key):
             return LLMResult(
                 value=None,
                 failed=True,
@@ -114,7 +180,7 @@ class LLMClient:
         for index, model in enumerate(models):
             attempts.append(model)
             try:
-                value = self._generate_once(model, prompt, response_model)
+                value = self._retrying_generate(model, prompt, response_model)
                 return LLMResult(
                     value=value,
                     model=model,

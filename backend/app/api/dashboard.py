@@ -12,9 +12,9 @@ from datetime import timedelta
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlmodel import select
 
-from app.api.deps import AdminRequired
+from app.api.deps import OperatorRequired
 from app.core.clock import utcnow
-from app.core.constants import InvoiceStatus
+from app.core.constants import InvoiceStatus, PromiseStatus
 from app.core.db import SessionDep
 from app.core.money import format_inr
 from app.models import (
@@ -24,19 +24,21 @@ from app.models import (
     Invoice,
     PaymentLink,
     Promise,
+    ReconciliationEvent,
     Reminder,
 )
-from app.schemas.dashboard import (
-    InvoiceDetail,
-    PromiseView,
-    QueueRow,
-    ReminderView,
-    TimelineEntry,
-)
+from app.models.reconciliation_event import EventStatus
+from app.schemas.dashboard import InvoiceDetail, PromiseView, QueueRow, ReminderView, TimelineEntry
+from app.services.explain import Explanation, explain
+from app.services.messaging import retry_failed_deliveries
 from app.services.metrics import compute_metrics
+from app.services.reconciliation import reprocess_event
 from app.services.recovery import escalate_to_human
 
-router = APIRouter(prefix="/api", tags=["dashboard"])
+# Every endpoint here is gated. These reads expose customer names, email
+# addresses, amounts owed and the audit trail — that is a breach if it is
+# public, whether or not the caller can also change anything.
+router = APIRouter(prefix="/api", tags=["dashboard"], dependencies=[OperatorRequired])
 
 #: Maps an audit actor to the badge shown on the timeline.
 _PROVENANCE = {
@@ -49,10 +51,17 @@ _PROVENANCE = {
 
 _SUMMARIES = {
     AuditAction.INVOICE_INGESTED: "Invoice ingested",
-    AuditAction.VA_PROVISIONED: "Payment link created",
-    AuditAction.VA_PROVISION_FAILED: "Payment link failed",
+    AuditAction.PAYMENT_LINK_CREATED: "Payment link created",
+    AuditAction.PAYMENT_LINK_FAILED: "Payment link failed",
     AuditAction.DIAGNOSED: "Reason diagnosed",
     AuditAction.LLM_FAILOVER: "Model failover",
+    AuditAction.LLM_UNAVAILABLE: "AI unavailable — deterministic fallback",
+    AuditAction.LLM_OUTPUT_REJECTED: "AI output rejected",
+    AuditAction.DETERMINISTIC_FALLBACK: "Template used — no model available",
+    AuditAction.PAYMENT_LINK_CLOSED: "Payment link closed",
+    AuditAction.PAYMENT_LINK_CLOSE_FAILED: "Payment link close failed",
+    AuditAction.RECONCILIATION_FAILED: "Reconciliation failed",
+    AuditAction.RECONCILIATION_RETRIED: "Reconciliation retried",
     AuditAction.POLICY_EVALUATED: "Policy approved",
     AuditAction.POLICY_REJECTED: "Policy rejected",
     AuditAction.REMINDER_SENT: "Reminder sent",
@@ -104,6 +113,42 @@ def _tier_label(invoice: Invoice) -> str:
     return f"Tier {invoice.current_tier}" if invoice.current_tier else "—"
 
 
+def _explain_for(session, invoice: Invoice) -> Explanation:
+    """Build the explanation for one invoice from its current state."""
+    promise = session.exec(
+        select(Promise).where(
+            Promise.invoice_id == invoice.id, Promise.status == PromiseStatus.ACTIVE
+        )
+    ).first()
+
+    days_since = None
+    if invoice.last_reminder_at:
+        days_since = (utcnow() - invoice.last_reminder_at).days
+
+    has_failed_delivery = bool(
+        session.exec(
+            select(Reminder).where(
+                Reminder.invoice_id == invoice.id,
+                Reminder.sent_at.is_(None),  # type: ignore[union-attr]
+            )
+        ).first()
+    )
+
+    return explain(
+        status=str(invoice.status),
+        days_overdue=invoice.days_overdue,
+        reminders_sent=invoice.reminders_sent,
+        current_tier=invoice.current_tier,
+        reason_category=str(invoice.reason_category) if invoice.reason_category else None,
+        escalation_reason=invoice.escalation_reason,
+        amount_paise=invoice.amount_paise,
+        amount_paid_paise=invoice.amount_paid_paise,
+        active_promise_date=promise.promised_date if promise else None,
+        days_since_last_reminder=days_since,
+        has_failed_delivery=has_failed_delivery,
+    )
+
+
 @router.get("/dashboard/overview")
 def overview(session: SessionDep, days: int = Query(30, ge=1, le=365)) -> dict:
     """Headline figures. Doc §7."""
@@ -136,6 +181,7 @@ def queue(
 
     names = {c.id: c.name for c in session.exec(select(Customer)).all()}
     links = {pl.invoice_id: pl for pl in session.exec(select(PaymentLink)).all()}
+    reasons = {i.id: _explain_for(session, i) for i in invoices}
 
     return [
         QueueRow(
@@ -150,6 +196,9 @@ def queue(
             reason_category=str(i.reason_category) if i.reason_category else None,
             payment_url=links[i.id].short_url if i.id in links else None,
             next_action=_next_action(i),
+            why=(reasons[i.id]).headline,
+            why_next=(reasons[i.id]).next_step,
+            why_state=(reasons[i.id]).state,
         )
         for i in invoices
     ]
@@ -175,6 +224,8 @@ def invoice_detail(invoice_id: uuid.UUID, session: SessionDep) -> InvoiceDetail:
         select(AuditLog).where(AuditLog.invoice_id == invoice.id).order_by(AuditLog.created_at)
     ).all()
 
+    reason = _explain_for(session, invoice)
+
     return InvoiceDetail(
         id=invoice.id,
         invoice_number=invoice.invoice_number,
@@ -197,6 +248,12 @@ def invoice_detail(invoice_id: uuid.UUID, session: SessionDep) -> InvoiceDetail:
         recovered_at=invoice.recovered_at,
         payment_url=link.short_url if link else None,
         payment_link_status=link.status if link else None,
+        why=reason.headline,
+        why_next=reason.next_step,
+        why_state=reason.state,
+        reply_count=invoice.reply_count,
+        last_reply_at=invoice.last_reply_at,
+        last_reply_excerpt=invoice.last_reply_excerpt,
         reminders=[
             ReminderView(
                 tier=r.tier,
@@ -306,7 +363,7 @@ def audit_log(
     ]
 
 
-@router.post("/dashboard/invoices/{invoice_id}/escalate", dependencies=[AdminRequired])
+@router.post("/dashboard/invoices/{invoice_id}/escalate")
 def manual_escalate(invoice_id: uuid.UUID, session: SessionDep) -> dict:
     """Hand an invoice to a human by hand."""
     invoice = session.get(Invoice, invoice_id)
@@ -317,7 +374,7 @@ def manual_escalate(invoice_id: uuid.UUID, session: SessionDep) -> dict:
     return {"invoice_number": invoice.invoice_number, "status": str(invoice.status)}
 
 
-@router.post("/dashboard/invoices/{invoice_id}/write-off", dependencies=[AdminRequired])
+@router.post("/dashboard/invoices/{invoice_id}/write-off")
 def write_off(invoice_id: uuid.UUID, session: SessionDep) -> dict:
     """Close an invoice as unrecoverable."""
     invoice = session.get(Invoice, invoice_id)
@@ -335,3 +392,165 @@ def write_off(invoice_id: uuid.UUID, session: SessionDep) -> dict:
     )
     session.commit()
     return {"invoice_number": invoice.invoice_number, "status": str(invoice.status)}
+
+
+# ---------------------------------------------------------------------------
+# Operational exceptions. P0 — things that failed and need a person.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/dashboard/exceptions")
+def exceptions(session: SessionDep) -> dict:
+    """Everything that failed and has not recovered on its own.
+
+    Two queues, deliberately separate because they mean different things to a finance
+    operator: money that arrived but could not be matched, and messages that never
+    reached a customer. Both were previously invisible outside application logs.
+    """
+    numbers = {i.id: i.invoice_number for i in session.exec(select(Invoice)).all()}
+    names = {c.id: c.name for c in session.exec(select(Customer)).all()}
+    invoices = {i.id: i for i in session.exec(select(Invoice)).all()}
+
+    failed_events = session.exec(
+        select(ReconciliationEvent)
+        .where(ReconciliationEvent.status == EventStatus.FAILED)
+        .order_by(ReconciliationEvent.received_at.desc())  # type: ignore[attr-defined]
+    ).all()
+
+    reconciliation = [
+        {
+            "id": str(event.id),
+            "event_id": event.provider_event_id,
+            "event_type": event.event_type,
+            "invoice_number": numbers.get(event.matched_invoice_id)
+            if event.matched_invoice_id
+            else None,
+            "amount_display": format_inr(event.amount_paise) if event.amount_paise else None,
+            "error": event.processing_error,
+            "attempts": event.attempts,
+            "last_attempt_at": (
+                event.last_attempt_at.isoformat() if event.last_attempt_at else None
+            ),
+            "next_retry_at": event.next_retry_at.isoformat() if event.next_retry_at else None,
+            "exhausted": event.is_exhausted,
+            "received_at": event.received_at.isoformat(),
+        }
+        for event in failed_events
+    ]
+
+    stuck_reminders = session.exec(
+        select(Reminder)
+        .where(Reminder.sent_at.is_(None))  # type: ignore[union-attr]
+        .order_by(Reminder.created_at.desc())  # type: ignore[attr-defined]
+    ).all()
+
+    communication = []
+    for reminder in stuck_reminders:
+        invoice = invoices.get(reminder.invoice_id)
+        if invoice is None:
+            continue
+        communication.append(
+            {
+                "id": str(reminder.id),
+                "invoice_number": invoice.invoice_number,
+                "customer_name": names.get(invoice.customer_id, "—"),
+                "tier": reminder.tier,
+                "tone": str(reminder.tone),
+                "error": reminder.send_error,
+                "attempts": reminder.attempt_count,
+                "last_attempt_at": (
+                    reminder.last_attempt_at.isoformat() if reminder.last_attempt_at else None
+                ),
+                "next_retry_at": (
+                    reminder.next_retry_at.isoformat() if reminder.next_retry_at else None
+                ),
+                "exhausted": not reminder.needs_retry,
+            }
+        )
+
+    #: Recovered invoices whose payment link was never confirmed closed. Each one is a
+    #: customer who could still pay into a settled invoice.
+    open_links = [
+        {
+            "id": str(link.id),
+            "invoice_number": numbers.get(link.invoice_id, "—"),
+            "payment_link_id": link.razorpay_payment_link_id,
+            "error": link.closure_error,
+            "attempts": link.closure_attempts,
+            "next_retry_at": (
+                link.next_closure_retry_at.isoformat() if link.next_closure_retry_at else None
+            ),
+        }
+        for link in session.exec(
+            select(PaymentLink).where(PaymentLink.closure_error.is_not(None))  # type: ignore[union-attr]
+        ).all()
+        if link.cancelled_at is None
+    ]
+
+    return {
+        "reconciliation": reconciliation,
+        "communication": communication,
+        "unclosed_links": open_links,
+        "total": len(reconciliation) + len(communication) + len(open_links),
+    }
+
+
+@router.post("/dashboard/exceptions/events/{provider_event_id}/retry")
+def retry_event(provider_event_id: str, session: SessionDep) -> dict:
+    """Reprocess one failed webhook now, ignoring its backoff.
+
+    Idempotent: reconciliation applies the running total Razorpay reports with max(),
+    so retrying an event whose payment already landed changes nothing.
+    """
+    event = session.exec(
+        select(ReconciliationEvent).where(
+            ReconciliationEvent.provider_event_id == provider_event_id
+        )
+    ).first()
+    if event is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Event not found")
+
+    session.add(
+        AuditLog(
+            invoice_id=event.matched_invoice_id,
+            actor="human",
+            action=AuditAction.RECONCILIATION_RETRIED,
+            detail={"event_id": provider_event_id, "attempts_before": event.attempts},
+        )
+    )
+    session.commit()
+
+    ok = reprocess_event(session, event)
+    session.refresh(event)
+    return {
+        "event_id": provider_event_id,
+        "recovered": ok,
+        "status": event.status,
+        "error": event.processing_error,
+        "attempts": event.attempts,
+    }
+
+
+@router.post("/dashboard/exceptions/reminders/{reminder_id}/retry")
+def retry_reminder(reminder_id: uuid.UUID, session: SessionDep) -> dict:
+    """Re-attempt one failed delivery now, ignoring its backoff."""
+    reminder = session.get(Reminder, reminder_id)
+    if reminder is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Reminder not found")
+    if reminder.sent_at is not None:
+        return {"reminder_id": str(reminder_id), "recovered": True, "note": "already sent"}
+
+    # Make it due, then run the normal path rather than a special one.
+    reminder.next_retry_at = utcnow()
+    session.add(reminder)
+    session.commit()
+
+    report = retry_failed_deliveries(session, limit=200)
+    session.refresh(reminder)
+    return {
+        "reminder_id": str(reminder_id),
+        "recovered": reminder.sent_at is not None,
+        "attempts": reminder.attempt_count,
+        "error": reminder.send_error,
+        "swept": report["attempted"],
+    }

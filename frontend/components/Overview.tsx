@@ -13,7 +13,16 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
 import { ReasonBadge, StatusBadge, TierBadge } from "@/components/badges";
-import { getOverview, getQueue, type Overview, type QueueRow } from "@/lib/api";
+import { RunCycleButton } from "@/components/RunCycleButton";
+import { ExceptionsPanel } from "@/components/Exceptions";
+import {
+  getExceptions,
+  getOverview,
+  getQueue,
+  type Exceptions,
+  type Overview,
+  type QueueRow,
+} from "@/lib/api";
 
 const POLL_MS = 3000;
 
@@ -60,12 +69,15 @@ function Metric({
 export function OverviewClient({
   initialOverview,
   initialQueue,
+  initialExceptions,
 }: {
   initialOverview: Overview;
   initialQueue: QueueRow[];
+  initialExceptions: Exceptions;
 }) {
   const [overview, setOverview] = useState(initialOverview);
   const [queue, setQueue] = useState(initialQueue);
+  const [exceptions, setExceptions] = useState(initialExceptions);
   const [filter, setFilter] = useState<string | null>(null);
   const [flash, setFlash] = useState(false);
   const lastRecovered = useRef(initialOverview.recovered_paise);
@@ -74,11 +86,13 @@ export function OverviewClient({
     let alive = true;
     const tick = async () => {
       try {
-        const [o, q] = await Promise.all([
+        const [o, q, x] = await Promise.all([
           getOverview(),
           getQueue(filter ? `&reason=${filter}` : ""),
+          getExceptions(),
         ]);
         if (!alive) return;
+        setExceptions(x);
         // Highlight the tile when money actually arrives — the 1:40 beat in the demo.
         if (o.recovered_paise > lastRecovered.current) {
           setFlash(true);
@@ -103,12 +117,15 @@ export function OverviewClient({
 
   return (
     <div className="space-y-7">
-      <div>
-        <h1 className="text-lg font-semibold text-ink">Recovery overview</h1>
-        <p className="mt-1 text-sm text-ink-3">
-          Recovery rate is measured by value, not by invoice count — forty small wins and one
-          large miss is not a success.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-lg font-semibold text-ink">Recovery overview</h1>
+          <p className="mt-1 text-sm text-ink-3">
+            Recovery rate is measured by value, not by invoice count — forty small wins and one
+            large miss is not a success.
+          </p>
+        </div>
+        <RunCycleButton />
       </div>
 
       <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -143,6 +160,12 @@ export function OverviewClient({
           value={String(overview.broken_promises)}
           sub={overview.broken_promises ? "flagged" : undefined}
           tone={overview.broken_promises ? "bad" : "plain"}
+        />
+        <Metric
+          label="Needs attention"
+          value={String(exceptions.total)}
+          sub="failed payments or reminders"
+          tone={exceptions.total ? "bad" : "plain"}
         />
         <Metric
           label="Needs a human"
@@ -196,7 +219,7 @@ export function OverviewClient({
                 <th className="px-4 py-2.5 font-medium">Tier</th>
                 <th className="px-4 py-2.5 font-medium">Reason</th>
                 <th className="px-4 py-2.5 font-medium">Status</th>
-                <th className="px-4 py-2.5 font-medium">Next</th>
+                <th className="px-4 py-2.5 font-medium">Why</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-line-2">
@@ -226,7 +249,9 @@ export function OverviewClient({
                   <td className="px-4 py-2.5">
                     <StatusBadge status={row.status} />
                   </td>
-                  <td className="px-4 py-2.5 text-xs text-ink-3">{row.next_action}</td>
+                  <td className="max-w-[300px] px-4 py-2.5 text-xs text-ink-3">
+                    {row.why}
+                  </td>
                 </tr>
               ))}
               {queue.length === 0 ? (
@@ -240,6 +265,8 @@ export function OverviewClient({
           </table>
         </div>
       </section>
+
+      <ExceptionsPanel data={exceptions} />
     </div>
   );
 }

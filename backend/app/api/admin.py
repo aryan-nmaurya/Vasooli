@@ -8,11 +8,11 @@ import uuid
 
 from fastapi import APIRouter, Query
 
-from app.api.deps import AdminRequired
+from app.api.deps import OperatorRequired
 from app.core.db import SessionDep
 from app.services.recovery import run_recovery_cycle
 
-router = APIRouter(prefix="/api/admin", tags=["admin"], dependencies=[AdminRequired])
+router = APIRouter(prefix="/api/admin", tags=["admin"], dependencies=[OperatorRequired])
 
 
 @router.post("/run-cycle")

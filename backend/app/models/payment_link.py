@@ -46,6 +46,10 @@ class PaymentLinkStatus:
     TERMINAL = frozenset({PAID, CANCELLED, EXPIRED})
 
 
+#: Stop retrying closure after this many attempts and surface it to an operator.
+MAX_CLOSURE_ATTEMPTS = 5
+
+
 class PaymentLink(SQLModel, table=True):
     __tablename__ = "payment_links"
     __table_args__ = (
@@ -81,12 +85,34 @@ class PaymentLink(SQLModel, table=True):
 
     provisioned_at: datetime = Field(sa_column=timestamp_column(default_now=True))
     cancelled_at: datetime | None = Field(sa_column=timestamp_column(nullable=True))
+
+    # --- Closure after recovery ----------------------------------------------
+    #: Razorpay is called AFTER the payment is committed, never inside the
+    #: reconciliation transaction: an external call held open across a database
+    #: transaction turns a slow API into a lock held on the invoice row.
+    #:
+    #: So closure can fail while the payment is already safely recorded. These fields
+    #: make that failure a retryable operational task rather than a silent
+    #: inconsistency where a recovered invoice still has a live payment link.
+    closure_attempts: int = 0
+    closure_error: str | None = None
+    next_closure_retry_at: datetime | None = Field(sa_column=timestamp_column(nullable=True))
     updated_at: datetime = Field(sa_column=updated_at_column())
 
     @property
     def is_open(self) -> bool:
         """True while this link can still receive money."""
         return self.status not in PaymentLinkStatus.TERMINAL
+
+    @property
+    def needs_closure(self) -> bool:
+        """Closure has not been confirmed, and attempts remain.
+
+        Keyed on `cancelled_at` — set only when closure actually completed — rather
+        than on `status`, which reconciliation sets from the webhook payload and which
+        would therefore mark the link done before Razorpay was ever told.
+        """
+        return self.cancelled_at is None and self.closure_attempts < MAX_CLOSURE_ATTEMPTS
 
     @property
     def outstanding_paise(self) -> int:

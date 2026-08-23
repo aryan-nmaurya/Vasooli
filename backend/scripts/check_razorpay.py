@@ -1,22 +1,26 @@
-"""Pre-flight check for Phase 3: is Smart Collect usable on this account?
+"""Pre-flight check: can this Razorpay account create Payment Links?
 
     uv run python -m scripts.check_razorpay
 
-Creates one throwaway customer and a ₹1 virtual account in test mode, reports what
-happened, then closes the account again. Run this BEFORE building provisioning —
-Smart Collect is not enabled on every Razorpay account, and finding that out during
-Phase 3 costs a day.
+Creates one ₹1 Payment Link in test mode, reports what came back, then cancels it.
 
-Refuses to run against live keys. Nothing here should ever touch real money.
+NOTE ON SMART COLLECT: an earlier version of this script probed Smart Collect
+(Virtual Accounts). Razorpay confirmed that product is **not available for this
+merchant's business type**, so Vasooli collects through Payment Links instead. This
+script no longer checks for it, because a check that always fails teaches nothing.
+
+Refuses to run against live keys — a live Payment Link takes real money.
 """
 
 import sys
-import uuid
-
-import razorpay
-from razorpay.errors import BadRequestError, GatewayError, ServerError
+import time
 
 from app.core.config import settings
+from app.integrations.razorpay_client import (
+    RazorpayClient,
+    RazorpayPermanentError,
+    RazorpayTransientError,
+)
 
 OK = "\033[32m✓\033[0m"
 NO = "\033[31m✗\033[0m"
@@ -31,18 +35,16 @@ def fail(message: str, *, hint: str = "") -> None:
 
 
 def main() -> None:
-    print("Razorpay pre-flight check\n" + "-" * 40)
+    print("Razorpay pre-flight check (Payment Links)\n" + "-" * 44)
 
     key_id = settings.razorpay_key_id
 
-    # --- Guard: never run this against a live account -----------------------------
     if key_id.startswith("rzp_live_"):
         fail(
             "RAZORPAY_KEY_ID is a LIVE key.",
             hint=(
-                "Live virtual accounts are backed by real bank accounts and can receive\n"
-                "  real money. Switch the dashboard to Test Mode, generate test keys, and\n"
-                "  put the rzp_test_... key in backend/.env instead."
+                "A live Payment Link accepts real money. Switch the dashboard to Test\n"
+                "  Mode, generate test keys, and put the rzp_test_... key in backend/.env."
             ),
         )
     if not key_id.startswith("rzp_test_"):
@@ -51,83 +53,52 @@ def main() -> None:
             hint="Expected it to start with rzp_test_. Check backend/.env.",
         )
     if "PLACEHOLDER" in settings.razorpay_key_secret:
-        fail(
-            "RAZORPAY_KEY_SECRET is still the placeholder.",
-            hint="Paste your test-mode key secret into backend/.env.",
-        )
+        fail("RAZORPAY_KEY_SECRET is still the placeholder.")
     print(f"{OK} Test-mode key detected ({key_id[:16]}...)")
 
-    client = razorpay.Client(auth=(key_id, settings.razorpay_key_secret))
+    client = RazorpayClient()
+    reference = f"preflight-{int(time.time())}"
 
-    # --- 1. Do the credentials authenticate? --------------------------------------
     try:
-        client.payment.all({"count": 1})
-        print(f"{OK} Credentials authenticate")
-    except BadRequestError as exc:
-        fail(f"Authentication failed: {exc}", hint="Key id and secret must be from the same mode.")
-
-    # --- 2. Can we create a customer? ---------------------------------------------
-    suffix = uuid.uuid4().hex[:8]
-    try:
-        customer = client.customer.create(
-            {
-                "name": "Vasooli Preflight",
-                "email": f"preflight+{suffix}@example.com",
-                "contact": "+919999999999",
-                "fail_existing": "0",
-            }
+        link = client.create_payment_link(
+            amount_paise=100,  # ₹1
+            reference_id=reference,
+            description="Vasooli preflight — safe to cancel",
+            customer_name="Vasooli Preflight",
+            customer_email="preflight@example.com",
+            # Razorpay rejects contact numbers with long runs of one digit.
+            customer_phone="+919845012345",
+            notes={"preflight": reference},
+            accept_partial=True,
         )
-        print(f"{OK} Customer created ({customer['id']})")
-    except (BadRequestError, GatewayError, ServerError) as exc:
-        fail(f"Customer creation failed: {exc}")
-
-    # --- 3. The real question: Smart Collect / Virtual Accounts -------------------
-    try:
-        va = client.virtual_account.create(
-            {
-                "receivers": {"types": ["bank_account"]},
-                "description": "Vasooli preflight — safe to close",
-                "customer_id": customer["id"],
-                "amount_expected": 100,  # ₹1 in paise
-                "notes": {"preflight": suffix},
-            }
-        )
-        print(f"{OK} Virtual account created ({va['id']})")
-    except BadRequestError as exc:
+    except RazorpayPermanentError as exc:
         fail(
-            f"Virtual account creation refused: {exc}",
+            f"Payment Link creation refused: {exc}",
             hint=(
-                "This usually means Smart Collect is not enabled on the account.\n"
-                "  Dashboard > Products, or contact Razorpay support to request it.\n"
-                "  Phase 3 cannot proceed until this works — see the plan's fallback note."
+                "Check that Payment Links are enabled on the account, and that the\n"
+                "  amount is within the account's per-link limit (₹50,000 on this one)."
             ),
         )
-    except (GatewayError, ServerError) as exc:
-        fail(f"Razorpay error: {exc}", hint="Transient? Retry once before concluding.")
+    except RazorpayTransientError as exc:
+        fail(f"Razorpay error: {exc}", hint="Transient? Retry before concluding.")
 
-    # --- 4. Inspect what a customer would actually pay into -----------------------
-    receivers = va.get("receivers") or []
-    if receivers:
-        r = receivers[0]
-        print(f"{OK} Payable account: {r.get('account_number')} / {r.get('ifsc')}")
-    else:
-        print(f"{WARN} VA created but no receiver returned — inspect the payload manually.")
+    print(f"{OK} Payment Link created ({link.id})")
+    print(f"{OK} Payable URL: {link.short_url}")
+    print(f"{OK} reference_id echoed back: {link.reference_id}")
+    print(f"{OK} notes echoed back: {link.raw.get('notes')}")
+    print(f"{OK} accept_partial: {link.raw.get('accept_partial')}")
 
-    print(f"{OK} amount_expected echoed back: {va.get('amount_expected')} paise")
-    print(f"{OK} notes echoed back: {va.get('notes')}")
-
-    # --- 5. Clean up ---------------------------------------------------------------
     try:
-        client.virtual_account.close(va["id"])
-        print(f"{OK} Virtual account closed")
-    except Exception as exc:  # noqa: BLE001 - cleanup failure is not a check failure
-        print(f"{WARN} Could not close {va['id']}: {exc} — close it from the dashboard.")
+        client.cancel_payment_link(link.id)
+        print(f"{OK} Payment Link cancelled")
+    except (RazorpayPermanentError, RazorpayTransientError) as exc:
+        print(f"{WARN} Could not cancel {link.id}: {exc} — cancel it from the dashboard.")
 
-    print("\n" + "-" * 40)
-    print(f"{OK} Smart Collect is available. Phase 3 is unblocked.")
-    print("\nNext: Dashboard > Settings > Webhooks — add a webhook for")
-    print("  virtual_account.credited and virtual_account.created,")
-    print("  and put its secret in RAZORPAY_WEBHOOK_SECRET.")
+    print("\n" + "-" * 44)
+    print(f"{OK} Payment Links work. Collection is unblocked.")
+    print("\nNext: Dashboard > Settings > Webhooks — subscribe to")
+    print("  payment_link.paid and payment_link.partially_paid,")
+    print("  and put the signing secret in RAZORPAY_WEBHOOK_SECRET.")
 
 
 if __name__ == "__main__":

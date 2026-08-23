@@ -156,9 +156,17 @@ def test_time_is_read_only_through_the_clock_module():
     silently wrong, in a way that looks like a policy bug rather than a clock bug.
     """
     banned = ("datetime.now", "datetime.utcnow", "datetime.today", "date.today", "time.time")
+
+    #: security.py is exempt, and must stay exempt. Session expiry has to run on real
+    #: wall time: app.core.clock carries DEMO_TIME_OFFSET_DAYS, so a session checked
+    #: against it would be silently extended when the demo clock is wound forward, and
+    #: expired the moment it is wound back. Authentication lifetimes are not part of
+    #: the business timeline.
+    exempt = {"clock.py", "security.py"}
+
     offenders = []
     for path in APP.rglob("*.py"):
-        if path.name == "clock.py":
+        if path.name in exempt:
             continue
         source = path.read_text()
         for pattern in banned:

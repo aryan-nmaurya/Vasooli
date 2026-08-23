@@ -11,6 +11,8 @@
 
 import { NextResponse } from "next/server";
 
+import { currentSession } from "@/lib/session";
+
 const API_BASE = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000").replace(/\/$/, "");
 const ADMIN_KEY = process.env.ADMIN_API_KEY ?? "local-dev-key";
 
@@ -23,6 +25,13 @@ const ALLOWED = [
 ];
 
 export async function POST(request: Request) {
+  // Session first, before the admin key is attached to anything. Without this the
+  // route is an anonymous, credentialed proxy to every operational endpoint —
+  // strictly worse than having no proxy at all.
+  if (!(await currentSession())) {
+    return NextResponse.json({ error: "Not signed in" }, { status: 401 });
+  }
+
   const { path, body } = (await request.json()) as { path: string; body?: unknown };
 
   if (!ALLOWED.some((re) => re.test(path))) {
