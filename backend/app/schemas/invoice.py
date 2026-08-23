@@ -50,6 +50,12 @@ class InvoiceIngestRow(BaseModel):
 
     has_prior_dispute_note: bool = False
 
+    #: How many days overdue this invoice was MEANT to be when the ledger was
+    #: generated. Used only to rebase dates onto today; never persisted, because
+    #: `due_at` is the real field. Distinct from the ground_truth_* columns: this
+    #: is generator bookkeeping, not an answer the classifier could cheat from.
+    gen_days_overdue: int | None = Field(default=None, ge=0)
+
     @field_validator("has_prior_dispute_note", mode="before")
     @classmethod
     def _parse_csv_bool(cls, v: object) -> object:

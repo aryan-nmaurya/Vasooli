@@ -8,7 +8,7 @@ import uuid
 
 from sqlmodel import Session, select
 
-from app.core.clock import due_date_for_days_overdue, ist_midnight, utcnow
+from app.core.clock import due_date_for_days_overdue, ist_midnight, today_ist
 from app.core.constants import InvoiceStatus
 from app.core.logging import get_logger
 from app.models import AuditAction, AuditActor, AuditLog, Customer, Invoice, Merchant
@@ -139,7 +139,19 @@ def ingest_batch(
             with session.begin_nested():
                 customer, created = _upsert_customer(session, merchant, row)
 
-                original_days_overdue = (utcnow().date() - row.due_at).days
+                # Prefer the generator's stated offset over one recomputed from the
+                # CSV's absolute dates. Recomputing ages with the file: a ledger
+                # written yesterday would land every invoice a day past the tier
+                # boundary it was seeded to sit on, and the "just below threshold"
+                # cases the demo needs would quietly disappear.
+                #
+                # today_ist(), not utcnow().date(), for the fallback: between 00:00
+                # and 05:30 IST the UTC date is still yesterday.
+                original_days_overdue = (
+                    row.gen_days_overdue
+                    if row.gen_days_overdue is not None
+                    else (today_ist() - row.due_at).days
+                )
                 if rebase_dates and original_days_overdue > 0:
                     due_at = due_date_for_days_overdue(original_days_overdue)
                     issued_at = due_date_for_days_overdue(
