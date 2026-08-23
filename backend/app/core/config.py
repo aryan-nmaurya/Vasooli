@@ -49,9 +49,19 @@ class Settings(BaseSettings):
     # --- Email ---
     resend_api_key: str
     sendgrid_api_key: str | None = None
-    email_from: str = "vasooli@example.com"
+    #: Resend gives every account this sender without any DNS setup. It can only
+    #: deliver to the address the account was registered with, which is exactly the
+    #: behaviour we want while the customer list is synthetic.
+    email_from: str = "Vasooli <onboarding@resend.dev>"
     email_reply_to_domain: str = "example.com"
-    email_dry_run: bool = True  # stays True until Phase 7 exit criteria pass
+    email_dry_run: bool = True
+
+    #: When set, every reminder is delivered here instead of to the customer, with the
+    #: intended recipient shown in the subject. The synthetic ledger contains 52 fake
+    #: domains, so nothing would arrive anyway — but the real reason is that this makes
+    #: it impossible to email a live person by accident if a real address ever lands in
+    #: the data. Required before live sending is allowed.
+    email_redirect_to: str | None = None
 
     # --- Ops ---
     scheduler_enabled: bool = True
@@ -103,6 +113,23 @@ class Settings(BaseSettings):
             )
         if self.admin_api_key in {"", "changeme", "local-dev-key"}:
             raise RuntimeError("ADMIN_API_KEY must be set to a real secret in production")
+
+    def assert_safe_to_send(self) -> None:
+        """Refuse to send live mail without a redirect target.
+
+        The customer list is synthetic. Sending live, unredirected mail from it means
+        emailing 52 domains nobody owns — and if a real address ever slips into the
+        ledger, a stranger receives a debt reminder. Turning off dry-run has to be a
+        deliberate act with a stated destination.
+        """
+        if self.email_dry_run:
+            return
+        if not self.email_redirect_to and not self.is_production:
+            raise RuntimeError(
+                "EMAIL_DRY_RUN is false but EMAIL_REDIRECT_TO is not set.\n"
+                "Set EMAIL_REDIRECT_TO to your own address so reminders go to your "
+                "inbox, or leave EMAIL_DRY_RUN=true."
+            )
 
 
 class ConfigurationError(RuntimeError):
