@@ -23,6 +23,10 @@ class QueueRow(BaseModel):
     reason_category: str | None
     payment_url: str | None
     next_action: str
+    #: One plain sentence answering "why is Vasooli doing this?"
+    why: str
+    why_next: str
+    why_state: str
 
 
 class TimelineEntry(BaseModel):
@@ -84,6 +88,13 @@ class InvoiceDetail(BaseModel):
     recovered_at: datetime | None
     payment_url: str | None
     payment_link_status: str | None
+    why: str
+    why_next: str
+    why_state: str
+    #: Latest customer reply, so "previous communication" is visible at a glance.
+    reply_count: int
+    last_reply_at: datetime | None
+    last_reply_excerpt: str | None
     reminders: list[ReminderView]
     promises: list[PromiseView]
     timeline: list[TimelineEntry]

@@ -1,12 +1,22 @@
 import { OverviewClient } from "@/components/Overview";
-import { getOverview, getQueue } from "@/lib/api";
+import { getExceptions, getOverview, getQueue } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
 
 export default async function Page() {
   try {
-    const [overview, queue] = await Promise.all([getOverview(), getQueue()]);
-    return <OverviewClient initialOverview={overview} initialQueue={queue} />;
+    const [overview, queue, exceptions] = await Promise.all([
+      getOverview(),
+      getQueue(),
+      getExceptions(),
+    ]);
+    return (
+      <OverviewClient
+        initialOverview={overview}
+        initialQueue={queue}
+        initialExceptions={exceptions}
+      />
+    );
   } catch {
     return (
       <div className="rounded-xl border border-rose-300 bg-rose-50 px-5 py-4 text-sm text-rose-800 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200">
