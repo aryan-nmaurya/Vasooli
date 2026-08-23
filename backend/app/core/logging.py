@@ -43,6 +43,10 @@ def configure_logging() -> None:
     logging.basicConfig(format="%(message)s", stream=sys.stdout, level=settings.log_level)
     # uvicorn's own access log duplicates our request middleware.
     logging.getLogger("uvicorn.access").disabled = True
+    # google-genai warns about automatic function calling on every structured call.
+    # We do not use function calling; the warning is noise that buries real failover
+    # messages in the demo logs.
+    logging.getLogger("google_genai.models").setLevel(logging.ERROR)
 
 
 def get_logger(name: str) -> structlog.stdlib.BoundLogger:
