@@ -5,10 +5,11 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import health, invoices, webhooks
+from app.api import admin, health, invoices, webhooks
 from app.core.config import settings
 from app.core.db import check_database
 from app.core.logging import RequestContextMiddleware, configure_logging, get_logger
+from app.scheduler.setup import shutdown_scheduler, start_scheduler
 
 log = get_logger("app")
 
@@ -26,6 +27,8 @@ async def lifespan(app: FastAPI):
         # here turns a transient DB blip into a redeploy loop.
         log.error("startup.db_unavailable", error=error)
 
+    start_scheduler()
+
     log.info(
         "startup.complete",
         environment=settings.environment,
@@ -33,6 +36,8 @@ async def lifespan(app: FastAPI):
         email_dry_run=settings.email_dry_run,
     )
     yield
+
+    shutdown_scheduler()
     log.info("shutdown.complete")
 
 
@@ -58,6 +63,7 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(invoices.router)
     app.include_router(webhooks.router)
+    app.include_router(admin.router)
     return app
 
 
