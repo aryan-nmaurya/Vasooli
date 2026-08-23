@@ -6,9 +6,6 @@ Vasooli ingests overdue B2B invoices, diagnoses why each is at risk, chases them
 bounded and compliant escalation schedule, tracks the promises customers make to pay,
 and reconciles real incoming payments the moment Razorpay confirms them.
 
-- Product spec: `Docs/Vasooli_Documentation.md`
-- Build plan: `Docs/Vasooli_Implementation_Plan.md`
-
 **Current status: Phase 0 complete** — foundation, config, logging, health, CI.
 
 ---
