@@ -237,3 +237,50 @@ def test_every_ingested_invoice_is_audited(session):
     ).all()
     assert len(entries) == 2
     assert all(e.detail["amount_paise"] == 4_200_000 for e in entries)
+
+
+def test_rebase_uses_the_generators_offset_not_the_files_age(session):
+    """A ledger written days ago must still land on today's tier boundaries.
+
+    Recomputing the offset from the CSV's absolute dates ages with the file: a file
+    written yesterday puts every invoice one day past where it was seeded to sit, and
+    the "just below the threshold" cases the demo relies on disappear.
+    """
+    long_stale = today_ist() - timedelta(days=99)
+    r = InvoiceIngestRow.model_validate(
+        {
+            "invoice_number": "INV-GEN",
+            "customer_name": "ABC",
+            "customer_email": "abc@example.com",
+            "amount_inr": "1000",
+            "issued_at": (long_stale - timedelta(days=30)).isoformat(),
+            "due_at": long_stale.isoformat(),
+            "gen_days_overdue": 10,
+        }
+    )
+    ingest_batch(session, [r], rebase_dates=True)
+    assert session.exec(select(Invoice)).one().days_overdue == 10
+
+
+def test_generator_offset_is_never_persisted(session):
+    """It is bookkeeping for rebasing, not a column on the invoice."""
+    ingest_batch(session, [row("INV-GEN2", overdue=5)], rebase_dates=True)
+    inv = session.exec(select(Invoice)).one()
+    assert not hasattr(inv, "gen_days_overdue")
+
+
+def test_rebase_falls_back_when_the_offset_is_absent(session):
+    """A real merchant export has no generator metadata; it must still rebase."""
+    stale = today_ist() - timedelta(days=14)
+    r = InvoiceIngestRow.model_validate(
+        {
+            "invoice_number": "INV-NOGEN",
+            "customer_name": "ABC",
+            "customer_email": "abc@example.com",
+            "amount_inr": "1000",
+            "issued_at": (stale - timedelta(days=30)).isoformat(),
+            "due_at": stale.isoformat(),
+        }
+    )
+    ingest_batch(session, [r], rebase_dates=True)
+    assert session.exec(select(Invoice)).one().days_overdue == 14

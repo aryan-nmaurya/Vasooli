@@ -31,9 +31,23 @@ def test_ground_truth_columns_are_dropped_at_the_boundary():
     assert not hasattr(row, "ground_truth_reason")
 
 
-def test_generator_metadata_is_also_dropped():
+def test_generator_offset_is_accepted_but_is_not_an_answer():
+    """`gen_days_overdue` is read, unlike the ground-truth columns.
+
+    It says how many days overdue the row was seeded to be, which the seeder needs in
+    order to rebase a stale ledger onto today's tier boundaries. It is bookkeeping
+    about dates, not a label about the customer, so it cannot leak a diagnosis the
+    classifier is supposed to work out for itself. It is never written to the invoice.
+    """
     row = InvoiceIngestRow.model_validate({**BASE, "gen_days_overdue": "3"})
-    assert "gen_days_overdue" not in row.model_dump()
+    assert row.gen_days_overdue == 3
+
+
+def test_unknown_columns_are_still_dropped():
+    row = InvoiceIngestRow.model_validate({**BASE, "internal_score": "0.9", "notes": "x"})
+    dumped = row.model_dump()
+    assert "internal_score" not in dumped
+    assert "notes" not in dumped
 
 
 def test_amount_parses_as_decimal_not_float():
