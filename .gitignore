@@ -31,5 +31,6 @@ frontend/out/
 **/eval/out/
 *.log
 
-# OS
+# OS / Editor / Tools
 .DS_Store
+.claude/
