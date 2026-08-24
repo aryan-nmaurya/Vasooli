@@ -69,8 +69,12 @@ def test_a_clean_tier_1_reminder_is_approved():
 
 
 def test_every_check_runs_even_when_all_pass():
-    """The audit log shows the full evaluation, not just objections."""
-    assert len(decide().checks) == 9
+    """The audit log shows the full evaluation, not just objections.
+
+    The count is asserted literally so that adding a rule is a deliberate edit here
+    rather than something a new check silently absorbs.
+    """
+    assert len(decide().checks) == 10
 
 
 def test_every_check_runs_even_when_one_fails():
@@ -79,7 +83,7 @@ def test_every_check_runs_even_when_one_fails():
         last_reminder_at=NOW - timedelta(days=1),
         drafted_body="We will take legal action.",
     )
-    assert len(d.checks) == 9
+    assert len(d.checks) == 10
     assert failed_names(d) == {"cooldown_respected", "no_banned_language"}
 
 
@@ -434,7 +438,7 @@ def test_rendered_decision_matches_the_spec_shape():
     assert "Invoice: INV-2291" in text
     assert "Proposed action: Send Tier-1 reminder" in text
     assert "Result: APPROVED" in text
-    assert text.count("✓") == 9
+    assert text.count("✓") == 10
 
 
 def test_a_rejection_shows_which_check_failed():
@@ -448,7 +452,7 @@ def test_decision_serializes_for_the_audit_log():
     d = decide()
     payload = d.to_dict()
     assert payload["approved"] is True
-    assert len(payload["checks"]) == 9
+    assert len(payload["checks"]) == 10
     assert "rendered" in payload
 
 

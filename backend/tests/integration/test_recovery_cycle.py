@@ -363,7 +363,7 @@ def test_the_policy_decision_is_stored_with_the_reminder(session, merchant, cust
 
     reminder = session.exec(select(Reminder)).one()
     assert reminder.policy_decision["approved"] is True
-    assert len(reminder.policy_decision["checks"]) == 9
+    assert len(reminder.policy_decision["checks"]) == 10
     assert "Result: APPROVED" in reminder.policy_decision["rendered"]
 
 

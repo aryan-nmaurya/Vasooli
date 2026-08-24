@@ -33,6 +33,46 @@ and never stopping. Vasooli recovers 77% of that with **one-fifth the contacts**
 zero breaches of its own rules. The claim is not "recovers the most" — it is "recovers
 most of it without behaviour you would be embarrassed to defend."
 
+## What is real, what is simulated, what is unverified
+
+Stated up front, because a judge should not have to work it out.
+
+### Real — running code against real services
+
+| | Evidence |
+|---|---|
+| Razorpay Payment Link API | 8 links created against the live test-mode API |
+| Payment Link cancellation | Verified against the live API, including the already-cancelled case |
+| Webhook HMAC verification | Raw-body signature, timing-safe compare, tested |
+| Webhook idempotency | Unique provider event id; 5 deliveries counted once |
+| Reconciliation | Deterministic, integer paise, running-total semantics |
+| Direct Razorpay sync | Recovered a real ₹9,500 payment whose webhook never arrived |
+| Delivery retry, closure retry, webhook reprocessing | Bounded backoff, all tested |
+| Policy engine | Pure functions, 89 tests |
+| Authentication | Session + admin key, every endpoint verified unauthenticated |
+| Outbound email | Really sent through Resend, redirected to one inbox |
+| Audit trail | Append-only, enforced by a database trigger |
+
+### Simulated — clearly labelled in the UI as **Demo Controls**
+
+| | Why |
+|---|---|
+| Customer replies | Injected via `POST /api/invoices/{id}/simulate-reply`. Runs the identical extraction and promise-pausing code a real inbound email would; real inbound parsing needs a verified domain and is **not implemented** |
+| Local webhook replay | `scripts/replay_webhook.py` signs a Razorpay-shaped payload locally. Proves our handling, **not** what Razorpay sends |
+| Evaluation customers | Driven by a stated behaviour model in `eval/config.py`. Measures the policy, not real human behaviour |
+| Evaluation's Razorpay and email | Mocked at the integration boundary. Everything above that boundary is production code |
+
+### Unverified — built but not proven in this environment
+
+| | Blocker |
+|---|---|
+| Live Razorpay webhook end-to-end | Requires a public tunnel and a webhook configured in the Razorpay dashboard. See [`docs/DEMO.md`](docs/DEMO.md) for the rehearsal |
+| Docker image build | The Docker daemon is not available on the development machine |
+| Railway / Vercel deployment | Configuration written, never deployed |
+
+**Nothing in the Simulated or Unverified tables is presented as real anywhere else in
+this repository.** If you find such a claim, it is a bug.
+
 ## 3. Architecture
 
 ```
@@ -207,18 +247,39 @@ See [`docs/DEMO.md`](docs/DEMO.md).
 
 ## 12. Testing
 
+The suite is hermetic: `tests/conftest.py` pins every external integration to a
+placeholder and asserts at session start that live email and live LLM calls are
+impossible. Tests never touch the network, the dev database, or your inbox.
+
 ```bash
 cd backend
-uv run pytest                    # 473 tests
+uv run pytest
 uv run ruff check . && uv run ruff format --check .
 uv run alembic check             # no schema drift
+uv run --with pip-audit pip-audit
 ```
 
-Tests are hermetic: `tests/conftest.py` pins every external integration to a
-placeholder and asserts at session start that live email and live LLM calls are
-impossible. They never touch the network, the dev database, or your inbox.
+```bash
+cd frontend
+npm run lint                     # eslint
+npx tsc --noEmit                 # type check
+npm test
+npm run build
+npm audit --audit-level=high
+```
 
-## 13. Known limitations
+
+## 13. Deployment
+
+Backend runs from `backend/Dockerfile` — multi-stage, non-root, migrations applied at
+start so a container never boots against an out-of-date schema. `railway.json` and
+`frontend/vercel.json` carry the platform configuration.
+
+> **Not yet verified.** The Docker daemon was unavailable on the development machine,
+> so the image has never been built. The lockfile, migrations, and start command are
+> each verified independently, but treat the first `docker build` as untested.
+
+## 14. Known limitations
 
 Stated plainly, because a smaller honest demo beats a fake impressive one.
 

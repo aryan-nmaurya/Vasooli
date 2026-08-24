@@ -18,19 +18,46 @@ from app.core.security import (
 )
 from app.main import create_app
 
-#: Endpoints that expose merchant or customer data, or change state.
-PROTECTED_READS = [
-    "/api/dashboard/overview",
-    "/api/dashboard/queue",
-    "/api/dashboard/promises",
-    "/api/dashboard/audit",
-    "/api/invoices",
-]
+#: Endpoints that are public on purpose, each with the reason it is safe.
+#:
+#: This is the ONLY hand-maintained list in this file, and it is deliberately an
+#: allowlist of exceptions rather than a list of what is protected. A list of
+#: protected routes goes stale the moment someone adds an endpoint and forgets to
+#: append to it — which is exactly the mistake these tests exist to catch. Every
+#: other path is discovered from the OpenAPI schema at runtime.
+PUBLIC_BY_DESIGN = {
+    "/health": "deployment probe; exposes no customer data",
+    "/live": "deployment probe",
+    "/ready": "deployment probe",
+    "/api/auth/login": "how a credential is obtained; rate limited",
+    "/api/auth/logout": "clears a cookie",
+}
 
-PROTECTED_ACTIONS = [
-    ("POST", "/api/admin/run-cycle"),
-    ("POST", "/api/invoices/provision-batch"),
-]
+#: Razorpay cannot log in. Proven by an HMAC over the raw body instead, so these
+#: reject with 400 (bad signature) rather than 401 (no session).
+SIGNATURE_GATED_PREFIX = "/api/webhooks/"
+
+
+def _discover(app_client, *, methods: tuple[str, ...]) -> list[tuple[str, str]]:
+    """Every routed (method, path) from the live OpenAPI schema."""
+    spec = app_client.get("/openapi.json").json()
+    found = []
+    for path, operations in spec["paths"].items():
+        for method in operations:
+            verb = method.upper()
+            if verb in methods:
+                found.append((verb, path))
+    return sorted(found)
+
+
+def _concrete(path: str) -> str:
+    """Fill path parameters so the route matches without needing real records."""
+    import uuid as _uuid
+
+    for segment in path.split("/"):
+        if segment.startswith("{"):
+            path = path.replace(segment, str(_uuid.uuid4()))
+    return path
 
 
 @pytest.fixture
@@ -44,15 +71,31 @@ def api(session):
 # ===========================================================================
 
 
-@pytest.mark.parametrize("path", PROTECTED_READS)
-def test_reads_reject_anonymous_callers(api, path):
-    """An invoice ledger is customer PII. Public read is a breach on its own."""
-    assert api.get(path).status_code == 401
+def test_every_read_rejects_anonymous_callers(api):
+    """An invoice ledger is customer PII. Public read is a breach on its own.
+
+    Discovered from the schema, so a new GET endpoint is covered the moment it exists.
+    """
+    unprotected = [
+        f"GET {path}"
+        for _, path in _discover(api, methods=("GET",))
+        if path not in PUBLIC_BY_DESIGN
+        and not path.startswith(SIGNATURE_GATED_PREFIX)
+        and path not in ("/openapi.json", "/docs", "/redoc", "/docs/oauth2-redirect")
+        and api.get(_concrete(path)).status_code != 401
+    ]
+    assert not unprotected, "readable without a credential:\n  " + "\n  ".join(unprotected)
 
 
-@pytest.mark.parametrize(("method", "path"), PROTECTED_ACTIONS)
-def test_actions_reject_anonymous_callers(api, method, path):
-    assert api.request(method, path).status_code == 401
+def test_every_action_rejects_anonymous_callers(api):
+    unprotected = [
+        f"{verb} {path}"
+        for verb, path in _discover(api, methods=("POST", "PUT", "PATCH", "DELETE"))
+        if path not in PUBLIC_BY_DESIGN
+        and not path.startswith(SIGNATURE_GATED_PREFIX)
+        and api.request(verb, _concrete(path), json={}).status_code != 401
+    ]
+    assert not unprotected, "state-changing without a credential:\n  " + "\n  ".join(unprotected)
 
 
 def test_no_customer_data_leaks_in_the_401_body(api, merchant, customer, invoice):
@@ -66,10 +109,20 @@ def test_no_customer_data_leaks_in_the_401_body(api, merchant, customer, invoice
 # ===========================================================================
 
 
-@pytest.mark.parametrize("path", PROTECTED_READS)
-def test_the_admin_key_grants_access(api, path):
-    resp = api.get(path, headers={"X-Admin-Key": settings.admin_api_key})
-    assert resp.status_code == 200
+def test_the_admin_key_grants_access_to_every_read(api):
+    """The gate must not merely reject — the right credential has to get through."""
+    refused = []
+    for _, path in _discover(api, methods=("GET",)):
+        if path in PUBLIC_BY_DESIGN or path.startswith(SIGNATURE_GATED_PREFIX):
+            continue
+        if path in ("/openapi.json", "/docs", "/redoc", "/docs/oauth2-redirect"):
+            continue
+        resp = api.get(_concrete(path), headers={"X-Admin-Key": settings.admin_api_key})
+        # 404 is fine: a random uuid matches no record. 401 would mean the credential
+        # was not accepted, which is the failure worth catching.
+        if resp.status_code == 401:
+            refused.append(f"GET {path}")
+    assert not refused, "admin key refused on:\n  " + "\n  ".join(refused)
 
 
 def test_a_wrong_admin_key_is_refused(api):
@@ -200,3 +253,57 @@ def test_the_webhook_endpoint_uses_signatures_not_sessions(api):
     """Razorpay cannot log in. It proves itself with an HMAC over the body."""
     resp = api.post("/api/webhooks/razorpay", content=b"{}")
     assert resp.status_code == 400  # rejected for signature, not 401
+
+
+# ===========================================================================
+# The guard that outlives this review.
+# ===========================================================================
+
+
+def test_every_endpoint_is_gated_or_deliberately_public(api):
+    """Walks the whole OpenAPI schema and calls each endpoint with no credential.
+
+    This is the test that matters six months from now. Any new route that serves
+    merchant data and forgets the gate fails here, rather than being discovered by
+    whoever finds the URL. Adding an endpoint to the exemption list is a deliberate,
+    reviewable act; forgetting a dependency is not.
+    """
+    import uuid as _uuid
+
+    #: Public by design, each for a stated reason.
+    public_by_design = PUBLIC_BY_DESIGN or {
+        "/health": "deployment probe, exposes no data",
+        "/live": "deployment probe",
+        "/ready": "deployment probe",
+        "/api/auth/login": "how a credential is obtained; rate limited",
+        "/api/auth/logout": "clears a cookie",
+    }
+    #: Razorpay cannot log in. Proven by HMAC over the raw body instead.
+    signature_gated = "/api/webhooks/"
+
+    spec = api.get("/openapi.json").json()
+    unprotected = []
+
+    for path, operations in spec["paths"].items():
+        for method in operations:
+            verb = method.upper()
+            if verb not in ("GET", "POST", "PUT", "PATCH", "DELETE"):
+                continue
+
+            concrete = path
+            for segment in path.split("/"):
+                if segment.startswith("{"):
+                    concrete = concrete.replace(segment, str(_uuid.uuid4()))
+
+            response = api.request(verb, concrete, json={} if verb != "GET" else None)
+
+            if path in public_by_design:
+                assert response.status_code < 500, f"{verb} {path} is broken"
+            elif path.startswith(signature_gated):
+                # 400 = rejected on signature. A 401 would mean it wrongly expects a
+                # session; a 200 would mean it accepts unsigned payloads.
+                assert response.status_code == 400, f"{verb} {path} -> {response.status_code}"
+            elif response.status_code != 401:
+                unprotected.append(f"{verb} {path} -> {response.status_code}")
+
+    assert not unprotected, "endpoints served without a credential:\n  " + "\n  ".join(unprotected)

@@ -26,7 +26,6 @@ from sqlmodel import Session, select
 from app.ai import DiagnosisInputs, DraftInputs, diagnose, draft_reminder
 from app.core.clock import days_overdue as days_overdue_for
 from app.core.clock import today_ist, utcnow
-from app.core.config import settings
 from app.core.constants import (
     PROMISE_GRACE_DAYS,
     InvoiceStatus,
@@ -48,7 +47,9 @@ from app.models import (
 )
 from app.policy import RequiredAction, evaluate_reminder, next_tier_for
 from app.policy.banned_language import find_banned_phrases
+from app.services.ai_audit import AITask, record_ai_outcome
 from app.services.closure import retry_pending_closures
+from app.services.disputes import has_open_dispute
 from app.services.messaging import deliver_reminder, retry_failed_deliveries
 from app.services.reconciliation import retry_failed_events
 
@@ -222,25 +223,20 @@ def _ensure_diagnosis(
     invoice.reason_llm_disagreed = result.llm_disagreed
     session.add(invoice)
 
-    if use_llm and result.source == "rule_based":
-        # The model was unavailable and deterministic rules produced this. Recorded so
-        # a plainer explanation on the dashboard is explained rather than mysterious.
-        session.add(
-            AuditLog(
-                invoice_id=invoice.id,
-                actor=AuditActor.AI,
-                action=AuditAction.LLM_UNAVAILABLE,
-                detail={"task": "diagnose", "fell_back_to_deterministic": True},
-            )
-        )
-    elif use_llm and result.source != settings.gemini_primary_model:
-        session.add(
-            AuditLog(
-                invoice_id=invoice.id,
-                actor=AuditActor.AI,
-                action=AuditAction.LLM_FAILOVER,
-                detail={"task": "diagnose", "answered_by": result.source},
-            )
+    if use_llm:
+        record_ai_outcome(
+            session,
+            invoice_id=invoice.id,
+            task=AITask.DIAGNOSE,
+            model=None if result.source == "rule_based" else result.source,
+            models_attempted=() if result.source == "rule_based" else (result.source,),
+            accepted=result.source != "rule_based",
+            used_fallback=result.source == "rule_based",
+            reason=(
+                "no model answered; rule-based explanation used"
+                if result.source == "rule_based"
+                else None
+            ),
         )
 
     session.add(
@@ -446,6 +442,20 @@ def _process_invoice(
     # call to a third party.
     session.commit()
 
+    # An open dispute case ends the cycle for this invoice before a single token is
+    # spent. `no_open_dispute` in the policy engine is the authoritative check and
+    # still runs below for anything that reaches it, but a customer who has told us
+    # the bill is wrong should not have reminder copy drafted about it at all.
+    dispute_open = has_open_dispute(session, invoice.id)
+    if dispute_open:
+        log.info(
+            "recovery.dispute_open",
+            invoice_number=invoice.invoice_number,
+            status=str(invoice.status),
+        )
+        report.held += 1
+        return
+
     # Dispute-likely never reaches a drafting call. Doc §3 Stage 2 routes it straight
     # to a human, and generating copy we will not send is wasted tokens and a
     # confusing audit trail.
@@ -474,25 +484,22 @@ def _process_invoice(
     )
     draft = draft_reminder(draft_inputs, use_llm=use_llm)
 
-    if use_llm and draft.generated_by == "template_fallback":
-        # Either no model answered, or one did and its figures did not match the
-        # invoice. Both end here, and both are worth a human being able to see.
-        session.add(
-            AuditLog(
-                invoice_id=invoice.id,
-                actor=AuditActor.AI,
-                action=AuditAction.DETERMINISTIC_FALLBACK,
-                detail={"task": "draft_reminder", "tier": tier},
-            )
-        )
-    elif use_llm and draft.degraded:
-        session.add(
-            AuditLog(
-                invoice_id=invoice.id,
-                actor=AuditActor.AI,
-                action=AuditAction.LLM_FAILOVER,
-                detail={"task": "draft_reminder", "answered_by": draft.generated_by},
-            )
+    if use_llm:
+        fell_back = draft.generated_by == "template_fallback"
+        record_ai_outcome(
+            session,
+            invoice_id=invoice.id,
+            task=AITask.DRAFT_REMINDER,
+            model=None if fell_back else draft.generated_by,
+            models_attempted=() if fell_back else (draft.generated_by,),
+            accepted=not fell_back,
+            used_fallback=fell_back,
+            reason=(
+                # Either no model answered, or one did and its figures did not match
+                # the invoice. Both land here, and the distinction matters: a model
+                # inventing an amount is a different problem from a model being down.
+                "no model answered, or its figures did not match the invoice" if fell_back else None
+            ),
         )
 
     decision = evaluate_reminder(
@@ -500,6 +507,7 @@ def _process_invoice(
         status=invoice.status,
         reason_category=invoice.reason_category,
         has_prior_dispute_note=invoice.has_prior_dispute_note,
+        has_open_dispute=dispute_open,
         outstanding_paise=invoice.outstanding_paise,
         days_overdue=days_overdue,
         reminders_sent=invoice.reminders_sent,
@@ -527,6 +535,7 @@ def _process_invoice(
             status=invoice.status,
             reason_category=invoice.reason_category,
             has_prior_dispute_note=invoice.has_prior_dispute_note,
+            has_open_dispute=dispute_open,
             outstanding_paise=invoice.outstanding_paise,
             days_overdue=days_overdue,
             reminders_sent=invoice.reminders_sent,

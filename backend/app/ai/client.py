@@ -49,27 +49,44 @@ class LLMUnavailableError(Exception):
 
 #: Faults worth re-asking the same model about. Everything else is permanent for
 #: that model, and the caller should fail over rather than burn quota on it.
+#: Faults worth re-asking the SAME model about — a blip that clears in a second.
 _RETRYABLE_MARKERS = (
-    "timeout",
-    "timed out",
-    "deadline",
-    "429",
-    "resource_exhausted",
-    "rate limit",
-    "quota",
     "500",
     "502",
     "503",
-    "504",
     "unavailable",
     "internal error",
     "connection",
     "temporarily",
 )
 
+#: Faults where the same model will keep saying no, but a DIFFERENT model may not.
+#:
+#: Quota is counted per model, so a 429 on the primary says nothing about the fallback
+#: — failing over immediately is both faster and more likely to work than waiting. And
+#: Gemini's own 429 carries `retryDelay: 12s`, so a 0.5s retry cannot succeed by
+#: construction; it just spends half a second proving that.
+#:
+#: A 504 means the model is overloaded and each attempt burns the full timeout before
+#: admitting it. Two retries at 20s each cost a minute to learn what the first attempt
+#: already said.
+_FAILOVER_IMMEDIATELY_MARKERS = (
+    "429",
+    "resource_exhausted",
+    "rate limit",
+    "quota",
+    "504",
+    "deadline",
+    "timeout",
+    "timed out",
+)
+
 
 def _is_retryable(message: str) -> bool:
+    """Retry the same model, or move on?"""
     lowered = message.lower()
+    if any(marker in lowered for marker in _FAILOVER_IMMEDIATELY_MARKERS):
+        return False
     return any(marker in lowered for marker in _RETRYABLE_MARKERS)
 
 

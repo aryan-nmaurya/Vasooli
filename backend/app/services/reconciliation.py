@@ -30,6 +30,7 @@ from app.models import (
 )
 from app.models.reconciliation_event import MAX_EVENT_ATTEMPTS, EventStatus
 from app.services.closure import close_link_for_invoice
+from app.services.disputes import open_case_for
 
 log = get_logger("reconciliation")
 
@@ -172,6 +173,17 @@ def process_event(session: Session, event: ReconciliationEvent) -> None:
     previous_paid = locked.amount_paid_paise
     locked.amount_paid_paise = max(previous_paid, reported_paid)
 
+    # A payment can land while a dispute is being worked, and when it does Razorpay
+    # wins. The customer's objection does not stop the money being recorded, the
+    # invoice being closed, or the link being cancelled — this is verified payment
+    # truth and nothing in the conversation layer outranks it.
+    #
+    # The dispute case is NOT closed here. Paying under protest is a real thing, and
+    # only a person decides an objection was settled. What the case gets is a record
+    # that money arrived while it was open, which is exactly what whoever is handling
+    # it needs to see next.
+    dispute = open_case_for(session, locked.id)
+
     if locked.is_fully_paid:
         locked.status = InvoiceStatus.RECOVERED
         locked.recovered_at = locked.recovered_at or utcnow()
@@ -215,6 +227,32 @@ def process_event(session: Session, event: ReconciliationEvent) -> None:
             },
         )
     )
+    if dispute is not None:
+        session.add(
+            AuditLog(
+                invoice_id=locked.id,
+                actor=AuditActor.RAZORPAY,
+                action=AuditAction.PAYMENT_DURING_DISPUTE,
+                detail={
+                    "case_id": str(dispute.id),
+                    "event_id": event.provider_event_id,
+                    "applied_paise": reported_paid - previous_paid,
+                    "total_paid_paise": locked.amount_paid_paise,
+                    "new_status": locked.status,
+                    "dispute_still_open": True,
+                    "note": (
+                        "Verified payment recorded while a dispute was open. Recovery "
+                        "is stopped by the payment; the dispute stays open for a human."
+                    ),
+                },
+            )
+        )
+        log.warning(
+            "reconciliation.payment_during_dispute",
+            invoice_number=locked.invoice_number,
+            case_id=str(dispute.id),
+        )
+
     session.commit()
 
     # --- External side effect, strictly after the money is committed ---------

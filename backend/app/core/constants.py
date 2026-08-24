@@ -74,3 +74,16 @@ class PromiseStatus(StrEnum):
     ACTIVE = "active"
     KEPT = "kept"
     BROKEN = "broken"
+
+
+class DisputeStatus(StrEnum):
+    """The whole dispute state machine. Two states, deliberately.
+
+    A dispute is either being worked or it is finished. Anything richer — "awaiting
+    customer", "escalated to accounts", "partially agreed" — is a case-management
+    product, and Vasooli is not one. The only question this state answers is whether
+    the automated cadence may run, and that question is binary.
+    """
+
+    OPEN = "open"
+    RESOLVED = "resolved"

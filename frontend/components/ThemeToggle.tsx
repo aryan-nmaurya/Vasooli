@@ -3,33 +3,56 @@
 /**
  * Light/dark switch.
  *
- * The chosen theme is written to <html data-theme>, which is what the CSS variables
- * key off. It is persisted so a reload does not flip back mid-demo, and the initial
- * value is applied by an inline script in the layout — reading it here would leave a
- * flash of the wrong theme while React hydrates.
+ * The chosen theme lives on `<html data-theme>`, which is what the CSS variables key
+ * off, and is applied by an inline script before first paint so the page never flashes
+ * the wrong theme.
+ *
+ * Read with `useSyncExternalStore` rather than an effect. The DOM attribute IS the
+ * source of truth here — set by that inline script before React exists — and copying it
+ * into state inside an effect means rendering once with the wrong value and then
+ * re-rendering, which React flags for exactly that reason.
  */
 
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 
 type Theme = "light" | "dark";
 
-export function ThemeToggle() {
-  const [theme, setTheme] = useState<Theme>("dark");
+const STORAGE_KEY = "vasooli-theme";
 
-  useEffect(() => {
-    const current = document.documentElement.getAttribute("data-theme");
-    setTheme(current === "light" ? "light" : "dark");
-  }, []);
+function subscribe(onChange: () => void): () => void {
+  const observer = new MutationObserver(onChange);
+  observer.observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ["data-theme"],
+  });
+  return () => observer.disconnect();
+}
+
+function getSnapshot(): Theme {
+  return document.documentElement.getAttribute("data-theme") === "light"
+    ? "light"
+    : "dark";
+}
+
+//: Rendered on the server, where there is no document. The inline script corrects it
+//: before paint, so this value is never visible.
+function getServerSnapshot(): Theme {
+  return "dark";
+}
+
+export function ThemeToggle() {
+  const theme = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 
   function toggle() {
     const next: Theme = theme === "dark" ? "light" : "dark";
+    // Writing the attribute is the whole state change — the MutationObserver above
+    // notices and re-renders. There is no second copy of this value to keep in step.
     document.documentElement.setAttribute("data-theme", next);
     try {
-      localStorage.setItem("vasooli-theme", next);
+      localStorage.setItem(STORAGE_KEY, next);
     } catch {
       // Private browsing blocks localStorage; the toggle still works for this session.
     }
-    setTheme(next);
   }
 
   return (

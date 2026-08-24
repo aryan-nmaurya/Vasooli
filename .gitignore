@@ -1,4 +1,10 @@
-Docs/
+# NOTE: this pattern used to be `Docs/`, which on a case-insensitive
+# filesystem (macOS) also matched `docs/` — silently excluding every
+# document in the project from the repository. The README linked to
+# files a fresh clone did not contain.
+#
+# Only the personal scratch directory is ignored now.
+Docs-private/
 
 # Secrets — must stay first-class ignored, before any key is ever pasted.
 .env

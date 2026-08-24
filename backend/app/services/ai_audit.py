@@ -1,59 +1,84 @@
-"""Audit records for AI behaviour. P1.
+"""Provenance records for AI operations. P1.
 
-AI failures were previously only application logs — invisible to anyone looking at an
-invoice, and gone once the log rotated. A merchant reading "this reminder was written
-by a template, not the model" on the timeline is the difference between a system that
-degraded gracefully and one that looks like it just wrote worse copy for no reason.
+Answers, from the audit trail alone, the questions a reviewer will ask about any
+AI-influenced decision:
 
-**What is deliberately NOT stored:** prompts, customer reply text, API keys, and model
-output beyond what is already persisted on the reminder. An audit trail that quietly
-becomes a second copy of every customer message is a privacy problem, and one nobody
-remembers is there.
+    Which model answered?          → `model`
+    Was failover triggered?        → `models_attempted`, `degraded`
+    Did the output fail schema?    → action = llm_output_rejected, `reason`
+    Did deterministic code decide? → action = deterministic_fallback
+    What operation was this?       → `task`
+    Was the result accepted?       → `accepted`
+    Why not?                       → `reason`
+
+**What is deliberately NOT stored:** prompts, customer reply text, drafted message
+bodies, and API keys. An audit trail that quietly becomes a second copy of every
+customer message is a privacy problem — and one nobody remembers is there. The drafted
+message is already persisted on the reminder, where it belongs; duplicating it here
+would mean two places to redact.
 """
 
 import uuid
+from enum import StrEnum
 
 from sqlmodel import Session
 
-from app.ai.client import LLMResult
 from app.models import AuditAction, AuditActor, AuditLog
 
 
-def record_llm_outcome(
+class AITask(StrEnum):
+    """Which AI operation this record is about."""
+
+    DIAGNOSE = "diagnose"
+    DRAFT_REMINDER = "draft_reminder"
+    EXTRACT_PROMISE = "extract_promise"
+    ANALYSE_DISPUTE = "analyse_dispute"
+
+
+def record_ai_outcome(
     session: Session,
     *,
     invoice_id: uuid.UUID | None,
-    task: str,
-    result: LLMResult,
-    fell_back: bool,
+    task: AITask | str,
+    model: str | None,
+    models_attempted: tuple[str, ...] | list[str] = (),
+    accepted: bool,
+    used_fallback: bool,
+    reason: str | None = None,
+    error: str | None = None,
 ) -> None:
-    """Record how an AI call went, without recording what was said.
+    """Record one AI operation's provenance and outcome.
 
-    Three distinct outcomes, because they mean different things operationally:
-
-    * failover  — the primary was unavailable, a fallback answered. Degraded, working.
-    * unavailable — no model answered; deterministic code produced the result.
-    * fine — the primary answered; nothing worth an audit row.
+    Emits at most one row, and only when there is something to say. A primary model
+    answering normally and being accepted is the expected case; a row for every such
+    call would bury the interesting ones.
     """
-    if result.ok and not result.degraded:
-        return  # the normal case needs no record
+    degraded = used_fallback or (bool(models_attempted) and len(models_attempted) > 1)
 
-    if result.failed:
+    if accepted and not degraded:
+        return
+
+    if not accepted and used_fallback and model is None:
         action = AuditAction.LLM_UNAVAILABLE
-        detail = {
-            "task": task,
-            "models_attempted": list(result.attempts),
-            # Truncated, and never the prompt or the reply.
-            "error": (result.error or "unknown")[:200],
-            "fell_back_to_deterministic": fell_back,
-        }
+    elif not accepted:
+        action = AuditAction.LLM_OUTPUT_REJECTED
+    elif used_fallback:
+        action = AuditAction.DETERMINISTIC_FALLBACK
     else:
         action = AuditAction.LLM_FAILOVER
-        detail = {
-            "task": task,
-            "answered_by": result.model,
-            "models_attempted": list(result.attempts),
-        }
+
+    detail: dict[str, object] = {
+        "task": str(task),
+        "model": model,
+        "models_attempted": list(models_attempted),
+        "accepted": accepted,
+        "deterministic_fallback": used_fallback,
+    }
+    if reason:
+        detail["reason"] = reason
+    if error:
+        # Truncated, and never the prompt or the model's text.
+        detail["error"] = error[:200]
 
     session.add(
         AuditLog(
@@ -61,24 +86,5 @@ def record_llm_outcome(
             actor=AuditActor.AI,
             action=action,
             detail=detail,
-        )
-    )
-
-
-def record_output_rejected(
-    session: Session, *, invoice_id: uuid.UUID | None, task: str, reason: str, model: str | None
-) -> None:
-    """The model answered, and we refused its answer.
-
-    Worth auditing separately from an outage: a model inventing an amount is a
-    different problem from a model being down, and only one of them means the prompt
-    or the schema needs work.
-    """
-    session.add(
-        AuditLog(
-            invoice_id=invoice_id,
-            actor=AuditActor.AI,
-            action=AuditAction.LLM_OUTPUT_REJECTED,
-            detail={"task": task, "reason": reason, "model": model},
         )
     )

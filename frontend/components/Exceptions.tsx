@@ -79,6 +79,12 @@ function Empty({ children }: { children: React.ReactNode }) {
 }
 
 export function ExceptionsPanel({ data }: { data: Exceptions }) {
+  //: Items automatic retry has given up on. These will sit there silently forever
+  //: unless someone is told, which is the whole point of surfacing them.
+  const exhausted =
+    data.reconciliation.filter((r) => r.exhausted).length +
+    data.communication.filter((r) => r.exhausted).length;
+
   if (data.total === 0) {
     return (
       <section className="rounded-xl border border-line bg-panel px-5 py-4">
@@ -92,6 +98,19 @@ export function ExceptionsPanel({ data }: { data: Exceptions }) {
 
   return (
     <section className="space-y-4">
+      {exhausted > 0 ? (
+        <div
+          role="alert"
+          className="rounded-xl border border-rose-300 bg-rose-50 px-4 py-3 text-sm text-rose-900 dark:border-rose-500/40 dark:bg-rose-500/10 dark:text-rose-200"
+        >
+          <strong className="font-semibold">
+            {exhausted} exception{exhausted === 1 ? "" : "s"} out of automatic retries.
+          </strong>{" "}
+          Vasooli has stopped retrying {exhausted === 1 ? "it" : "these"} and will not
+          try again on its own. A person needs to look.
+        </div>
+      ) : null}
+
       <h2 className="text-sm font-semibold text-ink">
         Operational exceptions
         <span className="ml-2 rounded-md bg-rose-50 px-2 py-0.5 text-xs font-medium text-rose-700 ring-1 ring-inset ring-rose-200 dark:bg-rose-500/15 dark:text-rose-300 dark:ring-rose-500/30">
@@ -228,6 +247,10 @@ export function ExceptionsPanel({ data }: { data: Exceptions }) {
                   {row.error}
                 </span>
                 <span className="ml-auto text-xs text-ink-3">{row.attempts} attempts</span>
+                <RetryButton
+                  path={`/api/dashboard/exceptions/links/${row.id}/retry-closure`}
+                  label="Retry closure"
+                />
               </li>
             ))}
           </ul>

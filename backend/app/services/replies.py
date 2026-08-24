@@ -1,22 +1,24 @@
 """Handle a customer's reply. Doc §3 Stage 4.
 
 Turns an inbound message into one of three outcomes: a promise that pauses escalation,
-a complaint that routes to a human, or nothing. The extraction itself is done by
-app.ai; everything here is the deterministic part — validating what came back and
-deciding what it means for the invoice.
+a dispute that pauses recovery and opens a human-review case, or nothing. The reading
+itself is done by app.ai; everything here is the deterministic part — validating what
+came back and deciding what it means for the invoice.
 
 A reply is untrusted input. Nothing in this module lets it set an invoice's status
-directly: a promise pauses the chase, and a complaint escalates to a person. Neither
-can mark an invoice paid, because only a signed Razorpay webhook does that.
+directly: a promise pauses the chase, and a dispute goes to app.policy.disputes, which
+decides whether recovery stops. Neither can mark an invoice paid, because only a
+verified Razorpay payment does that.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from sqlmodel import Session, select
 
+from app.ai.dispute_analysis import analyse_dispute
 from app.ai.promise_extraction import extract_promise
 from app.core.clock import today_ist, utcnow
-from app.core.constants import InvoiceStatus, PromiseStatus, ReasonCategory
+from app.core.constants import InvoiceStatus, PromiseStatus
 from app.core.logging import get_logger
 from app.models import (
     AuditAction,
@@ -26,6 +28,8 @@ from app.models import (
     Invoice,
     Promise,
 )
+from app.services.ai_audit import AITask, record_ai_outcome
+from app.services.disputes import record_dispute
 
 log = get_logger("replies")
 
@@ -69,6 +73,9 @@ class ReplyOutcome:
     promised_date: str | None = None
     confidence: float = 0.0
     note: str = ""
+    #: Set when this reply opened or matched a dispute case, so the caller can link
+    #: straight to it. None on every non-dispute reply, which is most of them.
+    dispute_case_id: str | None = None
 
 
 def handle_reply(
@@ -113,32 +120,90 @@ def handle_reply(
         use_llm=use_llm,
     )
 
+    if use_llm:
+        fell_back = extraction.source == "rule_based"
+        record_ai_outcome(
+            session,
+            invoice_id=invoice.id,
+            task=AITask.EXTRACT_PROMISE,
+            model=None if fell_back else extraction.source,
+            models_attempted=() if fell_back else (extraction.source,),
+            accepted=not fell_back,
+            used_fallback=fell_back,
+            reason=(
+                "no model answered; regex extraction used"
+                if fell_back
+                # A promise the model found but policy will not act on. Worth
+                # recording separately from one it never found.
+                else (
+                    "promise found but below the confidence or horizon threshold"
+                    if extraction.has_promise and extraction.below_threshold
+                    else None
+                )
+            ),
+        )
+
     # A complaint is not a payment negotiation. Doc §3 Stage 2 routes it to a human,
     # and an automated nudge on a disputed invoice escalates a disagreement rather
     # than resolving it.
     if extraction.is_complaint:
-        invoice.reason_category = ReasonCategory.DISPUTE_LIKELY
-        invoice.reason_explanation = "The customer disputes this invoice in their reply."
-        invoice.reason_diagnosed_at = utcnow()
-        invoice.status = InvoiceStatus.HUMAN_REVIEW
-        invoice.escalated_to_human_at = invoice.escalated_to_human_at or utcnow()
-        invoice.escalation_reason = "complaint_in_reply"
-        session.add(invoice)
-        session.add(
-            AuditLog(
-                invoice_id=invoice.id,
-                actor=AuditActor.AI,
-                action=AuditAction.ESCALATED_TO_HUMAN,
-                detail={"reason": "complaint_in_reply", "excerpt": extraction.excerpt[:300]},
-            )
+        # A second structured question, not a second system. Same client, same model
+        # list, same failover, same timeout — asked only on the branch that already
+        # concluded this is a complaint, so a normal reply and a promise reply still
+        # cost exactly one model call and behave exactly as they did before.
+        analysis = analyse_dispute(
+            body,
+            invoice_number=invoice.invoice_number,
+            outstanding_paise=invoice.outstanding_paise,
+            use_llm=use_llm,
         )
+
+        if use_llm:
+            record_ai_outcome(
+                session,
+                invoice_id=invoice.id,
+                task=AITask.ANALYSE_DISPUTE,
+                model=None if analysis.used_fallback else analysis.source,
+                models_attempted=analysis.models_attempted,
+                accepted=not analysis.used_fallback,
+                used_fallback=analysis.used_fallback,
+                reason=(
+                    "no model answered; the customer's message is shown unedited"
+                    if analysis.used_fallback
+                    else None
+                ),
+                error=analysis.error,
+            )
+
+        # The extractor and the analyser disagree only rarely, and when they do the
+        # extractor wins: it is the detector this system has always used, its
+        # behaviour is what the existing tests pin, and a complaint that stops being
+        # a complaint because a second call was less sure is a regression in safety.
+        # The analyser's job is to describe, and a description is still owed here.
+        if not analysis.is_dispute:
+            analysis = replace(
+                analysis,
+                is_dispute=True,
+                reason=analysis.reason or "Customer raised an objection in their reply",
+                summary=analysis.summary
+                or (
+                    "The reply was read as a complaint, though the follow-up analysis "
+                    "was not sure what is being disputed. The message is shown unedited "
+                    "below."
+                ),
+            )
+
+        case = record_dispute(session, invoice, analysis, reply_body=body)
         session.commit()
+
         log.info("replies.complaint", invoice_number=invoice.invoice_number)
         return ReplyOutcome(
             invoice_number=invoice.invoice_number,
             escalated=True,
             is_complaint=True,
-            note="Complaint detected — routed to human review.",
+            confidence=analysis.confidence,
+            note="Dispute detected — recovery paused and a review case opened.",
+            dispute_case_id=str(case.id) if case else None,
         )
 
     if not extraction.should_pause_escalation:

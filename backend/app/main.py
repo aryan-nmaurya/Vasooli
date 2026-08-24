@@ -9,6 +9,11 @@ from app.api import admin, auth, dashboard, health, invoices, replies, webhooks
 from app.core.config import settings
 from app.core.db import check_database
 from app.core.logging import RequestContextMiddleware, configure_logging, get_logger
+from app.core.middleware import (
+    BodySizeLimitMiddleware,
+    RateLimitMiddleware,
+    SecurityHeadersMiddleware,
+)
 from app.scheduler.setup import shutdown_scheduler, start_scheduler
 
 log = get_logger("app")
@@ -50,8 +55,16 @@ def create_app() -> FastAPI:
         docs_url="/docs" if not settings.is_production else None,
     )
 
+    # Order matters: middleware added last runs first. Body-size and rate limits
+    # should reject a request before it reaches logging, routing, or the database.
+    app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(RequestContextMiddleware)
+    app.add_middleware(RateLimitMiddleware)
+    app.add_middleware(BodySizeLimitMiddleware)
     app.add_middleware(
+        # An explicit origin allowlist, never "*". CORS is a browser convenience here,
+        # NOT authorization — every endpoint is gated independently, because a
+        # non-browser client ignores CORS entirely.
         CORSMiddleware,
         allow_origins=settings.cors_origins,
         allow_credentials=True,

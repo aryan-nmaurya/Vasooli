@@ -33,6 +33,8 @@ class ReplyResponse(BaseModel):
     promised_date: str | None
     confidence: float
     note: str
+    #: Present when the reply opened or matched a dispute case.
+    dispute_case_id: str | None = None
 
 
 @router.post("/invoices/{invoice_id}/simulate-reply", response_model=ReplyResponse)

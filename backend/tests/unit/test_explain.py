@@ -83,9 +83,14 @@ def test_not_yet_due_names_the_threshold():
     assert result.state == "waiting"
 
 
-def test_a_cooldown_hold_says_how_long():
-    result = why(days_overdue=12, reminders_sent=1, days_since_last_reminder=3)
-    assert "days ago" in result.headline
+@pytest.mark.parametrize(
+    ("days_since", "expected"),
+    [(0, "today"), (1, "yesterday"), (3, "3 days ago")],
+)
+def test_a_cooldown_hold_reads_naturally(days_since, expected):
+    """ "0 days ago" is technically true and reads like a bug."""
+    result = why(days_overdue=12, reminders_sent=1, days_since_last_reminder=days_since)
+    assert expected in result.headline
     assert str(MIN_COOLDOWN_DAYS) in result.next_step
     assert result.state == "paused"
 
@@ -133,3 +138,41 @@ def test_a_write_off_stops_everything():
 def test_amounts_use_indian_grouping(paise, expected):
     result = why(status=InvoiceStatus.RECOVERED, amount_paise=paise, amount_paid_paise=paise)
     assert expected in result.headline
+
+
+# ===========================================================================
+# A dispute is paused, not finished. Customer Conversation Safety.
+# ===========================================================================
+
+
+def _human_review(reason: str):
+    return explain(
+        status=InvoiceStatus.HUMAN_REVIEW,
+        days_overdue=12,
+        reminders_sent=2,
+        current_tier=2,
+        reason_category=None,
+        escalation_reason=reason,
+        amount_paise=2_500_000,
+        amount_paid_paise=0,
+        active_promise_date=None,
+        days_since_last_reminder=4,
+    )
+
+
+def test_a_dispute_reads_as_paused_not_stopped():
+    """The card must not contradict the resume button underneath it."""
+    result = _human_review("complaint_in_reply")
+    assert result.state == "paused"
+    assert "disputes this invoice" in result.headline
+    assert "will not contact" not in result.next_step
+
+
+def test_a_dispute_says_no_reminder_goes_out_while_it_is_open():
+    assert "No automated reminder" in _human_review("complaint_in_reply").next_step
+
+
+def test_every_other_escalation_still_reads_as_stopped():
+    """Tier 3 and a manual escalation are one-way doors; a dispute is not."""
+    for reason in ("tier_3_reached", "manual", "dispute_likely"):
+        assert _human_review(reason).state == "stopped"

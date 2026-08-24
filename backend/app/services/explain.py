@@ -63,9 +63,21 @@ def explain(
         )
 
     if status == InvoiceStatus.HUMAN_REVIEW:
+        # A dispute is paused, not finished. Every other escalation is a one-way
+        # door — the cadence is spent, or a person took the invoice out by hand — but
+        # a dispute has a way back: the merchant checks the claim and either agrees
+        # with the customer or resumes. Saying "Vasooli will not contact this customer
+        # again" would flatly contradict the resume button sitting underneath it.
+        if escalation_reason == "complaint_in_reply":
+            return Explanation(
+                headline="Recovery is paused — the customer disputes this invoice.",
+                next_step="Check what they claim, then resolve the review below. "
+                "No automated reminder goes out while the dispute is open.",
+                state="paused",
+            )
+
         why = {
             "dispute_likely": "the customer disputes this invoice",
-            "complaint_in_reply": "the customer raised a complaint in their reply",
             "tier_3_reached": "all three automated reminders have been sent",
             "manual": "someone escalated it by hand",
         }.get(escalation_reason or "", escalation_reason or "it was escalated")
@@ -129,9 +141,12 @@ def explain(
 
     if days_since_last_reminder is not None and days_since_last_reminder < MIN_COOLDOWN_DAYS:
         wait = MIN_COOLDOWN_DAYS - days_since_last_reminder
+        # "0 days ago" is technically true and reads like a bug.
+        when = {0: "today", 1: "yesterday"}.get(
+            days_since_last_reminder, f"{days_since_last_reminder} days ago"
+        )
         return Explanation(
-            headline=f"Tier {next_tier} is due, but the last reminder was "
-            f"{days_since_last_reminder} days ago.",
+            headline=f"Tier {next_tier} is due, but the last reminder went out {when}.",
             next_step=f"Held for {wait} more day(s) — never two contacts inside "
             f"{MIN_COOLDOWN_DAYS} days.",
             state="paused",

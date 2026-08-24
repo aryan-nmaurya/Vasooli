@@ -69,3 +69,39 @@ class PromiseExtraction(BaseModel):
     #: Routes the invoice to DISPUTE_LIKELY and out of the automated cadence entirely.
     #: A complaint is not a payment negotiation and must not be answered by a nudge.
     is_complaint: bool = False
+
+
+class DisputeSignal(BaseModel):
+    """A structured reading of a customer's objection. Customer Conversation Safety.
+
+    Understanding only. Nothing on this model names an amount, a payment state or an
+    action — the model describes what the customer said, and deterministic code
+    decides what to do about it. If a field here ever starts carrying a rupee value or
+    an instruction, the boundary this project rests on has been crossed.
+    """
+
+    is_dispute: bool = Field(
+        description="True only if the customer is objecting to the invoice, the goods "
+        "or the amount. Asking for time to pay is NOT a dispute."
+    )
+    reason: str = Field(
+        default="",
+        max_length=120,
+        description="A short phrase naming what is disputed, in the customer's own "
+        'terms — e.g. "quantity short-delivered", "billed for goods returned".',
+    )
+    summary: str = Field(
+        default="",
+        max_length=400,
+        description="One or two neutral sentences a merchant can read instead of the "
+        "raw message. Describe the objection; do not take a side and do not suggest "
+        "what to do.",
+    )
+    confidence: float = Field(ge=0, le=1, default=0.0)
+    facts: list[str] = Field(
+        default_factory=list,
+        max_length=6,
+        description="Discrete claims the customer made, each checkable against a "
+        'delivery note or purchase order — e.g. "12 units billed", "9 units '
+        'received". Claims only: never conclusions, never amounts owed.',
+    )

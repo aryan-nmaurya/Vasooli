@@ -22,13 +22,21 @@ const ALLOWED = [
   /^\/api\/invoices\/[0-9a-f-]{36}\/provision$/,
   /^\/api\/dashboard\/invoices\/[0-9a-f-]{36}\/escalate$/,
   /^\/api\/dashboard\/invoices\/[0-9a-f-]{36}\/write-off$/,
+  /^\/api\/dashboard\/disputes\/[0-9a-f-]{36}\/resolve$/,
+  // Operator retries. The event id is provider-supplied, so it is constrained to a
+  // conservative character set rather than matched with `.*` — an allowlist entry
+  // that accepts anything is not an allowlist.
+  /^\/api\/dashboard\/exceptions\/events\/[A-Za-z0-9_.:-]{1,128}\/retry$/,
+  /^\/api\/dashboard\/exceptions\/reminders\/[0-9a-f-]{36}\/retry$/,
+  /^\/api\/dashboard\/exceptions\/links\/[0-9a-f-]{36}\/retry-closure$/,
 ];
 
 export async function POST(request: Request) {
   // Session first, before the admin key is attached to anything. Without this the
   // route is an anonymous, credentialed proxy to every operational endpoint —
   // strictly worse than having no proxy at all.
-  if (!(await currentSession())) {
+  const operator = await currentSession();
+  if (!operator) {
     return NextResponse.json({ error: "Not signed in" }, { status: 401 });
   }
 
@@ -40,7 +48,16 @@ export async function POST(request: Request) {
 
   const res = await fetch(`${API_BASE}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "X-Admin-Key": ADMIN_KEY },
+    headers: {
+      "Content-Type": "application/json",
+      "X-Admin-Key": ADMIN_KEY,
+      // Who is signed in, for the audit trail only. Every dashboard action arrives
+      // at the backend under the same admin key, so without this the audit log
+      // attributes every human decision to "service" — which is no attribution at
+      // all. It grants nothing: the admin key is what authorises the call, and this
+      // is read only to name the person who made it.
+      "X-Operator": operator,
+    },
     body: body ? JSON.stringify(body) : undefined,
     cache: "no-store",
   });

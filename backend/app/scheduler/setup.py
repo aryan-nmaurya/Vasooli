@@ -6,7 +6,7 @@ from apscheduler.triggers.cron import CronTrigger
 from app.core.config import settings
 from app.core.constants import BUSINESS_TIMEZONE
 from app.core.logging import get_logger
-from app.scheduler.jobs import recovery_cycle_job
+from app.scheduler.jobs import payment_link_sync_job, recovery_cycle_job
 
 log = get_logger("scheduler")
 
@@ -40,6 +40,20 @@ def start_scheduler() -> BackgroundScheduler | None:
         misfire_grace_time=3600,
         replace_existing=True,
     )
+    # The safety net for webhooks that never arrived. Hourly rather than daily: a
+    # payment made while the receiver was unreachable should be picked up in an hour,
+    # not tomorrow. Razorpay stops retrying long before that.
+    scheduler.add_job(
+        payment_link_sync_job,
+        CronTrigger(minute=17, timezone=BUSINESS_TIMEZONE),
+        id="payment_link_sync",
+        name="Hourly Razorpay sync",
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=1800,
+        replace_existing=True,
+    )
+
     scheduler.start()
     _scheduler = scheduler
     log.info("scheduler.started", jobs=[j.id for j in scheduler.get_jobs()])

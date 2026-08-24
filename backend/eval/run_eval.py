@@ -23,6 +23,14 @@ os.environ["DATABASE_URL"] = EVAL_DB
 os.environ["ENVIRONMENT"] = "test"
 os.environ["EMAIL_DRY_RUN"] = "true"
 os.environ.setdefault("SCHEDULER_ENABLED", "false")
+# Razorpay is mocked at the client boundary below, but the credentials are pinned to
+# placeholders as well. Belt and braces: the client refuses to make a network call with
+# a placeholder key, so any path that slips past the mock fails instantly instead of
+# quietly making 150 live API calls at the paced rate.
+os.environ["RAZORPAY_KEY_ID"] = "rzp_test_PLACEHOLDER"
+os.environ["RAZORPAY_KEY_SECRET"] = "PLACEHOLDER"
+os.environ.setdefault("RAZORPAY_WEBHOOK_SECRET", "eval-webhook-secret")
+os.environ["RAZORPAY_MIN_REQUEST_INTERVAL_SECONDS"] = "0"
 
 import psycopg  # noqa: E402
 from alembic.config import Config  # noqa: E402
@@ -96,6 +104,38 @@ def load_ledger(path: pathlib.Path) -> tuple[list[InvoiceIngestRow], dict[str, d
                 "outcome": raw["ground_truth_outcome"],
             }
     return rows, truth
+
+
+class _FakeRazorpay:
+    """Stands in for Razorpay during evaluation.
+
+    Mocked at the integration boundary — the seam that exists so the whole recovery
+    loop can run without a network. Everything above it is production code: closure is
+    still attempted, still audited, and still recorded on the link.
+    """
+
+    def cancel_payment_link(self, link_id: str):
+        from app.integrations.razorpay_client import PaymentLinkResult
+
+        return PaymentLinkResult.from_payload(
+            {
+                "id": link_id,
+                "short_url": "https://rzp.io/eval",
+                "reference_id": "eval",
+                "status": "cancelled",
+                "amount": 0,
+                "amount_paid": 0,
+            }
+        )
+
+    def fetch_payment_link(self, link_id: str):
+        return self.cancel_payment_link(link_id)
+
+
+def _mock_razorpay() -> None:
+    import app.services.closure as closure_mod
+
+    closure_mod.get_razorpay_client = lambda: _FakeRazorpay()  # type: ignore[assignment]
 
 
 def fake_provision(session: Session) -> None:
@@ -172,6 +212,7 @@ def main() -> None:
         sys.exit(f"✗ {path} not found. Run: uv run python -m scripts.generate_synthetic")
 
     ensure_database()
+    _mock_razorpay()
     rows, truth = load_ledger(path)
     print(f"Loaded {len(rows)} held-out invoices from {path.name}")
     print(

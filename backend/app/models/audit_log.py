@@ -54,12 +54,27 @@ class AuditAction:
     PROMISE_KEPT = "promise_kept"
     PROMISE_BROKEN = "promise_broken"
     ESCALATED_TO_HUMAN = "escalated_to_human"
+    # --- Customer conversation safety ---------------------------------------
+    #: The AI read a dispute in a customer's reply. An observation, not a decision.
+    DISPUTE_DETECTED = "dispute_detected"
+    #: The policy engine acted on that observation. This is the decision.
+    RECOVERY_PAUSED = "recovery_paused"
+    DISPUTE_CASE_OPENED = "dispute_case_opened"
+    #: A repeat of a message that already opened the case — recorded so the trail
+    #: shows the replay was seen and deliberately did nothing.
+    DISPUTE_ALREADY_OPEN = "dispute_already_open"
+    DISPUTE_RESOLVED = "dispute_resolved"
+    RECOVERY_RESUMED = "recovery_resumed"
+    #: Money arrived while a dispute was open. Razorpay is still the truth.
+    PAYMENT_DURING_DISPUTE = "payment_during_dispute"
     PAYMENT_RECONCILED = "payment_reconciled"
     PAYMENT_LINK_CLOSED = "payment_link_closed"
     PAYMENT_LINK_CLOSE_FAILED = "payment_link_close_failed"
+    PAYMENT_LINK_CLOSE_RETRIED = "payment_link_close_retried"
     RECONCILIATION_UNMATCHED = "reconciliation_unmatched"
     RECONCILIATION_FAILED = "reconciliation_failed"
     RECONCILIATION_RETRIED = "reconciliation_retried"
+    RECONCILIATION_SYNCED = "reconciliation_synced"
     WEBHOOK_DUPLICATE_IGNORED = "webhook_duplicate_ignored"
     WEBHOOK_SIGNATURE_INVALID = "webhook_signature_invalid"
 

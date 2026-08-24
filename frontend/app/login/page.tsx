@@ -21,7 +21,16 @@ function LoginForm() {
         body: JSON.stringify({ password }),
       });
       if (!res.ok) {
-        setError("Incorrect password.");
+        // Distinguish the causes. Reporting "incorrect password" when the server is
+        // simply down sends someone hunting for a typo that isn't there — which is a
+        // terrible way to spend the minutes before a demo.
+        if (res.status === 429) {
+          setError("Too many attempts. Wait a minute and try again.");
+        } else if (res.status >= 500) {
+          setError("Cannot reach the server. Is the backend running?");
+        } else {
+          setError("Incorrect password.");
+        }
         return;
       }
       router.replace(params.get("next") || "/");

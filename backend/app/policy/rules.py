@@ -147,6 +147,28 @@ def not_dispute_likely(reason: ReasonCategory | None, has_prior_dispute: bool) -
     )
 
 
+def no_open_dispute(has_open_dispute: bool) -> PolicyCheck:
+    """An open dispute case blocks every automated contact. Customer Conversation Safety.
+
+    Separate from `not_dispute_likely`, which reads a diagnosed reason category. This
+    reads whether a human-review case is actually open, which is a stronger and more
+    current fact: a merchant can resolve a dispute without the diagnosis changing, and
+    a customer can dispute an invoice the diagnosis still calls an oversight.
+
+    Its presence in the check list is also what puts "recovery paused — dispute open"
+    into the rendered policy decision, so the reason a reminder was withheld appears
+    in the audit log rather than only in the absence of a reminder.
+    """
+    return PolicyCheck(
+        name="no_open_dispute",
+        passed=not has_open_dispute,
+        detail="No open dispute case"
+        if not has_open_dispute
+        else "A dispute case is open — recovery is paused until a human resolves it",
+        on_failure=RequiredAction.ESCALATE_TO_HUMAN,
+    )
+
+
 def no_banned_language(subject: str, body: str) -> PolicyCheck:
     """The drafted message contains no threatening language. Doc §5.
 

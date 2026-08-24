@@ -41,5 +41,10 @@ def require_operator(
 
 OperatorRequired = Depends(require_operator)
 
+#: The same gate, but with the caller's identity injected. Use this where an
+#: action is attributed to a person in the audit log — a decision recorded as
+#: having been made by "someone" is not accountability.
+Operator = Annotated[str, Depends(require_operator)]
+
 #: Retained so existing call sites keep working. Same gate — Vasooli has one role.
 AdminRequired = OperatorRequired

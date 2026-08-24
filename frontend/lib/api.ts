@@ -62,6 +62,8 @@ export type QueueRow = {
   reason_category: string | null;
   payment_url: string | null;
   next_action: string;
+  /** Recovery is paused for an open dispute case. */
+  dispute_open: boolean;
   why: string;
   why_next: string;
   why_state: string;
@@ -74,6 +76,44 @@ export type TimelineEntry = {
   provenance: "ai" | "policy" | "razorpay" | "system" | "human";
   summary: string;
   detail: Record<string, unknown>;
+};
+
+export type ConversationKind =
+  | "customer_message"
+  | "system_message"
+  | "ai_analysis"
+  | "policy_decision"
+  | "human_action"
+  | "payment_event";
+
+export type ConversationEntry = {
+  at: string;
+  kind: ConversationKind;
+  speaker: string;
+  headline: string;
+  body: string | null;
+  meta: Record<string, unknown>;
+};
+
+export type DisputeView = {
+  id: string;
+  status: string;
+  is_open: boolean;
+  reason: string;
+  summary: string;
+  facts: string[];
+  confidence: number;
+  confidence_display: string;
+  source_excerpt: string;
+  detected_by: string;
+  ai_degraded: boolean;
+  opened_at: string;
+  resolved_at: string | null;
+  resolved_by: string | null;
+  resolution_note: string | null;
+  recovery_resumed_at: string | null;
+  next_action: string;
+  payment_received_while_open: boolean;
 };
 
 export type ReminderView = {
@@ -127,9 +167,12 @@ export type InvoiceDetail = {
   reply_count: number;
   last_reply_at: string | null;
   last_reply_excerpt: string | null;
+  dispute: DisputeView | null;
+  dispute_history: DisputeView[];
   reminders: ReminderView[];
   promises: PromiseView[];
   timeline: TimelineEntry[];
+  conversation: ConversationEntry[];
 };
 
 export type AuditEntry = {
@@ -148,6 +191,19 @@ export const getInvoice = (id: string) => get<InvoiceDetail>(`/api/dashboard/inv
 export const getPromises = (status?: string) =>
   get<PromiseView[]>(`/api/dashboard/promises${status ? `?status=${status}` : ""}`);
 export const getAudit = (qs = "") => get<AuditEntry[]>(`/api/dashboard/audit?limit=200${qs}`);
+export const getOpenDisputes = () => get<OpenDisputeRow[]>(`/api/dashboard/disputes`);
+
+export type OpenDisputeRow = {
+  case_id: string;
+  invoice_id: string;
+  invoice_number: string;
+  customer_name: string;
+  outstanding_display: string;
+  reason: string;
+  confidence_display: string;
+  opened_at: string;
+  detected_by: string;
+};
 
 
 export type ReconciliationException = {

@@ -377,3 +377,113 @@ def test_closure_is_audited_both_ways(session, invoice, link):
         select(AuditLog).where(AuditLog.action == AuditAction.PAYMENT_LINK_CLOSED)
     ).one()
     assert closed.detail["payment_link_id"] == link.razorpay_payment_link_id
+
+
+# ===========================================================================
+# The operator's retry button. P1.
+# ===========================================================================
+
+
+def test_an_operator_can_retry_a_failed_closure(session, invoice, link, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    import app.api.dashboard as dashboard_mod
+    from app.core.config import settings
+    from app.main import create_app
+
+    invoice.amount_paid_paise = invoice.amount_paise
+    invoice.status = InvoiceStatus.RECOVERED
+    session.add(invoice)
+    close_payment_link(
+        session, link, client=FakeRazorpay(raise_on_cancel=RazorpayTransientError("503"))
+    )
+    session.refresh(link)
+    assert link.closure_error is not None
+
+    monkeypatch.setattr(
+        dashboard_mod,
+        "close_payment_link",
+        lambda sess, link_, **kw: close_payment_link(sess, link_, client=FakeRazorpay()),
+    )
+
+    with TestClient(create_app()) as api:
+        api.headers.update({"X-Admin-Key": settings.admin_api_key})
+        resp = api.post(f"/api/dashboard/exceptions/links/{link.id}/retry-closure")
+
+    assert resp.status_code == 200
+    assert resp.json()["closed"] is True
+
+    session.expire_all()
+    session.refresh(link)
+    assert link.cancelled_at is not None
+
+
+def test_retrying_an_already_closed_link_is_a_safe_no_op(session, invoice, link):
+    from fastapi.testclient import TestClient
+
+    from app.core.config import settings
+    from app.main import create_app
+
+    link.cancelled_at = utcnow()
+    link.status = PaymentLinkStatus.CANCELLED
+    session.add(link)
+    session.commit()
+
+    with TestClient(create_app()) as api:
+        api.headers.update({"X-Admin-Key": settings.admin_api_key})
+        resp = api.post(f"/api/dashboard/exceptions/links/{link.id}/retry-closure")
+
+    assert resp.status_code == 200
+    assert resp.json()["note"] == "already closed"
+
+
+def test_closure_cannot_be_forced_on_an_unpaid_invoice(session, invoice, link):
+    """Closing the link on an unpaid invoice would remove the customer's way to pay.
+
+    The button exists to finish a closure that failed, not to let an operator revoke
+    payment routes.
+    """
+    from fastapi.testclient import TestClient
+
+    from app.core.config import settings
+    from app.main import create_app
+
+    assert invoice.amount_paid_paise == 0
+
+    with TestClient(create_app()) as api:
+        api.headers.update({"X-Admin-Key": settings.admin_api_key})
+        resp = api.post(f"/api/dashboard/exceptions/links/{link.id}/retry-closure")
+
+    assert resp.status_code == 409
+    session.refresh(link)
+    assert link.cancelled_at is None
+
+
+def test_closure_retry_requires_authentication(session, invoice, link):
+    from fastapi.testclient import TestClient
+
+    from app.main import create_app
+
+    with TestClient(create_app()) as anon:
+        resp = anon.post(f"/api/dashboard/exceptions/links/{link.id}/retry-closure")
+    assert resp.status_code == 401
+
+
+def test_the_closure_retry_is_audited(session, invoice, link):
+    from fastapi.testclient import TestClient
+
+    from app.core.config import settings
+    from app.main import create_app
+
+    invoice.amount_paid_paise = invoice.amount_paise
+    session.add(invoice)
+    session.commit()
+
+    with TestClient(create_app()) as api:
+        api.headers.update({"X-Admin-Key": settings.admin_api_key})
+        api.post(f"/api/dashboard/exceptions/links/{link.id}/retry-closure")
+
+    session.expire_all()
+    assert session.exec(
+        select(AuditLog).where(AuditLog.action == AuditAction.PAYMENT_LINK_CLOSE_RETRIED)
+    ).first()

@@ -67,6 +67,15 @@ class EvalResult:
     confusion: Counter
     policy_rejections: Counter
     violations: PolicyViolations
+    #: Reminders that reached the customer, over reminders attempted. Separates a
+    #: policy that chose not to send from one that tried and failed.
+    delivery_success_rate: float | None = None
+    #: Invoices where the cadence ran out with nothing recovered — the cost of a
+    #: bounded policy, stated rather than hidden.
+    exhausted_unrecovered: int = 0
+    #: Contacts per rupee recovered. The efficiency figure the baseline table is
+    #: really about.
+    contacts_per_lakh_recovered: float | None = None
 
     @property
     def diagnosis_accuracy(self) -> float:
@@ -219,4 +228,22 @@ def evaluate(
         confusion=confusion,
         policy_rejections=rejections,
         violations=check_violations(session, ground_truth),
+        delivery_success_rate=(
+            sum(1 for r in reminders if r.sent_at) / len(reminders) if reminders else None
+        ),
+        exhausted_unrecovered=sum(
+            1
+            for i in invoices
+            if i.reminders_sent >= MAX_AUTOMATED_REMINDERS and i.status != InvoiceStatus.RECOVERED
+        ),
+        contacts_per_lakh_recovered=(
+            # Uses the override, not len(reminders): the naive baseline's contacts are
+            # counted in memory because the schema refuses to store a fourth reminder,
+            # so reading the table would report zero and make the worst policy look
+            # like the most efficient one.
+            (contacts_override if contacts_override is not None else len(reminders))
+            / (base.recovered_paise / 1_00_000_00)
+            if base.recovered_paise
+            else None
+        ),
     )

@@ -114,4 +114,8 @@ async def razorpay_webhook(request: Request, session: SessionDep) -> dict[str, s
         log.exception("webhook.processing_failed", event_id=event_id)
         return {"status": "recorded_for_retry", "event_id": event_id}
 
-    return {"status": "processed", "event_id": event_id}
+    # Report what actually happened, not merely that we did not crash. An unmatched
+    # payment leaves the event FAILED; answering "processed" would tell Razorpay — and
+    # anyone reading the logs — that money was reconciled when it was not.
+    session.refresh(event)
+    return {"status": event.status, "event_id": event_id}

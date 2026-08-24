@@ -2,7 +2,7 @@
 # Skip this entirely if you already have Postgres on :5432 — see README.
 services:
   db:
-    image: postgres:16
+    image: postgres:17
     container_name: vasooli-db
     environment:
       POSTGRES_USER: vasooli

@@ -11,7 +11,7 @@ jobs:
 
     services:
       postgres:
-        image: postgres:16
+        image: postgres:17
         env:
           POSTGRES_USER: vasooli
           POSTGRES_PASSWORD: vasooli
@@ -59,6 +59,22 @@ jobs:
       - name: Tests
         run: uv run pytest -q
 
+      - name: Dependency audit (Python)
+        # Enforcing. A known vulnerability in a dependency of a payments system is a
+        # reason to stop, not a line in a log nobody reads.
+        #
+        # `--strict` also fails when a package cannot be audited at all, so a silent
+        # gap in coverage is treated as a finding rather than a pass.
+        run: uv run --with pip-audit pip-audit --strict
+
+      - name: Dependency audit (JavaScript)
+        working-directory: frontend
+        # High and critical fail the build. Low and moderate findings are reported by
+        # `npm audit` locally but do not block: the npm advisory database carries a
+        # long tail of low-severity findings in build-time tooling that never reaches
+        # production, and failing on those trains people to ignore the check.
+        run: npm audit --audit-level=high
+
       - name: Secret scan
         working-directory: .
         run: |
@@ -68,3 +84,39 @@ jobs:
             echo "::error::Possible real credential committed"
             exit 1
           fi
+
+  frontend:
+    name: frontend-checks
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type check
+        run: npx tsc --noEmit
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build
+        # Placeholders: the build must not require real credentials, and if it ever
+        # does, that is a bug worth failing on here rather than at deploy time.
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:8000
+          ADMIN_API_KEY: ci
+          SESSION_SECRET: ci-session-secret-long-enough-to-sign-with
+          DASHBOARD_PASSWORD: ci-dashboard-password
+        run: npm run build

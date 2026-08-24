@@ -8,19 +8,23 @@ kind of bug that shows up as ₹1 missing on a slide.
 
 import uuid
 from datetime import timedelta
+from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Header, HTTPException, Query, status
+from pydantic import BaseModel, Field
 from sqlmodel import select
 
-from app.api.deps import OperatorRequired
+from app.api.deps import Operator, OperatorRequired
 from app.core.clock import utcnow
-from app.core.constants import InvoiceStatus, PromiseStatus
+from app.core.constants import DisputeStatus, InvoiceStatus, PromiseStatus
 from app.core.db import SessionDep
 from app.core.money import format_inr
 from app.models import (
     AuditAction,
+    AuditActor,
     AuditLog,
     Customer,
+    DisputeCase,
     Invoice,
     PaymentLink,
     Promise,
@@ -28,7 +32,17 @@ from app.models import (
     Reminder,
 )
 from app.models.reconciliation_event import EventStatus
-from app.schemas.dashboard import InvoiceDetail, PromiseView, QueueRow, ReminderView, TimelineEntry
+from app.schemas.dashboard import (
+    ConversationEntry,
+    DisputeView,
+    InvoiceDetail,
+    PromiseView,
+    QueueRow,
+    ReminderView,
+    TimelineEntry,
+)
+from app.services.closure import close_payment_link
+from app.services.disputes import cases_for, resolve_dispute
 from app.services.explain import Explanation, explain
 from app.services.messaging import retry_failed_deliveries
 from app.services.metrics import compute_metrics
@@ -60,6 +74,7 @@ _SUMMARIES = {
     AuditAction.DETERMINISTIC_FALLBACK: "Template used — no model available",
     AuditAction.PAYMENT_LINK_CLOSED: "Payment link closed",
     AuditAction.PAYMENT_LINK_CLOSE_FAILED: "Payment link close failed",
+    AuditAction.PAYMENT_LINK_CLOSE_RETRIED: "Payment link closure retried",
     AuditAction.RECONCILIATION_FAILED: "Reconciliation failed",
     AuditAction.RECONCILIATION_RETRIED: "Reconciliation retried",
     AuditAction.POLICY_EVALUATED: "Policy approved",
@@ -71,6 +86,13 @@ _SUMMARIES = {
     AuditAction.PROMISE_KEPT: "Promise kept",
     AuditAction.PROMISE_BROKEN: "Promise broken",
     AuditAction.ESCALATED_TO_HUMAN: "Escalated to human",
+    AuditAction.DISPUTE_DETECTED: "Dispute detected in customer reply",
+    AuditAction.RECOVERY_PAUSED: "Recovery paused",
+    AuditAction.DISPUTE_CASE_OPENED: "Human-review case opened",
+    AuditAction.DISPUTE_ALREADY_OPEN: "Repeat message — case already open",
+    AuditAction.DISPUTE_RESOLVED: "Dispute resolved",
+    AuditAction.RECOVERY_RESUMED: "Recovery resumed",
+    AuditAction.PAYMENT_DURING_DISPUTE: "Payment received while dispute open",
     AuditAction.PAYMENT_RECONCILED: "Payment reconciled",
     AuditAction.RECONCILIATION_UNMATCHED: "Unmatched payment",
     AuditAction.WEBHOOK_DUPLICATE_IGNORED: "Duplicate webhook ignored",
@@ -91,7 +113,156 @@ def _summarise(entry: AuditLog) -> str:
         return f"{base} — {detail.get('reason')}"
     if entry.action == AuditAction.PROMISE_LOGGED:
         return f"{base} — by {detail.get('promised_date')}"
+    if entry.action == AuditAction.DISPUTE_DETECTED:
+        return f"{base} — {detail.get('reason')}"
+    if entry.action == AuditAction.RECOVERY_PAUSED:
+        return f"{base} — {detail.get('reason')}"
+    if entry.action == AuditAction.PAYMENT_DURING_DISPUTE:
+        return f"{base} — {format_inr(int(detail.get('applied_paise') or 0))}"
     return base
+
+
+# ---------------------------------------------------------------------------
+# The conversation view.
+# ---------------------------------------------------------------------------
+
+#: Audit actions that are part of the conversation, and how each one is shown.
+#: Anything not listed here is machinery — a policy evaluation, a link provisioning,
+#: a retry — and belongs on the technical timeline rather than in a conversation a
+#: merchant reads to understand what was said.
+_CONVERSATION_KINDS: dict[str, tuple[str, str]] = {
+    AuditAction.REPLY_RECEIVED: ("customer_message", "Customer"),
+    AuditAction.REMINDER_SENT: ("system_message", "Vasooli"),
+    AuditAction.REMINDER_FAILED: ("system_message", "Vasooli"),
+    AuditAction.DISPUTE_DETECTED: ("ai_analysis", "AI analysis"),
+    AuditAction.PROMISE_LOGGED: ("ai_analysis", "AI analysis"),
+    AuditAction.RECOVERY_PAUSED: ("policy_decision", "Policy"),
+    AuditAction.DISPUTE_CASE_OPENED: ("policy_decision", "Policy"),
+    AuditAction.DISPUTE_ALREADY_OPEN: ("policy_decision", "Policy"),
+    AuditAction.ESCALATED_TO_HUMAN: ("policy_decision", "Policy"),
+    AuditAction.PROMISE_BROKEN: ("policy_decision", "Policy"),
+    AuditAction.PROMISE_KEPT: ("policy_decision", "Policy"),
+    AuditAction.DISPUTE_RESOLVED: ("human_action", "Merchant"),
+    AuditAction.RECOVERY_RESUMED: ("human_action", "Merchant"),
+    AuditAction.PAYMENT_RECONCILED: ("payment_event", "Razorpay"),
+    AuditAction.PAYMENT_DURING_DISPUTE: ("payment_event", "Razorpay"),
+    AuditAction.PAYMENT_LINK_CLOSED: ("payment_event", "Razorpay"),
+}
+
+
+def _conversation_body(entry: AuditLog, reminders_by_tier: dict[int, Reminder]) -> str | None:
+    """The actual words for this entry, where there were any.
+
+    A conversation with the messages left out is a status log. The customer's excerpt
+    is on the audit row itself; a reminder's body lives on the reminder, which is why
+    the tier index is passed in rather than the timeline doing a query per row.
+    """
+    detail = entry.detail or {}
+    if entry.action == AuditAction.REPLY_RECEIVED:
+        excerpt = detail.get("excerpt")
+        return str(excerpt) if excerpt else None
+    if entry.action in (AuditAction.REMINDER_SENT, AuditAction.REMINDER_FAILED):
+        reminder = reminders_by_tier.get(int(detail.get("tier") or 0))
+        return reminder.body if reminder else None
+    if entry.action == AuditAction.DISPUTE_DETECTED:
+        summary = detail.get("summary")
+        return str(summary) if summary else None
+    if entry.action == AuditAction.DISPUTE_RESOLVED:
+        note = detail.get("note")
+        return str(note) if note else None
+    return None
+
+
+def _conversation_meta(entry: AuditLog) -> dict:
+    """The supporting detail for one entry, filtered to what a merchant would read.
+
+    Deliberately a small allowlist rather than the whole `detail` blob. The audit row
+    is the complete record and is still rendered in full on the technical timeline;
+    this view is meant to be readable, and a raw JSON dump is not.
+    """
+    detail = entry.detail or {}
+    keep = ("reason", "confidence", "facts", "model", "degraded", "tier", "tone", "case_id")
+    meta = {k: detail[k] for k in keep if k in detail and detail[k] not in (None, [], "")}
+    if entry.action == AuditAction.PAYMENT_RECONCILED:
+        meta["amount_display"] = format_inr(int(detail.get("applied_paise") or 0))
+    if entry.action == AuditAction.PAYMENT_DURING_DISPUTE:
+        meta["amount_display"] = format_inr(int(detail.get("applied_paise") or 0))
+    return meta
+
+
+def _build_conversation(
+    entries: list[AuditLog], reminders: list[Reminder]
+) -> list[ConversationEntry]:
+    """Reshape the audit log into a conversation, in order.
+
+    Ordering is by `created_at` and nothing else, so a customer message always appears
+    before the analysis of it and the pause that followed. Rows written inside one
+    transaction share a timestamp closely enough that the database's insertion order
+    settles ties, which is the order they happened in.
+    """
+    by_tier = {r.tier: r for r in reminders}
+    conversation: list[ConversationEntry] = []
+
+    for entry in sorted(entries, key=lambda e: e.created_at):
+        mapping = _CONVERSATION_KINDS.get(entry.action)
+        if mapping is None:
+            continue
+        kind, speaker = mapping
+        if entry.actor.startswith("human:"):
+            speaker = entry.actor.split(":", 1)[1]
+        if entry.action in (AuditAction.REMINDER_SENT, AuditAction.REMINDER_FAILED):
+            speaker = f"Vasooli — Tier {(entry.detail or {}).get('tier')}"
+
+        conversation.append(
+            ConversationEntry(
+                at=entry.created_at,
+                kind=kind,  # type: ignore[arg-type]
+                speaker=speaker,
+                headline=_summarise(entry),
+                body=_conversation_body(entry, by_tier),
+                meta=_conversation_meta(entry),
+            )
+        )
+    return conversation
+
+
+def _dispute_view(case: DisputeCase, *, payment_while_open: bool) -> DisputeView:
+    """One dispute case, with the merchant's next step spelled out."""
+    if case.is_open:
+        next_action = (
+            "Check the customer's claims against your delivery note or purchase order, "
+            "then resolve the case. Recovery stays paused until you do."
+        )
+        if payment_while_open:
+            next_action = (
+                "Payment has arrived while this dispute is open. Confirm whether the "
+                "objection still stands, then resolve the case."
+            )
+    elif case.recovery_resumed_at is not None:
+        next_action = "Resolved. Recovery has resumed."
+    else:
+        next_action = "Resolved. Recovery stays stopped — resolve again with resume to restart it."
+
+    return DisputeView(
+        id=case.id,
+        status=str(case.status),
+        is_open=case.is_open,
+        reason=case.reason,
+        summary=case.summary,
+        facts=[str(f) for f in (case.facts or [])],
+        confidence=case.confidence,
+        confidence_display=f"{round(case.confidence * 100)}%",
+        source_excerpt=case.source_excerpt,
+        detected_by=case.detected_by,
+        ai_degraded=case.ai_degraded,
+        opened_at=case.opened_at,
+        resolved_at=case.resolved_at,
+        resolved_by=case.resolved_by,
+        resolution_note=case.resolution_note,
+        recovery_resumed_at=case.recovery_resumed_at,
+        next_action=next_action,
+        payment_received_while_open=payment_while_open,
+    )
 
 
 def _next_action(invoice: Invoice) -> str:
@@ -99,6 +270,8 @@ def _next_action(invoice: Invoice) -> str:
     if invoice.status == InvoiceStatus.RECOVERED:
         return "Recovered"
     if invoice.status == InvoiceStatus.HUMAN_REVIEW:
+        if invoice.escalation_reason == "complaint_in_reply":
+            return "Recovery paused — customer disputes this invoice"
         return f"Needs a human — {invoice.escalation_reason or 'flagged'}"
     if invoice.status == InvoiceStatus.PROMISE_ACTIVE:
         return "Paused — customer promised to pay"
@@ -182,6 +355,15 @@ def queue(
     names = {c.id: c.name for c in session.exec(select(Customer)).all()}
     links = {pl.invoice_id: pl for pl in session.exec(select(PaymentLink)).all()}
     reasons = {i.id: _explain_for(session, i) for i in invoices}
+    # One query for the whole page rather than one per row: the queue renders up to
+    # 500 invoices and a per-row lookup here is the classic N+1 that only shows up
+    # once there is real data.
+    disputed = {
+        c.invoice_id
+        for c in session.exec(
+            select(DisputeCase).where(DisputeCase.status == DisputeStatus.OPEN)
+        ).all()
+    }
 
     return [
         QueueRow(
@@ -196,6 +378,7 @@ def queue(
             reason_category=str(i.reason_category) if i.reason_category else None,
             payment_url=links[i.id].short_url if i.id in links else None,
             next_action=_next_action(i),
+            dispute_open=i.id in disputed,
             why=(reasons[i.id]).headline,
             why_next=(reasons[i.id]).next_step,
             why_state=(reasons[i.id]).state,
@@ -220,9 +403,18 @@ def invoice_detail(invoice_id: uuid.UUID, session: SessionDep) -> InvoiceDetail:
     promises = session.exec(
         select(Promise).where(Promise.invoice_id == invoice.id).order_by(Promise.created_at)
     ).all()
-    entries = session.exec(
-        select(AuditLog).where(AuditLog.invoice_id == invoice.id).order_by(AuditLog.created_at)
-    ).all()
+    entries = list(
+        session.exec(
+            select(AuditLog).where(AuditLog.invoice_id == invoice.id).order_by(AuditLog.created_at)
+        ).all()
+    )
+    cases = cases_for(session, invoice.id)
+
+    # Read once from the entries already loaded rather than issuing another query:
+    # the audit trail is the record of whether money arrived during a dispute, and it
+    # is already in memory.
+    payment_while_open = any(e.action == AuditAction.PAYMENT_DURING_DISPUTE for e in entries)
+    open_case = next((c for c in cases if c.is_open), None)
 
     reason = _explain_for(session, invoice)
 
@@ -281,6 +473,15 @@ def invoice_detail(invoice_id: uuid.UUID, session: SessionDep) -> InvoiceDetail:
             )
             for p in promises
         ],
+        dispute=(
+            _dispute_view(open_case, payment_while_open=payment_while_open)
+            if open_case is not None
+            else None
+        ),
+        dispute_history=[
+            _dispute_view(c, payment_while_open=payment_while_open) for c in cases if not c.is_open
+        ],
+        conversation=_build_conversation(entries, list(reminders)),
         timeline=[
             TimelineEntry(
                 at=e.created_at,
@@ -554,3 +755,184 @@ def retry_reminder(reminder_id: uuid.UUID, session: SessionDep) -> dict:
         "error": reminder.send_error,
         "swept": report["attempted"],
     }
+
+
+@router.post("/dashboard/exceptions/links/{link_id}/retry-closure")
+def retry_closure(link_id: uuid.UUID, session: SessionDep) -> dict:
+    """Re-attempt closing one payment link, ignoring its backoff.
+
+    Deliberately narrow. This closes a link and nothing else — it cannot change an
+    amount, reopen a link, or touch payment state. An operator button that could
+    manipulate a payment link arbitrarily would be a far larger hole than the problem
+    it solves.
+
+    Safe to press repeatedly: closure is idempotent on `cancelled_at`, and Razorpay
+    reporting the link as already cancelled counts as success rather than an error.
+    """
+    link = session.get(PaymentLink, link_id)
+    if link is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Payment link not found")
+
+    if link.cancelled_at is not None:
+        return {
+            "link_id": str(link_id),
+            "closed": True,
+            "note": "already closed",
+            "status": link.status,
+        }
+
+    invoice = session.get(Invoice, link.invoice_id)
+    if invoice is None or not invoice.is_fully_paid:
+        # Closing a link on an unpaid invoice would remove the customer's way to pay.
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Invoice is not fully paid — closing its link would remove the way to pay it",
+        )
+
+    session.add(
+        AuditLog(
+            invoice_id=invoice.id,
+            actor="human",
+            action=AuditAction.PAYMENT_LINK_CLOSE_RETRIED,
+            detail={
+                "payment_link_id": link.razorpay_payment_link_id,
+                "attempts_before": link.closure_attempts,
+            },
+        )
+    )
+    session.commit()
+
+    closed = close_payment_link(session, link)
+    session.refresh(link)
+    return {
+        "link_id": str(link_id),
+        "closed": closed,
+        "status": link.status,
+        "error": link.closure_error,
+        "attempts": link.closure_attempts,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Dispute review. Customer Conversation Safety.
+# ---------------------------------------------------------------------------
+
+
+class ResolveDispute(BaseModel):
+    """What a merchant decided about a dispute."""
+
+    note: str = Field(default="", max_length=1000)
+    #: Resolving and resuming are separate decisions. A merchant who agrees the
+    #: customer was right closes the case and leaves recovery stopped; one who checked
+    #: the paperwork and found the invoice correct closes it and resumes. Defaulting
+    #: to False keeps the safe choice the default one.
+    resume_recovery: bool = False
+
+
+@router.post("/dashboard/disputes/{case_id}/resolve")
+def resolve_dispute_case(
+    case_id: uuid.UUID,
+    payload: ResolveDispute,
+    session: SessionDep,
+    operator: Operator,
+    on_behalf_of: Annotated[str | None, Header(alias="X-Operator")] = None,
+) -> dict:
+    """Close a dispute case, and optionally put the invoice back in the cadence.
+
+    The only write path out of a dispute. There is no endpoint that resumes recovery
+    without resolving, and none that resolves on the AI's behalf — a dispute is opened
+    by policy acting on what the model read, and closed by a person.
+    """
+    case = session.get(DisputeCase, case_id)
+    if case is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Dispute case not found")
+
+    if not case.is_open:
+        # Not an error. Two operators clicking resolve on the same case is ordinary,
+        # and the second one should see the outcome rather than a failure.
+        return {
+            "case_id": str(case.id),
+            "status": str(case.status),
+            "resumed": case.recovery_resumed_at is not None,
+            "note": "This case was already resolved.",
+        }
+
+    # The dashboard reaches this endpoint through its server-side proxy, which
+    # authenticates with the admin key — so `operator` is "service" for every click a
+    # merchant makes, and the audit trail would attribute all of them to nobody. The
+    # proxy forwards who is signed in, and it is used only for the audit attribution:
+    # the header grants no access on its own, because the request had to pass
+    # `require_operator` before this line is reached at all.
+    acting_as = _acting_operator(operator, on_behalf_of)
+
+    case, resumed = resolve_dispute(
+        session,
+        case,
+        resolved_by=acting_as,
+        note=payload.note,
+        resume_recovery=payload.resume_recovery,
+    )
+    session.commit()
+
+    invoice = session.get(Invoice, case.invoice_id)
+    return {
+        "case_id": str(case.id),
+        "invoice_number": invoice.invoice_number if invoice else None,
+        "status": str(case.status),
+        "resumed": resumed,
+        "invoice_status": str(invoice.status) if invoice else None,
+        "note": (
+            "Dispute resolved — recovery has resumed."
+            if resumed
+            else "Dispute resolved. Recovery stays stopped for this invoice."
+        ),
+    }
+
+
+def _acting_operator(operator: str, on_behalf_of: str | None) -> str:
+    """Who a human action is attributed to.
+
+    The header is trusted only for naming, and only when the request already
+    authenticated as the service credential — the case a browser session reaches
+    through the dashboard proxy. It is length-capped and stripped of anything that
+    could forge a different actor kind, because "human:" and "policy:" mean different
+    things to every reader of the audit log.
+    """
+    if operator != "service" or not on_behalf_of:
+        return AuditActor.human(operator)
+
+    cleaned = on_behalf_of.strip().replace(":", "").replace("\n", "")[:120]
+    return AuditActor.human(cleaned) if cleaned else AuditActor.human(operator)
+
+
+@router.get("/dashboard/disputes")
+def open_disputes(session: SessionDep) -> list[dict]:
+    """Every invoice currently paused for a dispute, newest first.
+
+    A merchant's working list. Deliberately a flat summary rather than the full case:
+    the detail lives on the invoice page, next to the conversation it came from.
+    """
+    cases = session.exec(
+        select(DisputeCase)
+        .where(DisputeCase.status == DisputeStatus.OPEN)
+        .order_by(DisputeCase.opened_at.desc())  # type: ignore[attr-defined]
+    ).all()
+
+    rows = []
+    for case in cases:
+        invoice = session.get(Invoice, case.invoice_id)
+        customer = session.get(Customer, invoice.customer_id) if invoice else None
+        rows.append(
+            {
+                "case_id": str(case.id),
+                "invoice_id": str(case.invoice_id),
+                "invoice_number": invoice.invoice_number if invoice else "—",
+                "customer_name": customer.name if customer else "—",
+                "outstanding_display": format_inr(invoice.outstanding_paise) if invoice else "—",
+                "reason": case.reason,
+                "confidence_display": f"{round(case.confidence * 100)}%",
+                "opened_at": case.opened_at,
+                "detected_by": case.detected_by,
+            }
+        )
+    return rows

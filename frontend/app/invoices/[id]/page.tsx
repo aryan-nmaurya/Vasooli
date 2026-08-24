@@ -2,7 +2,10 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { ProvenanceBadge, ReasonBadge, StatusBadge } from "@/components/badges";
+import { Conversation } from "@/components/Conversation";
+import { DisputeCard } from "@/components/DisputeCard";
 import { PolicyCard } from "@/components/PolicyCard";
+import { WhyCard } from "@/components/WhyCard";
 import { ProvisionButton } from "@/components/ProvisionButton";
 import { SimulateReply } from "@/components/SimulateReply";
 import { getInvoice } from "@/lib/api";
@@ -43,6 +46,14 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
         </div>
       </div>
 
+      <WhyCard
+        why={invoice.why}
+        next={invoice.why_next}
+        state={invoice.why_state}
+      />
+
+      {invoice.dispute ? <DisputeCard dispute={invoice.dispute} /> : null}
+
       <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {[
           ["Amount", invoice.amount_display],
@@ -74,6 +85,29 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
         </section>
       ) : null}
 
+      {invoice.dispute_history.length ? (
+        <section className="rounded-xl border border-line bg-panel px-5 py-4">
+          <div className="text-xs uppercase tracking-wider text-ink-3">
+            Resolved disputes ({invoice.dispute_history.length})
+          </div>
+          <div className="mt-2 space-y-2">
+            {invoice.dispute_history.map((past) => (
+              <div key={past.id} className="text-sm text-ink-2">
+                <span className="text-ink">{past.reason}</span>
+                {past.resolution_note ? (
+                  <span className="text-ink-3"> — “{past.resolution_note}”</span>
+                ) : null}
+                <span className="text-ink-4">
+                  {" "}
+                  · closed by {past.resolved_by?.replace(/^human:/, "") ?? "—"}
+                  {past.recovery_resumed_at ? ", recovery resumed" : ", recovery left stopped"}
+                </span>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
       {invoice.payment_url ? (
         <section className="rounded-xl border border-line bg-panel px-5 py-4">
           <div className="text-xs uppercase tracking-wider text-ink-3">Payment link</div>
@@ -94,7 +128,25 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
       )}
 
       <div className="grid gap-6 lg:grid-cols-[1.15fr_1fr]">
-        <section>
+        <section className="space-y-6">
+          <div>
+            <h2 className="mb-1 text-sm font-semibold text-ink">
+              Conversation
+              <span className="ml-2 font-normal text-ink-3">
+                everything said about this invoice, in order
+              </span>
+            </h2>
+            <p className="mb-3 text-xs text-ink-3">
+              {invoice.reply_count > 0
+                ? `${invoice.reply_count} customer repl${
+                    invoice.reply_count === 1 ? "y" : "ies"
+                  } — this customer has replied, so they are never classified unresponsive.`
+                : "No customer replies yet."}
+            </p>
+            <Conversation entries={invoice.conversation} />
+          </div>
+
+          <div>
           <h2 className="mb-3 text-sm font-semibold text-ink">
             Timeline
             <span className="ml-2 font-normal text-ink-3">
@@ -115,6 +167,7 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
               </li>
             ))}
           </ol>
+          </div>
         </section>
 
         <section className="space-y-5">

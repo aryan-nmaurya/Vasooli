@@ -32,6 +32,14 @@ def print_main(result: EvalResult, *, days: int) -> None:
         ("", ""),
         ("Contacts sent", str(result.total_contacts)),
         ("Contacts per invoice", f"{result.contacts_per_invoice:.2f}"),
+        (
+            "Contacts per ₹1L recovered",
+            f"{result.contacts_per_lakh_recovered:.1f}"
+            if result.contacts_per_lakh_recovered
+            else "—",
+        ),
+        ("Delivery success rate", _pct(result.delivery_success_rate)),
+        ("Cadence exhausted, unpaid", str(result.exhausted_unrecovered)),
         ("Escalated to human", str(result.escalated)),
         ("False escalations", str(result.false_escalations)),
         ("Missed escalations", str(result.missed_escalations)),
@@ -116,6 +124,10 @@ def print_comparison(results: list[EvalResult]) -> None:
     )
     row("Contacts sent", lambda r: str(r.total_contacts))
     row("Contacts per invoice", lambda r: f"{r.contacts_per_invoice:.2f}")
+    row(
+        "Contacts per ₹1L",
+        lambda r: f"{r.contacts_per_lakh_recovered:.1f}" if r.contacts_per_lakh_recovered else "—",
+    )
     row("Escalated to human", lambda r: str(r.escalated))
     row("Compliance breaches", lambda r: str(r.violations.total))
 

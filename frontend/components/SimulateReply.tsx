@@ -13,7 +13,7 @@ import { useState } from "react";
 const PRESETS = [
   { label: "Promise to pay", body: "Cash is tight this month — I'll clear this by the 28th." },
   {
-    label: "Complaint",
+    label: "Dispute",
     body: "We were billed for 12 units but only received 9. Please check before we pay.",
   },
   { label: "Vague", body: "Thanks, noted. I'll look into it." },
@@ -48,8 +48,19 @@ export function SimulateReply({ invoiceId }: { invoiceId: string }) {
   }
 
   return (
-    <div className="rounded-xl border border-line bg-panel px-4 py-4">
-      <h2 className="text-sm font-semibold text-ink">Simulate a customer reply</h2>
+    <div className="rounded-xl border border-dashed border-amber-300 bg-amber-50/60 px-4 py-4 dark:border-amber-500/40 dark:bg-amber-500/5">
+      <div className="flex items-center gap-2">
+        <span className="rounded bg-amber-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-800 ring-1 ring-inset ring-amber-300 dark:bg-amber-500/20 dark:text-amber-200 dark:ring-amber-500/40">
+          Demo controls
+        </span>
+        <h2 className="text-sm font-semibold text-ink">Simulate a customer reply</h2>
+      </div>
+      <p className="mt-1.5 text-xs text-ink-3">
+        <strong className="text-ink-2">Demo simulation.</strong> The reply is injected
+        directly, not received by email — inbound mail parsing needs a verified domain and
+        is not implemented. Everything after this point is the production path: the same
+        extraction, the same validation, the same promise handling.
+      </p>
       <div className="mt-2 flex flex-wrap gap-1.5">
         {PRESETS.map((preset) => (
           <button

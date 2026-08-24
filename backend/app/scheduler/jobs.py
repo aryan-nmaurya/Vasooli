@@ -9,6 +9,7 @@ from sqlmodel import Session
 from app.core.db import engine
 from app.core.logging import get_logger
 from app.services.recovery import run_recovery_cycle
+from app.services.sync import sync_payment_links
 
 log = get_logger("scheduler")
 
@@ -31,7 +32,14 @@ def payment_link_sync_job() -> None:
     """Reconcile against Razorpay directly, as a safety net for missed webhooks.
 
     Webhooks are the primary path and are idempotent, so this only matters when a
-    delivery is lost entirely. Implemented in a later phase; the slot exists now so
-    the schedule is visible.
+    delivery is lost entirely — a payment made while the receiver was unreachable.
+    Razorpay eventually stops retrying, and without this the money would sit
+    unrecorded indefinitely.
     """
-    log.debug("scheduler.payment_link_sync_noop")
+    try:
+        with Session(engine) as session:
+            report = sync_payment_links(session)
+        if report["checked"]:
+            log.info("scheduler.payment_link_sync_done", **report)
+    except Exception:
+        log.exception("scheduler.payment_link_sync_failed")

@@ -36,17 +36,44 @@ def valid_response() -> DiagnosisResponse:
 @pytest.mark.parametrize(
     "message",
     [
-        "ReadTimeout: request timed out",
-        "DeadlineExceeded",
-        "ClientError: 429 RESOURCE_EXHAUSTED",
-        "rate limit exceeded",
         "ServerError: 503 UNAVAILABLE",
         "ServerError: 500 internal error",
+        "ServerError: 502 bad gateway",
         "ConnectionError: connection reset",
     ],
 )
-def test_transient_faults_are_retryable(message):
+def test_a_blip_is_retried_on_the_same_model(message):
+    """Short-lived faults clear in a second; failing over on the first would spend the
+    primary model's better output on a problem that fixed itself."""
     assert _is_retryable(message) is True
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "ClientError: 429 RESOURCE_EXHAUSTED",
+        "rate limit exceeded",
+        "quota exceeded for metric generate_content_free_tier_requests",
+    ],
+)
+def test_quota_exhaustion_fails_over_instead_of_retrying(message):
+    """Quota is counted PER MODEL, so a 429 on the primary says nothing about the
+    fallback. Measured on the live API: Gemini's 429 carries `retryDelay: 12s`, so a
+    sub-second retry cannot succeed — it only spends time proving that."""
+    assert _is_retryable(message) is False
+
+
+@pytest.mark.parametrize(
+    "message",
+    ["ServerError: 504 DEADLINE_EXCEEDED", "ReadTimeout: request timed out", "DeadlineExceeded"],
+)
+def test_a_timeout_fails_over_instead_of_retrying(message):
+    """Each timeout attempt burns the full configured timeout before admitting defeat.
+
+    Measured on the live API: two retries at 20s each turned one call into 64 seconds,
+    which over a cycle of 8 invoices is a quarter of an hour.
+    """
+    assert _is_retryable(message) is False
 
 
 @pytest.mark.parametrize(
