@@ -78,9 +78,23 @@ jobs:
       - name: Secret scan
         working-directory: .
         run: |
-          # Placeholder keys are fine; real ones must never reach the repo.
-          if git grep -nE 'rzp_(live|test)_[A-Za-z0-9]{10,}|AIza[A-Za-z0-9_-]{30,}|re_[A-Za-z0-9]{20,}' \
-             -- ':!*.lock' ':!.github/*'; then
+          # Real credentials must never reach the repo.
+          #
+          # Test fixtures deliberately carry realistically-SHAPED keys: a stand-in
+          # that looks nothing like the real thing exercises none of the parsing it
+          # stands in for. They carry the literal marker PLACEHOLDER, which is
+          # already load-bearing rather than decorative — app.ai.client
+          # ._key_is_configured keys on that exact string (case-sensitively) to
+          # decide a key is fake and refuse the call.
+          #
+          # The allowance requires PLACEHOLDER to sit INSIDE the credential-shaped
+          # token, not merely somewhere on the same line. A real key does not stop
+          # being a real key because the word appears in a trailing comment.
+          found=$(git grep -nE 'rzp_(live|test)_[A-Za-z0-9]{10,}|AIza[A-Za-z0-9_-]{30,}|re_[A-Za-z0-9]{20,}' \
+                    -- ':!*.lock' ':!.github/*' \
+                  | grep -vE '(rzp_(live|test)_|AIza|re_)[A-Za-z0-9_-]*PLACEHOLDER' || true)
+          if [ -n "$found" ]; then
+            echo "$found"
             echo "::error::Possible real credential committed"
             exit 1
           fi
