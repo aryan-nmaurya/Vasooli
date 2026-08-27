@@ -1,0 +1,29 @@
+# TLS termination and the only door into the box.
+#
+# Caddy requests a Let's Encrypt certificate on first boot and renews it on its own.
+# That needs DOMAIN to already resolve to this host's public IP — ACME validates by
+# connecting back on :80, so a DNS record that has not propagated yet looks exactly
+# like a misconfigured server.
+
+{
+	email {$ACME_EMAIL}
+}
+
+{$DOMAIN} {
+	encode gzip
+
+	# Razorpay signs the RAW request body, and app/api/webhooks.py verifies the HMAC
+	# over those exact bytes. Nothing here may rewrite, re-encode or buffer-modify the
+	# body — a single altered byte turns a valid webhook into a signature failure.
+	reverse_proxy api:8000 {
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+	}
+
+	log {
+		output file /data/access.log {
+			roll_size 10MB
+			roll_keep 5
+		}
+	}
+}

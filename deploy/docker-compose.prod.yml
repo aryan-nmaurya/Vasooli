@@ -1,0 +1,83 @@
+# Production stack for a single host. Customer Conversation Safety era.
+#
+# Three services, one box: Postgres, the FastAPI app, and Caddy for TLS. Sized for
+# the demo ledger, not for scale — if this ever needs to scale, the database moves to
+# RDS first (swap DATABASE_URL, delete the `db` service) and nothing else changes.
+#
+# Two things here are load-bearing rather than stylistic:
+#
+#   * NEITHER `db` NOR `api` publishes a port. Only Caddy is reachable from the
+#     internet. A Postgres with 5432 open to 0.0.0.0 is found by scanners within
+#     hours, and `vasooli:vasooli` is the first password they try.
+#   * The app runs ONE replica. It carries an in-process APScheduler (the 10:00 IST
+#     recovery cycle and the hourly payment sync). A second replica would run a second
+#     scheduler; the advisory lock in app/services/recovery.py would stop them
+#     double-sending, but there is no reason to rely on that here.
+
+name: vasooli
+
+services:
+  db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-vasooli}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}
+      POSTGRES_DB: ${POSTGRES_DB:-vasooli}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Dumps land here so the backup script can write them from the host.
+      - ./backups:/backups
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vasooli} -d ${POSTGRES_DB:-vasooli}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    # A demo box has 2GB total. Left uncapped, Postgres will happily plan around
+    # memory the app also needs.
+    deploy:
+      resources:
+        limits:
+          memory: 640M
+
+  api:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Composed here rather than in .env so the password lives in exactly one place.
+      DATABASE_URL: postgresql://${POSTGRES_USER:-vasooli}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-vasooli}
+    depends_on:
+      db:
+        condition: service_healthy
+    expose:
+      - "8000"
+    deploy:
+      resources:
+        limits:
+          memory: 900M
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in deploy/.env}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in deploy/.env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # caddy_data holds the issued certificates. Losing it means re-requesting them
+      # on every restart, and Let's Encrypt rate-limits that to 5 per week per domain.
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:

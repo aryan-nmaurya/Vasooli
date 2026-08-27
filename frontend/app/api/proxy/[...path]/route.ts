@@ -23,6 +23,7 @@ const ALLOWED = [
   /^dashboard\/overview$/,
   /^dashboard\/queue$/,
   /^dashboard\/promises$/,
+  /^dashboard\/disputes$/,
   /^dashboard\/audit$/,
   /^dashboard\/exceptions$/,
   /^dashboard\/invoices\/[0-9a-f-]{36}$/,

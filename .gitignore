@@ -34,3 +34,7 @@ frontend/out/
 # OS / Editor / Tools
 .DS_Store
 .claude/
+
+# Deployment secrets — never committed.
+deploy/.env
+deploy/*.env
