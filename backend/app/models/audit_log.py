@@ -1,8 +1,12 @@
 """Append-only record of every decision and action. Doc §3 Stage 6, §8.
 
 Append-only is enforced by a database trigger, not by convention — see the Phase 1
-migration. UPDATE and DELETE on this table raise, including for the owner, so the
-guarantee holds against a stray ORM call or a hand-typed psql statement.
+migration. UPDATE and DELETE on this table raise for every role, so the guarantee
+holds against a stray ORM call or a hand-typed psql statement.
+
+What it does not stop: TRUNCATE does not fire a row-level trigger, and a table owner
+can drop the trigger. This is tamper-evidence against the application and ordinary
+DML — not against someone with owner rights on the database.
 
 The demo shows this table; a log that could have been edited proves nothing.
 """

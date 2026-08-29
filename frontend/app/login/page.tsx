@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
 
@@ -44,7 +45,7 @@ function LoginForm() {
   }
 
   return (
-    <div className="mx-auto mt-24 max-w-sm">
+    <div className="login-panel mx-auto mt-24 max-w-sm">
       <h1 className="text-lg font-semibold text-ink">Vasooli</h1>
       <p className="mt-1 text-sm text-ink-3">
         This dashboard shows customer and payment data. Sign in to continue.
@@ -80,6 +81,18 @@ function LoginForm() {
           <p className="text-xs text-rose-700 dark:text-rose-300">{error}</p>
         ) : null}
       </form>
+
+      {/* A reviewer who arrives here without credentials must not be stuck. Both
+          destinations are public and carry no data. */}
+      <div className="mt-6 flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-line pt-4 text-xs text-ink-3">
+        <span>Reviewing this project?</span>
+        <Link href="/guide" className="text-ink-2 hover:text-ink">
+          Read the reviewer guide
+        </Link>
+        <Link href="/" className="text-ink-2 hover:text-ink">
+          What is Vasooli?
+        </Link>
+      </div>
     </div>
   );
 }

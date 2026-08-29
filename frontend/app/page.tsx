@@ -1,9 +1,18 @@
+import { Landing } from "@/components/Landing";
 import { OverviewClient } from "@/components/Overview";
 import { getExceptions, getOverview, getQueue, getRuntimeSafety } from "@/lib/api";
+import { currentSession } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 
 export default async function Page() {
+  // Anonymous visitors get the landing page rather than a redirect to /login.
+  // The dashboard below is still protected: it is only rendered for a verified
+  // session, and every endpoint it reads rejects an unauthenticated caller.
+  if (!(await currentSession())) {
+    return <Landing />;
+  }
+
   // The try wraps only the fetching. Constructing JSX inside a try/catch swallows
   // render errors from the component tree as if they were fetch failures, which is how
   // a broken child silently becomes "cannot reach the backend".

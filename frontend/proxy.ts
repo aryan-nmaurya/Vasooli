@@ -21,6 +21,11 @@ export function proxy(request: NextRequest) {
 
   const isPublic =
     pathname === "/login" ||
+    // The root renders a public landing page for anonymous visitors and the
+    // dashboard for signed-in ones — the branch is in app/page.tsx, not here.
+    // Gating it in the proxy would send a cold visitor to a password field, which
+    // is exactly the dead end this replaced.
+    pathname === "/" ||
     // The reviewer guide is deliberately reachable without a session: someone sent
     // this link cold should learn what the product is before being asked for a
     // password. It carries no data and no credentials.

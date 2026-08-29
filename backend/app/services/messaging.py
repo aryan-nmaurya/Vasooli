@@ -29,6 +29,7 @@ from app.integrations.email.resend_client import ResendProvider
 from app.models import AuditAction, AuditActor, AuditLog, Customer, Invoice, Reminder
 from app.models.reminder import MAX_DELIVERY_ATTEMPTS
 from app.policy import PolicyDecision
+from app.services.disputes import has_open_dispute
 
 log = get_logger("messaging")
 
@@ -145,6 +146,37 @@ def _backoff_seconds(attempt: int) -> int:
     return min(300 * (2 ** max(0, attempt - 1)), 7200)
 
 
+#: Escalation reason that does NOT block a retry.
+#:
+#: Tier 3 sends and then hands over — the HUMAN_REVIEW state is a consequence of that
+#: send, not a reason to withhold it. Treating it like the others stranded the final
+#: notice whenever its first delivery attempt failed.
+_ESCALATION_CAUSED_BY_SENDING = "tier_3_reached"
+
+
+def _no_longer_chased(session: Session, invoice: Invoice) -> bool:
+    """Whether a drafted reminder must not be delivered any more.
+
+    Every reason the cadence would stop, re-checked at delivery time. A queued retry
+    carries copy approved before the invoice changed state, so the terminal statuses
+    alone are not enough: a promise, a dispute, or an operator escalation all mean the
+    customer should not hear from us, and each of those can land between drafting and
+    sending.
+    """
+    if invoice.is_fully_paid:
+        return True
+    if invoice.status in (InvoiceStatus.RECOVERED, InvoiceStatus.WRITTEN_OFF):
+        return True
+    if invoice.status == InvoiceStatus.PROMISE_ACTIVE:
+        return True
+    if (
+        invoice.status == InvoiceStatus.HUMAN_REVIEW
+        and invoice.escalation_reason != _ESCALATION_CAUSED_BY_SENDING
+    ):
+        return True
+    return has_open_dispute(session, invoice.id)
+
+
 def _begin_attempt(reminder: Reminder, lease_token: str) -> None:
     """Durably claim an outbox row before the provider side effect begins."""
     reminder.attempt_count += 1
@@ -253,11 +285,16 @@ def _dispatch_reminder(
         session.commit()
         return reminder, None
 
-    dispute_paused = (
-        invoice.status == InvoiceStatus.HUMAN_REVIEW
-        and invoice.escalation_reason == "complaint_in_reply"
-    )
-    if invoice.status in (InvoiceStatus.RECOVERED, InvoiceStatus.WRITTEN_OFF) or dispute_paused:
+    # A queued retry carries a reminder drafted before the invoice changed state, so
+    # every reason the cadence would stop has to be re-checked here — not just the
+    # two terminal ones.
+    #
+    # This previously abandoned only RECOVERED, WRITTEN_OFF, and the single
+    # HUMAN_REVIEW/complaint_in_reply combination, which meant a Tier 1 reminder that
+    # failed delivery would still go out minutes after the customer promised to pay,
+    # or after an operator escalated the invoice by hand. "A promise pauses
+    # escalation" has to hold on the retry path too, or it does not hold at all.
+    if _no_longer_chased(session, invoice):
         reminder.delivery_state = "dead"
         reminder.send_error = "abandoned: invoice no longer being chased"
         reminder.next_retry_at = None
@@ -278,6 +315,38 @@ def _dispatch_reminder(
     _begin_attempt(reminder, lease_token)
     session.add(reminder)
     session.commit()
+
+    # Re-read the invoice after the lease commit, immediately before handing the
+    # message to the provider.
+    #
+    # The checks above ran against a snapshot taken before that commit, and committing
+    # released the transaction that made them meaningful. Reconciliation, a reply, or
+    # an operator escalation can all land in the window between the two — the cycle's
+    # advisory lock does not cover webhook or reply processing. `populate_existing`
+    # is required: without it SQLAlchemy's identity map hands back the same stale
+    # object and this re-read silently confirms whatever it already believed.
+    fresh = session.exec(
+        select(Invoice).where(Invoice.id == invoice.id).execution_options(populate_existing=True)
+    ).one()
+    if _no_longer_chased(session, fresh):
+        # Release the lease rather than burning an attempt: nothing was sent, and the
+        # invoice is no longer one we chase.
+        claimed = session.exec(
+            select(Reminder).where(Reminder.id == reminder_id).with_for_update()
+        ).one()
+        claimed.delivery_state = "dead"
+        claimed.send_error = "abandoned: invoice state changed before send"
+        claimed.next_retry_at = None
+        claimed.lease_token = None
+        claimed.lease_expires_at = None
+        session.add(claimed)
+        session.commit()
+        log.info(
+            "messaging.aborted_before_send",
+            invoice_number=fresh.invoice_number,
+            status=str(fresh.status),
+        )
+        return claimed, None
 
     try:
         result = _send_email(

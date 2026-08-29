@@ -9,9 +9,14 @@
  */
 
 export function formatInr(paise: number): string {
-  const rupees = Math.abs(paise) / 100;
-  const whole = Math.floor(rupees);
-  const frac = Math.round((rupees - whole) * 100);
+  // Integer arithmetic, deliberately. `paise / 100` puts money through a float and
+  // then rounds back — which is exactly the discipline the backend refuses to allow
+  // (see the float guard in tests/architecture/test_layering.py). Splitting with
+  // divmod on integers keeps every value exact, and keeps this helper honest with
+  // the claim that the frontend does not do float arithmetic on currency.
+  const abs = Math.abs(Math.trunc(paise));
+  const whole = Math.floor(abs / 100);
+  const frac = abs % 100;
 
   let s = String(whole);
   if (s.length > 3) {
@@ -30,11 +35,17 @@ export function formatInr(paise: number): string {
   return frac ? `${sign}₹${s}.${String(frac).padStart(2, "0")}` : `${sign}₹${s}`;
 }
 
-/** Compact form for tight metric tiles: ₹8.5L, ₹1.2Cr. */
+/** Compact form for tight metric tiles: ₹8.5L, ₹1.2Cr.
+ *
+ * Approximate by definition — it exists to fit a number into a tile, and says so by
+ * showing two decimals of a lakh or crore. The exact figure always remains available
+ * through `formatInr`, which is integer-based.
+ */
 export function formatInrShort(paise: number): string {
-  const rupees = Math.abs(paise) / 100;
+  const abs = Math.abs(Math.trunc(paise));
   const sign = paise < 0 ? "-" : "";
-  if (rupees >= 1_00_00_000) return `${sign}₹${(rupees / 1_00_00_000).toFixed(2)}Cr`;
-  if (rupees >= 1_00_000) return `${sign}₹${(rupees / 1_00_000).toFixed(2)}L`;
+  // Compare in paise so the threshold test itself never rounds.
+  if (abs >= 1_00_00_000_00) return `${sign}₹${(abs / 1_00_00_000_00).toFixed(2)}Cr`;
+  if (abs >= 1_00_000_00) return `${sign}₹${(abs / 1_00_000_00).toFixed(2)}L`;
   return formatInr(paise);
 }

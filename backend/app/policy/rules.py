@@ -136,7 +136,13 @@ def not_dispute_likely(reason: ReasonCategory | None, has_prior_dispute: bool) -
     incorrectly — it escalates a disagreement instead of resolving it. These go
     straight to a human.
     """
-    disputed = reason is ReasonCategory.DISPUTE_LIKELY or has_prior_dispute
+    # `==`, not `is`. SQLModel disables validation on table models, so a category
+    # loaded from Postgres arrives here as a plain str while one assigned in memory
+    # is the enum. StrEnum compares equal to both; identity matched only the
+    # in-memory case, so this check silently returned APPROVED for every invoice
+    # read back from the database. app.services.recovery carried the guarantee with
+    # a duplicate `==` precheck; the authority is supposed to be here.
+    disputed = reason == ReasonCategory.DISPUTE_LIKELY or has_prior_dispute
     return PolicyCheck(
         name="not_dispute_likely",
         passed=not disputed,

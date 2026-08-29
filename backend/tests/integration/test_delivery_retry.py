@@ -337,3 +337,126 @@ def test_the_cycle_retries_pending_deliveries_before_new_tiers(session, invoice,
 
     session.refresh(invoice)
     assert invoice.reminders_sent == 1
+
+
+# ===========================================================================
+# State changes between drafting and delivery. Audit findings 3 and 4.
+# ===========================================================================
+
+
+def _failed_reminder(session, invoice):
+    """One reminder that failed its first delivery and is due for retry."""
+    cycle(session, Mailer(fail_times=1))
+    reminder = session.exec(select(Reminder)).one()
+    _make_retry_due(session, reminder)
+    return reminder
+
+
+def test_a_promise_stops_a_queued_retry(session, invoice, live_email):
+    """The bug this pins: "a promise pauses escalation" held on the cadence path and
+    not on the retry path, so a failed Tier 1 reminder went out minutes after the
+    customer promised to pay.
+    """
+    from app.services.replies import handle_reply
+
+    _failed_reminder(session, invoice)
+    # The shared fixture runs the cadence to Tier 3, which hands over. Put the invoice
+    # back in the cadence first: the scenario being pinned is an earlier tier failing
+    # delivery while the invoice is still being chased, then the customer promising.
+    invoice.status = InvoiceStatus.CHASING
+    invoice.escalation_reason = None
+    invoice.escalated_to_human_at = None
+    session.add(invoice)
+    session.commit()
+
+    handle_reply(session, invoice, "Cash is tight — I'll clear this by the 28th.", use_llm=False)
+    session.refresh(invoice)
+    assert invoice.status == InvoiceStatus.PROMISE_ACTIVE
+
+    mailer = Mailer()
+    retry_failed_deliveries(session, provider=mailer)
+    assert mailer.calls == []
+
+
+def test_a_dispute_stops_a_queued_retry(session, invoice, live_email):
+    from app.services.replies import handle_reply
+
+    _failed_reminder(session, invoice)
+    invoice.status = InvoiceStatus.CHASING
+    invoice.escalation_reason = None
+    session.add(invoice)
+    session.commit()
+
+    handle_reply(
+        session,
+        invoice,
+        "We were billed for 12 units but only received 9.",
+        use_llm=False,
+    )
+
+    mailer = Mailer()
+    retry_failed_deliveries(session, provider=mailer)
+    assert mailer.calls == []
+
+
+def test_a_manual_escalation_stops_a_queued_retry(session, invoice, live_email):
+    """An operator taking an invoice out of automation must be respected by the
+    retry worker, not only by the cycle."""
+    from app.services.recovery import escalate_to_human
+
+    _failed_reminder(session, invoice)
+    invoice.status = InvoiceStatus.CHASING
+    invoice.escalation_reason = None
+    session.add(invoice)
+    session.commit()
+
+    escalate_to_human(session, invoice, "manual")
+    session.commit()
+
+    mailer = Mailer()
+    retry_failed_deliveries(session, provider=mailer)
+    assert mailer.calls == []
+
+
+def test_tier_three_handover_does_not_strand_its_own_reminder(session, invoice, live_email):
+    """The exemption that keeps the fix honest.
+
+    Tier 3 sends and then escalates, so HUMAN_REVIEW/tier_3_reached is a consequence
+    of the very message being retried. Blocking on it would silently drop the final
+    notice whenever its first attempt failed.
+    """
+    _failed_reminder(session, invoice)
+    session.refresh(invoice)
+    assert invoice.status == InvoiceStatus.HUMAN_REVIEW
+    assert invoice.escalation_reason == "tier_3_reached"
+
+    mailer = Mailer()
+    retry_failed_deliveries(session, provider=mailer)
+    assert len(mailer.calls) == 1
+
+
+def test_payment_landing_after_the_lease_is_still_caught(session, invoice, live_email):
+    """Finding 4: the checks ran, the lease committed, and only then did the provider
+    call happen — leaving a window where reconciliation could mark the invoice paid
+    and the reminder would still be delivered.
+    """
+    reminder = _failed_reminder(session, invoice)
+
+    class PaysMidFlight(Mailer):
+        """Simulates the webhook landing inside the send window."""
+
+        def send(self, **kwargs):  # noqa: ANN003
+            raise AssertionError("must not reach the provider")
+
+    # Money lands after the reminder was queued and deemed sendable.
+    invoice.amount_paid_paise = invoice.amount_paise
+    invoice.status = InvoiceStatus.RECOVERED
+    session.add(invoice)
+    session.commit()
+
+    mailer = PaysMidFlight()
+    retry_failed_deliveries(session, provider=mailer)
+
+    session.refresh(reminder)
+    assert reminder.sent_at is None
+    assert reminder.delivery_state == "dead"

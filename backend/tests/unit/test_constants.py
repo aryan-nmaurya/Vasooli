@@ -65,3 +65,29 @@ def test_constants_are_not_duplicated_elsewhere():
         p for p in root.rglob("*.py") if p.name != "constants.py" and pattern.search(p.read_text())
     ]
     assert not offenders, f"cadence constants redefined outside constants.py: {offenders}"
+
+
+# ===========================================================================
+# Homoglyph evasion. Audit finding 5.
+# ===========================================================================
+
+
+def test_cyrillic_homoglyphs_do_not_evade_the_banned_language_filter():
+    """NFKD folds accents and compatibility forms. It does NOT map Cyrillic to Latin —
+    they are different letters that happen to share a glyph.
+
+    One Cyrillic character was enough to get a legal threat approved for sending.
+    """
+    from app.policy.banned_language import find_banned_phrases
+
+    assert find_banned_phrases("We will take lеgal action.")  # Cyrillic e
+    assert find_banned_phrases("We will take legаl action.")  # Cyrillic a
+    assert find_banned_phrases("We will tаke lеgаl аction.")
+
+
+def test_a_legitimate_reminder_is_still_clean_after_homoglyph_folding():
+    """The fold must not start flagging ordinary copy."""
+    from app.policy.banned_language import find_banned_phrases
+
+    assert find_banned_phrases("Could you confirm when payment will be made?") == []
+    assert find_banned_phrases("Please arrange payment at your earliest convenience.") == []

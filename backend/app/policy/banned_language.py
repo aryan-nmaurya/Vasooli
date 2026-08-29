@@ -60,13 +60,75 @@ _WHITESPACE = re.compile(r"\s+")
 _SPACED_LETTERS = re.compile(r"\b(?:\w\s){2,}\w\b")
 
 
+#: Cyrillic and Greek characters that render identically to a Latin letter.
+#:
+#: NFKD does not touch these. It decomposes accents and folds compatibility forms, so
+#: "ｌegal" and "légal" normalize, but Cyrillic "е" (U+0435) and Latin "e" (U+0065) are
+#: separate letters in separate alphabets that happen to share a glyph — Unicode has
+#: no business mapping one to the other, and it does not. The filter has to.
+#:
+#: Without this, "lеgal action" with one Cyrillic character passed the banned-language
+#: check and the threat was approved for sending.
+_HOMOGLYPHS = str.maketrans(
+    {
+        # Cyrillic → Latin
+        "а": "a",
+        "е": "e",
+        "о": "o",
+        "р": "p",
+        "с": "c",
+        "у": "y",
+        "х": "x",
+        "и": "u",
+        "к": "k",
+        "м": "m",
+        "т": "t",
+        "в": "b",
+        "н": "h",
+        "А": "A",
+        "Е": "E",
+        "О": "O",
+        "Р": "P",
+        "С": "C",
+        "Х": "X",
+        "К": "K",
+        "М": "M",
+        "Т": "T",
+        "В": "B",
+        "Н": "H",
+        # Greek → Latin
+        "ο": "o",
+        "α": "a",
+        "ε": "e",
+        "ρ": "p",
+        "υ": "u",
+        "ν": "v",
+        "κ": "k",
+        "τ": "t",
+        "Α": "A",
+        "Ε": "E",
+        "Ο": "O",
+        "Ρ": "P",
+        "Τ": "T",
+        "Κ": "K",
+        "Β": "B",
+        # Fullwidth and lookalike punctuation-as-letter
+        "і": "i",
+        "ј": "j",
+        "һ": "h",
+        "ԁ": "d",
+    }
+)
+
+
 def normalize(text: str) -> str:
     """Collapse a message to the form the patterns are matched against.
 
-    NFKD folding turns unicode lookalikes into their ASCII equivalents, so a homoglyph
-    substitution does not slip a banned phrase past the filter.
+    Folds accents, compatibility forms, and Cyrillic/Greek homoglyphs, so neither an
+    accent nor a lookalike alphabet slips a banned phrase past the filter.
     """
-    folded = unicodedata.normalize("NFKD", text)
+    folded = text.translate(_HOMOGLYPHS)
+    folded = unicodedata.normalize("NFKD", folded)
     folded = "".join(c for c in folded if not unicodedata.combining(c))
     folded = _SEPARATORS.sub("", folded)
     # Re-join single letters separated by spaces: "l e g a l" -> "legal".

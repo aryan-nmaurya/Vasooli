@@ -57,3 +57,24 @@ describe("formatInrShort", () => {
     expect(formatInrShort(4_200_000)).toBe("₹42,000");
   });
 });
+
+describe("integer discipline — audit finding 11", () => {
+  it("stays exact on a value float division would corrupt", () => {
+    // 0.1 + 0.2 territory. paise/100 then *100 loses this; divmod does not.
+    expect(formatInr(1_000_000_07)).toBe("₹10,00,000.07");
+    expect(formatInr(70_07)).toBe("₹70.07");
+    expect(formatInr(29)).toBe("₹0.29");
+  });
+
+  it("survives amounts beyond a float's exact-integer comfort", () => {
+    // ₹1,00,00,00,00,000 in paise — well past where float rupee math drifts.
+    expect(formatInr(1_00_00_00_00_000_00)).toBe("₹1,00,00,00,00,000");
+  });
+
+  it("never emits a floating-point artefact in the fraction", () => {
+    for (let p = 0; p < 500; p++) {
+      const out = formatInr(p);
+      expect(out).not.toMatch(/\.\d{3,}/); // no 0.30000000000000004
+    }
+  });
+});

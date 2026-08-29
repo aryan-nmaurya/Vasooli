@@ -153,7 +153,7 @@ convention — a test fails the build if it ever does.
 
 | Decision | Owner | Why |
 |---|---|---|
-| Whether money arrived | **Deterministic** | Only a signature-verified Razorpay webhook |
+| Whether money arrived | **Deterministic** | Razorpay only — a signature-verified webhook, or an authenticated response to a call *we* made to Razorpay (the hourly sync). Both are recorded with their provenance; neither is a model's output |
 | How much was paid | **Deterministic** | Integer paise, running total, `max()` |
 | Whether to send a reminder | **Deterministic** | `app/policy` — 9 checks, pure functions |
 | Which tier / tone | **Deterministic** | Locked schedule: day 3, 10, 21 |
@@ -209,7 +209,9 @@ the tier it paused at, never back at polite. A dispute never enters the cadence 
   punctuation, and unicode lookalikes do not evade it. Runs on the model's output
 - **Dispute routing** — straight to a human, never drafted
 - **Append-only audit log** — a database trigger rejects `UPDATE`/`DELETE` for every
-  role, including the owner
+  role. A table owner can still TRUNCATE it (a row trigger does not fire on
+  TRUNCATE) or drop the trigger — so this is tamper-evidence against the
+  application and ordinary DML, not against a determined DBA
 - **Auth** — every endpoint serving customer data or changing state requires a session
   from an active named account or a service admin key. Operators are independently
   revocable; auditors cannot mutate. Health checks are the only data-plane exception

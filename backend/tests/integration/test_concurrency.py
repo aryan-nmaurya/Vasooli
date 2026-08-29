@@ -6,6 +6,7 @@ or contacting them twice.
 """
 
 import json
+import threading
 from datetime import date, timedelta
 
 import pytest
@@ -198,11 +199,29 @@ def test_the_cycle_lock_is_released_for_the_next_run(session, invoice):
 
 def test_simultaneous_duplicate_webhooks_count_once(api, session, invoice, link):
     """The unique index is the dedup, not an in-memory set: it is atomic, survives a
-    restart, and is shared across workers."""
-    responses = [post_payment(api, invoice, link, event_id="evt_same") for _ in range(6)]
+    restart, and is shared across workers.
 
-    assert responses[0].json()["status"] == "processed"
-    assert all(r.json()["status"] == "duplicate_ignored" for r in responses[1:])
+    Genuinely concurrent. An earlier version of this test issued six blocking requests
+    from a list comprehension — sequential, despite the name — so it would have passed
+    even if overlapping delivery were unsafe. Threads make the race real: the six
+    requests are released together and the assertions below only hold if the database
+    constraint, not request ordering, is what deduplicates.
+    """
+    import concurrent.futures
+
+    barrier = threading.Barrier(6)
+
+    def deliver():
+        barrier.wait()  # release all six at the same instant
+        return post_payment(api, invoice, link, event_id="evt_same")
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
+        responses = [f.result() for f in [pool.submit(deliver) for _ in range(6)]]
+
+    statuses = [r.json()["status"] for r in responses]
+    # Exactly one winner, whichever thread got there first.
+    assert statuses.count("processed") == 1, statuses
+    assert all(s in {"processed", "duplicate_ignored"} for s in statuses), statuses
     assert len(session.exec(select(ReconciliationEvent)).all()) == 1
 
     session.expire_all()

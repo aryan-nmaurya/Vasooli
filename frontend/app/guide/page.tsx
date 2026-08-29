@@ -56,7 +56,8 @@ export default function GuidePage() {
           works out <em>why</em> each invoice is unpaid, writes a reminder in a tone
           that matches, stops the moment a customer promises to pay or disputes the
           bill, and stops permanently the moment money actually arrives — confirmed by
-          a signed Razorpay webhook, never by a model&apos;s opinion.
+          Razorpay itself — a signed webhook, or an authenticated reply to a call we made —
+          never by a model&apos;s opinion.
         </p>
       </header>
 

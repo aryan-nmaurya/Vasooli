@@ -28,9 +28,25 @@ def _imports(path: pathlib.Path) -> set[str]:
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             found.update(alias.name for alias in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
-            found.add(node.module)
-            found.update(f"{node.module}.{a.name}" for a in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            # Relative imports were skipped entirely by an earlier `node.level == 0`
+            # guard, which meant `from ..integrations.razorpay_client import ...`
+            # inside app/ai passed this test. Resolve the level against the module's
+            # own package so a relative import is checked exactly like an absolute one.
+            if node.level == 0:
+                module = node.module or ""
+            else:
+                package = path.relative_to(APP.parent).with_suffix("").parts
+                # `x.y.__init__` addresses package `x.y`; anything else drops its own
+                # module name before walking up one package per extra dot.
+                base = list(package[:-1] if package[-1] == "__init__" else package[:-1])
+                up = node.level - 1
+                base = base[: len(base) - up] if up else base
+                module = ".".join([*base, node.module] if node.module else base)
+            if not module:
+                continue
+            found.add(module)
+            found.update(f"{module}.{a.name}" for a in node.names)
     return found
 
 
@@ -58,14 +74,28 @@ def test_ai_layer_cannot_send_or_move_money():
     _assert_forbidden(
         "ai",
         (
-            "app.integrations.email",
-            "app.integrations.razorpay_client",
+            # Named integrations.
+            "app.integrations",
             "app.services",
             "app.core.db",
             "app.api",
             "resend",
             "sendgrid",
             "razorpay",
+            # Raw capability. Banning only the project's own wrappers left the
+            # underlying tools reachable: app.ai already imports `settings`, which
+            # carries the database URL and every provider credential, so a bare
+            # `create_engine` or `httpx.post` was all it took to reach the things
+            # this test claims are unreachable.
+            "sqlmodel",
+            "sqlalchemy",
+            "psycopg",
+            "httpx",
+            "requests",
+            "urllib.request",
+            "smtplib",
+            "socket",
+            "subprocess",
         ),
         "app.ai must stay advisory: it may not send, persist, or move money.",
     )

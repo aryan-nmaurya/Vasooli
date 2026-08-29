@@ -471,3 +471,29 @@ def test_the_engine_never_reads_the_wall_clock():
         now=datetime(2019, 1, 1, tzinfo=UTC), last_reminder_at=datetime(2018, 12, 31, tzinfo=UTC)
     )
     assert "cooldown_respected" in failed_names(past)
+
+
+# ===========================================================================
+# The string form Postgres actually returns. Audit finding 6.
+# ===========================================================================
+
+
+def test_dispute_check_blocks_the_string_form_from_the_database():
+    """SQLModel disables validation on table models, so `reason_category` arrives here
+    as a plain str after a database round-trip, not the enum.
+
+    This check used `is`, which matched only the in-memory enum — so the policy
+    engine, the supposed authority, returned APPROVED for every disputed invoice
+    loaded from Postgres. The recovery service masked it with a duplicate `==`
+    precheck; removing that "redundant" line would have sent on a disputed invoice.
+    """
+    from app.policy.rules import not_dispute_likely
+
+    assert not_dispute_likely("dispute_likely", False).passed is False
+    assert not_dispute_likely(ReasonCategory.DISPUTE_LIKELY, False).passed is False
+
+
+def test_the_engine_rejects_a_disputed_invoice_loaded_as_a_string():
+    d = decide(reason_category="dispute_likely")
+    assert d.approved is False
+    assert d.required_action is RequiredAction.ESCALATE_TO_HUMAN
