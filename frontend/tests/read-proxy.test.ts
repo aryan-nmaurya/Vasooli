@@ -1,14 +1,14 @@
 /**
  * The authenticated read proxy.
  *
- * Checks that every allowed read path passes through with the admin key attached,
+ * Checks that every allowed read path passes through with the user session attached,
  * and that any unrecognized or unauthenticated request is rejected.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/session", () => ({
-  currentSession: vi.fn(async () => "operator"),
+  currentSessionToken: vi.fn(async () => "signed-user-session"),
 }));
 
 async function getProxy(pathSegments: string[], query = "") {
@@ -31,7 +31,6 @@ beforeEach(() => {
         }),
     ),
   );
-  process.env.ADMIN_API_KEY = "test-admin-key";
 });
 
 afterEach(() => {
@@ -55,11 +54,14 @@ describe("GET /api/proxy/[...path]", () => {
     expect(res.status).toBe(200);
   });
 
-  it("attaches the admin key server-side", async () => {
+  it("forwards the backend-issued user session server-side", async () => {
     await getProxy(["dashboard", "disputes"]);
     const call = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
     const init = call[1] as RequestInit;
-    expect((init.headers as Record<string, string>)["X-Admin-Key"]).toBe("test-admin-key");
+    expect((init.headers as Record<string, string>).Cookie).toBe(
+      "vasooli_session=signed-user-session",
+    );
+    expect((init.headers as Record<string, string>)["X-Admin-Key"]).toBeUndefined();
   });
 
   it("forwards query parameters properly", async () => {
@@ -75,7 +77,7 @@ describe("GET /api/proxy/[...path]", () => {
 
   it("rejects unauthorized access without a session", async () => {
     const session = await import("@/lib/session");
-    vi.mocked(session.currentSession).mockResolvedValueOnce(null);
+    vi.mocked(session.currentSessionToken).mockResolvedValueOnce(null);
 
     const res = await getProxy(["dashboard", "overview"]);
     expect(res.status).toBe(401);

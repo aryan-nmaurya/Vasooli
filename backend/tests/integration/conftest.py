@@ -17,7 +17,11 @@ from sqlmodel import Session
 from alembic import command
 from app.core.config import settings
 from app.core.db import engine
-from app.models import Customer, Invoice, Merchant
+from app.core.passwords import hash_password
+from app.models import Customer, Invoice, Merchant, OperatorAccount
+
+TEST_OPERATOR_USERNAME = "test-operator"
+TEST_OPERATOR_PASSWORD = "test-operator-password"
 
 
 def _ensure_test_database_exists() -> None:
@@ -84,6 +88,7 @@ def migrated_database():
 #: row-by-row cleanup cannot clear this table at all — which is the point.
 _TABLES = (
     "audit_logs",
+    "inbound_messages",
     "reconciliation_events",
     "promises",
     "reminders",
@@ -91,6 +96,7 @@ _TABLES = (
     "invoices",
     "customers",
     "merchants",
+    "operator_accounts",
 )
 
 
@@ -113,6 +119,20 @@ def session(migrated_database):
         yield s
         s.rollback()
     _truncate_all()
+
+
+@pytest.fixture(autouse=True)
+def operator_account(session) -> OperatorAccount:
+    account = OperatorAccount(
+        username=TEST_OPERATOR_USERNAME,
+        display_name="Test Operator",
+        role="admin",
+        password_hash=hash_password(TEST_OPERATOR_PASSWORD),
+    )
+    session.add(account)
+    session.commit()
+    session.refresh(account)
+    return account
 
 
 @pytest.fixture

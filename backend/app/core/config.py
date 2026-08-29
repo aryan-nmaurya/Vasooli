@@ -39,6 +39,8 @@ class Settings(BaseSettings):
     #: Minimum gap between Razorpay API calls. Test mode rate-limits aggressively —
     #: a 60-invoice batch fired flat out trips it within a few requests.
     razorpay_min_request_interval_seconds: float = 1.5
+    razorpay_timeout_seconds: float = 10.0
+    allow_live_razorpay: bool = False
 
     # --- Gemini via Google AI Studio ---
     # Model IDs are config, not literals: a retired or mistyped ID is a .env edit.
@@ -56,7 +58,18 @@ class Settings(BaseSettings):
     #: behaviour we want while the customer list is synthetic.
     email_from: str = "Vasooli <onboarding@resend.dev>"
     email_reply_to_domain: str = "example.com"
+    resend_inbound_webhook_secret: str = ""
+    inbound_email_webhook_secret: str = ""
+
+    #: The demo control that injects a customer reply without an email ever existing.
+    #: Defaults OFF, and must stay off wherever the system is presented as real: a
+    #: reply that arrived because someone typed it into a box is not evidence that
+    #: inbound mail works, and a screen that cannot tell the difference invites the
+    #: claim that it does. Turn it on for local development, never in production.
+    allow_simulated_replies: bool = False
+    email_provider_timeout_seconds: float = 10.0
     email_dry_run: bool = True
+    allow_direct_customer_email: bool = False
 
     #: When set, every reminder is delivered here instead of to the customer, with the
     #: intended recipient shown in the subject. The synthetic ledger contains 52 fake
@@ -67,10 +80,9 @@ class Settings(BaseSettings):
 
     # --- Ops ---
     scheduler_enabled: bool = True
+    ops_heartbeat_url: str = ""
+    ops_recovery_heartbeat_url: str = ""
     admin_api_key: str
-    #: Password for the dashboard login. Exchanged once for a signed session cookie;
-    #: never stored by the browser and never sent again after login.
-    dashboard_password: str = ""
     #: HMAC key for session tokens. Rotating it invalidates every live session, which
     #: is the intended way to force everyone out.
     session_secret: str = ""
@@ -121,14 +133,12 @@ class Settings(BaseSettings):
             )
         if self.admin_api_key in {"", "changeme", "local-dev-key"}:
             raise RuntimeError("ADMIN_API_KEY must be set to a real secret in production")
-        if not self.dashboard_password or len(self.dashboard_password) < 12:
-            raise RuntimeError(
-                "DASHBOARD_PASSWORD must be set to at least 12 characters in production"
-            )
         if not self.session_secret or len(self.session_secret) < 32:
             raise RuntimeError(
                 "SESSION_SECRET must be set to at least 32 random characters in production"
             )
+        if self.razorpay_key_id.startswith("rzp_live_") and not self.allow_live_razorpay:
+            raise RuntimeError("Live Razorpay credentials require ALLOW_LIVE_RAZORPAY=true")
 
     def assert_safe_to_send(self) -> None:
         """Refuse to send live mail without a redirect target.
@@ -140,11 +150,20 @@ class Settings(BaseSettings):
         """
         if self.email_dry_run:
             return
-        if not self.email_redirect_to and not self.is_production:
+        if not self.email_redirect_to and not self.allow_direct_customer_email:
             raise RuntimeError(
                 "EMAIL_DRY_RUN is false but EMAIL_REDIRECT_TO is not set.\n"
                 "Set EMAIL_REDIRECT_TO to your own address so reminders go to your "
-                "inbox, or leave EMAIL_DRY_RUN=true."
+                "inbox, leave EMAIL_DRY_RUN=true, or explicitly approve direct customer "
+                "delivery with ALLOW_DIRECT_CUSTOMER_EMAIL=true."
+            )
+        if not self.resend_inbound_webhook_secret or self.email_reply_to_domain.casefold() in {
+            "example.com",
+            "example.invalid",
+        }:
+            raise RuntimeError(
+                "Live email requires RESEND_INBOUND_WEBHOOK_SECRET and a configured "
+                "EMAIL_REPLY_TO_DOMAIN so customer replies are authenticated and retained."
             )
 
 

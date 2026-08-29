@@ -4,6 +4,10 @@ Run these as modules from `backend/`, e.g. `uv run python -m scripts.seed`.
 
 | Script | Purpose |
 |---|---|
+| `manage_operator.py` | Create, disable, unlock, and reset named dashboard accounts |
+| `verify_live_integrations.py` | Depth on Resend + Gemini once `preflight` points there; `--send-test-email` sends one real mail to EMAIL_REDIRECT_TO |
+| `create_capture_payment.py` | Create one open ₹1 test link for the real fallback recording |
+| `preflight.py` | **Start here.** Can this deployment work end to end? Config, DNS, TLS, Razorpay, email, AI — breadth, no side effects, remedy for each failure |
 | `check_razorpay.py` | Pre-flight: can this account create Payment Links? |
 | `generate_synthetic.py` | Write the demo and eval ledgers + reply fixtures |
 | `seed.py` | Load a ledger CSV into the database, idempotently |

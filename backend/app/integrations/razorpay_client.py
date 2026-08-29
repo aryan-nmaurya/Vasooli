@@ -12,6 +12,7 @@ from datetime import datetime
 from typing import Any
 
 import razorpay
+import requests
 from razorpay.errors import BadRequestError, GatewayError, ServerError
 from tenacity import (
     retry,
@@ -95,6 +96,18 @@ _RETRY = dict(
 )
 
 
+class _TimeoutSession(requests.Session):
+    """Supply a timeout even though Razorpay's SDK omits one."""
+
+    def __init__(self, timeout: float) -> None:
+        super().__init__()
+        self._timeout = timeout
+
+    def request(self, method, url, **kwargs):
+        kwargs.setdefault("timeout", self._timeout)
+        return super().request(method, url, **kwargs)
+
+
 class RazorpayClient:
     """Paced, retrying wrapper.
 
@@ -106,7 +119,10 @@ class RazorpayClient:
     def __init__(self, key_id: str | None = None, key_secret: str | None = None) -> None:
         self._api_key_id = key_id or settings.razorpay_key_id
         self._api_key_secret = key_secret or settings.razorpay_key_secret
-        self._client = razorpay.Client(auth=(self._api_key_id, self._api_key_secret))
+        self._client = razorpay.Client(
+            session=_TimeoutSession(settings.razorpay_timeout_seconds),
+            auth=(self._api_key_id, self._api_key_secret),
+        )
         self._min_interval = settings.razorpay_min_request_interval_seconds
         self._last_call_at = 0.0
         self._pace_lock = threading.Lock()

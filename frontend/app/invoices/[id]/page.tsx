@@ -242,7 +242,13 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
             </div>
           ) : null}
 
-          <SimulateReply invoiceId={invoice.id} />
+          {/* Hidden unless deliberately enabled. Customer replies arrive as real
+              email at invoice-<number>@<reply domain>; rendering an injection box
+              next to them would blur which of the two produced the conversation
+              above, which is exactly the distinction that has to stay clear. */}
+          {invoice.simulated_replies_enabled ? (
+            <SimulateReply invoiceId={invoice.id} />
+          ) : null}
         </section>
       </div>
     </div>

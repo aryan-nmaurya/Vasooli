@@ -7,7 +7,8 @@ to pay the same bill and reconciliation has to guess which one settled it.
 
 Three things enforce that, in order of how much they are trusted:
 
-1. A row lock on the invoice, so two workers cannot check-then-create concurrently.
+1. A transaction-scoped advisory lock for this invoice, so two provisioning workers
+   cannot check-then-create concurrently without locking payment/reply updates.
 2. A pre-check for an existing link, which makes the common retry a cheap no-op.
 3. A UNIQUE constraint on `payment_links.invoice_id`, which is what actually holds if
    the first two are ever bypassed.
@@ -15,6 +16,7 @@ Three things enforce that, in order of how much they are trusted:
 
 import uuid
 
+from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
@@ -107,11 +109,13 @@ def provision_for_invoice(
     """
     client = client or get_razorpay_client()
 
-    # Lock the invoice for the duration. Two concurrent callers serialise here rather
-    # than both passing the existence check and both calling Razorpay.
-    invoice = session.exec(
-        select(Invoice).where(Invoice.id == invoice_id).with_for_update()
-    ).one_or_none()
+    # Serialize only provisioning for this invoice. Unlike SELECT FOR UPDATE, this
+    # advisory lock does not block a payment webhook or a customer reply while the
+    # Razorpay call is in flight. It releases automatically at commit/rollback.
+    lock_key = invoice_id.int & ((1 << 63) - 1)
+    session.exec(text("SELECT pg_advisory_xact_lock(:key)").bindparams(key=lock_key))
+
+    invoice = session.get(Invoice, invoice_id)
     if invoice is None:
         raise ProvisioningError(f"invoice {invoice_id} does not exist")
 

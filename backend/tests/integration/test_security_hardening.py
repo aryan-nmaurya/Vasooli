@@ -1,6 +1,6 @@
 """Request-level protections. P1 security hardening.
 
-The gap these close: a single shared dashboard password with unlimited guesses, an
+The gaps these close: dashboard credentials with unlimited guesses, an
 unbounded request body, and responses a browser had to make its own decisions about.
 """
 
@@ -12,6 +12,11 @@ from fastapi.testclient import TestClient
 from app.core.config import settings
 from app.core.middleware import MAX_BODY_BYTES, RATE_LIMITS
 from app.main import create_app
+from tests.integration.conftest import TEST_OPERATOR_PASSWORD, TEST_OPERATOR_USERNAME
+
+
+def _credentials(password: str) -> dict[str, str]:
+    return {"username": TEST_OPERATOR_USERNAME, "password": password}
 
 
 @pytest.fixture
@@ -29,13 +34,13 @@ def api(session):
 def test_login_is_not_brute_forceable(api):
     """The one endpoint where guessing IS the attack.
 
-    A single shared password with unlimited attempts is the weakest point in this
-    design; the limit is what makes it survivable.
+    Per-account lockout is the durable boundary; this request-level limit also stops
+    a username list from becoming unlimited online guesses.
     """
     limit, _ = RATE_LIMITS["/api/auth/login"]
 
     codes = [
-        api.post("/api/auth/login", json={"password": f"guess-{i}"}).status_code
+        api.post("/api/auth/login", json=_credentials(f"guess-{i}")).status_code
         for i in range(limit + 5)
     ]
 
@@ -47,16 +52,16 @@ def test_login_is_not_brute_forceable(api):
 def test_a_rate_limited_response_says_when_to_come_back(api):
     limit, _ = RATE_LIMITS["/api/auth/login"]
     for i in range(limit + 2):
-        resp = api.post("/api/auth/login", json={"password": f"x{i}"})
+        resp = api.post("/api/auth/login", json=_credentials(f"x{i}"))
     assert resp.status_code == 429
     assert int(resp.headers["Retry-After"]) > 0
 
 
 def test_the_limit_does_not_lock_out_a_correct_password_immediately(api):
     """A human mistyping twice must still be able to sign in."""
-    api.post("/api/auth/login", json={"password": "wrong"})
-    api.post("/api/auth/login", json={"password": "wrong-again"})
-    resp = api.post("/api/auth/login", json={"password": settings.dashboard_password})
+    api.post("/api/auth/login", json=_credentials("wrong"))
+    api.post("/api/auth/login", json=_credentials("wrong-again"))
+    resp = api.post("/api/auth/login", json=_credentials(TEST_OPERATOR_PASSWORD))
     assert resp.status_code == 200
 
 
@@ -98,7 +103,7 @@ def test_an_oversized_body_is_refused_before_parsing(api):
 
 
 def test_a_normal_body_passes(api):
-    resp = api.post("/api/auth/login", json={"password": "anything"})
+    resp = api.post("/api/auth/login", json=_credentials("anything"))
     assert resp.status_code in (200, 401), "rejected on credentials, not on size"
 
 
@@ -180,9 +185,8 @@ def test_an_allowed_origin_without_credentials_is_still_refused(api):
 
 
 def test_a_failed_login_does_not_reveal_the_password(api):
-    body = api.post("/api/auth/login", json={"password": "hunter2"}).text
+    body = api.post("/api/auth/login", json=_credentials("hunter2")).text
     assert "hunter2" not in body
-    assert settings.dashboard_password not in body
 
 
 def test_an_invalid_signature_does_not_reveal_the_secret(api):
@@ -240,7 +244,7 @@ def test_a_chunked_body_under_the_limit_passes(api):
     """The limit must not break legitimate streaming clients."""
 
     def chunks():
-        yield b'{"password":'
+        yield b'{"username":"test-operator","password":'
         yield b'"streamed"}'
 
     resp = api.post(
@@ -289,3 +293,77 @@ def test_a_large_but_legitimate_webhook_still_reconciles(api, session, merchant,
     )
     # Reaches processing rather than being refused for size or a mangled signature.
     assert resp.status_code == 200
+
+
+# ===========================================================================
+# The simulated-reply control is off unless deliberately enabled.
+# ===========================================================================
+
+
+def test_simulated_replies_are_disabled_by_default():
+    """The default must be off, not on-and-remembered-to-turn-off.
+
+    This endpoint writes a customer statement into the audit trail without a
+    signature, without a sender, and without any correlation to an invoice thread —
+    all three of which the real inbound path
+    (POST /api/webhooks/resend/inbound) requires. Shipped enabled, anyone holding the
+    admin key could fabricate a dispute or a promise-to-pay and it would be
+    indistinguishable in the record from something a customer actually wrote.
+    """
+    from app.core.config import Settings
+
+    assert Settings(**_required_settings()).allow_simulated_replies is False
+
+
+def _required_settings() -> dict:
+    """Only the fields without defaults — the rest is what we are asserting about."""
+    return {
+        "database_url": "postgresql://x/y",
+        "razorpay_key_id": "x",
+        "razorpay_key_secret": "x",
+        "razorpay_webhook_secret": "x",
+        "google_api_key": "x",
+        "resend_api_key": "x",
+        "admin_api_key": "x",
+    }
+
+
+def test_the_simulate_endpoint_is_refused_when_disabled(api, session, invoice, monkeypatch):
+    monkeypatch.setattr(settings, "allow_simulated_replies", False)
+    res = api.post(
+        f"/api/invoices/{invoice.id}/simulate-reply",
+        json={"body": "The goods were wrong.", "use_llm": False},
+        headers={"X-Admin-Key": settings.admin_api_key},
+    )
+    assert res.status_code == 403
+    # The refusal names the real path, so whoever hit it knows where to go.
+    assert "resend/inbound" in res.json()["detail"]
+
+
+def test_the_refusal_does_not_record_anything(api, session, invoice, monkeypatch):
+    """A refused injection must leave no trace that looks like a customer reply."""
+    from sqlmodel import select
+
+    from app.models import AuditLog
+
+    monkeypatch.setattr(settings, "allow_simulated_replies", False)
+    api.post(
+        f"/api/invoices/{invoice.id}/simulate-reply",
+        json={"body": "The goods were wrong.", "use_llm": False},
+        headers={"X-Admin-Key": settings.admin_api_key},
+    )
+    session.expire_all()
+    entries = session.exec(select(AuditLog).where(AuditLog.invoice_id == invoice.id)).all()
+    assert not [e for e in entries if e.action == "reply_received"]
+    assert session.get(type(invoice), invoice.id).reply_count == 0
+
+
+def test_the_endpoint_still_works_when_deliberately_enabled(api, session, invoice, monkeypatch):
+    """Local development must remain possible; the gate is a default, not a removal."""
+    monkeypatch.setattr(settings, "allow_simulated_replies", True)
+    res = api.post(
+        f"/api/invoices/{invoice.id}/simulate-reply",
+        json={"body": "Thanks, noted.", "use_llm": False},
+        headers={"X-Admin-Key": settings.admin_api_key},
+    )
+    assert res.status_code == 200

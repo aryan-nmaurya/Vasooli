@@ -1,8 +1,8 @@
 /**
  * The dispute-resolve path through the action proxy. Customer Conversation Safety.
  *
- * The proxy is what attaches the admin key, so an allowlist mistake here turns the
- * one write path out of a dispute into a credentialed open endpoint. These tests pin
+ * The proxy forwards the backend-issued user session, so an allowlist mistake here
+ * turns the write path into a credentialed open endpoint. These tests pin
  * the two things that matter: the route is reachable when it should be, and only
  * that exact shape is.
  */
@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const CASE_ID = "3f1c9e58-4a2b-4d7e-9c11-8ab6f0e2d4a7";
 
 vi.mock("@/lib/session", () => ({
-  currentSession: vi.fn(async () => ({ sub: "ops@example.com" })),
+  currentSessionToken: vi.fn(async () => "signed-user-session"),
 }));
 
 async function post(path: string, body: unknown = {}) {
@@ -50,11 +50,14 @@ describe("resolving a dispute through the proxy", () => {
     expect(res.status).toBe(200);
   });
 
-  it("attaches the admin key server-side", async () => {
+  it("forwards the backend-issued user session", async () => {
     await post(`/api/dashboard/disputes/${CASE_ID}/resolve`);
     const call = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
     const init = call[1] as RequestInit;
-    expect((init.headers as Record<string, string>)["X-Admin-Key"]).toBeTruthy();
+    expect((init.headers as Record<string, string>).Cookie).toBe(
+      "vasooli_session=signed-user-session",
+    );
+    expect((init.headers as Record<string, string>)["X-Admin-Key"]).toBeUndefined();
   });
 
   it("forwards the merchant's decision unchanged", async () => {
@@ -87,7 +90,7 @@ describe("resolving a dispute through the proxy", () => {
 describe("without a session", () => {
   it("refuses before the admin key is attached to anything", async () => {
     const session = await import("@/lib/session");
-    vi.mocked(session.currentSession).mockResolvedValueOnce(null);
+    vi.mocked(session.currentSessionToken).mockResolvedValueOnce(null);
 
     const res = await post(`/api/dashboard/disputes/${CASE_ID}/resolve`);
     expect(res.status).toBe(401);

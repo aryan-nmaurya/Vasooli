@@ -70,10 +70,12 @@ export function OverviewClient({
   initialOverview,
   initialQueue,
   initialExceptions,
+  emailMode,
 }: {
   initialOverview: Overview;
   initialQueue: QueueRow[];
   initialExceptions: Exceptions;
+  emailMode: string;
 }) {
   const [overview, setOverview] = useState(initialOverview);
   const [queue, setQueue] = useState(initialQueue);
@@ -136,7 +138,7 @@ export function OverviewClient({
             large miss is not a success.
           </p>
         </div>
-        <RunCycleButton />
+        <RunCycleButton emailMode={emailMode} />
       </div>
 
       {staleSince ? (

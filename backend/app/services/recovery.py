@@ -76,6 +76,7 @@ class CycleReport:
     closures_completed: int = 0
     events_retried: int = 0
     events_recovered: int = 0
+    ai_disabled_after_failure: bool = False
     errors: list[dict[str, str]] = field(default_factory=list)
 
     def as_dict(self) -> dict:
@@ -93,6 +94,7 @@ class CycleReport:
             "closures_completed": self.closures_completed,
             "events_retried": self.events_retried,
             "events_recovered": self.events_recovered,
+            "ai_disabled_after_failure": self.ai_disabled_after_failure,
             "errors": self.errors,
         }
 
@@ -224,6 +226,8 @@ def _ensure_diagnosis(
     session.add(invoice)
 
     if use_llm:
+        if result.source == "rule_based":
+            report.ai_disabled_after_failure = True
         record_ai_outcome(
             session,
             invoice_id=invoice.id,
@@ -302,11 +306,10 @@ def run_recovery_cycle(
     # it. That leak makes every later cycle in the process report "already running"
     # and quietly do nothing.
     lock_conn = engine.connect()
-    # An orphaned lock connection would otherwise hold the lock forever and disable
-    # every future cycle — a failure that looks like "the scheduler stopped working"
-    # with nothing in the logs. Postgres closes an idle session after this timeout,
-    # which releases the lock on its own.
-    lock_conn.execute(text("SET idle_session_timeout = '10min'"))
+    # Do not set idle_session_timeout here. This connection is intentionally idle while
+    # the cycle works; expiring it would release the lock while the original cycle was
+    # still sending. A real process or connection crash closes the socket and Postgres
+    # releases the session-scoped lock automatically.
     got_lock = bool(
         lock_conn.execute(
             text("SELECT pg_try_advisory_lock(:key)"), {"key": CYCLE_LOCK_ID}
@@ -362,7 +365,7 @@ def run_recovery_cycle(
                     merchant_name=merchant_name,
                     report=report,
                     dry_run=dry_run,
-                    use_llm=use_llm,
+                    use_llm=use_llm and not report.ai_disabled_after_failure,
                 )
                 session.commit()
             except Exception as exc:  # noqa: BLE001 - one invoice must not stop the cycle
@@ -429,7 +432,9 @@ def _process_invoice(
     if customer is None:
         raise ValueError("invoice has no customer")
 
+    ai_requested = use_llm
     _ensure_diagnosis(session, invoice, customer, report, use_llm=use_llm)
+    use_llm = use_llm and not report.ai_disabled_after_failure
 
     # Commit the diagnosis before drafting.
     #
@@ -484,8 +489,13 @@ def _process_invoice(
     )
     draft = draft_reminder(draft_inputs, use_llm=use_llm)
 
-    if use_llm:
+    if ai_requested:
         fell_back = draft.generated_by == "template_fallback"
+        if fell_back:
+            # Treat the first full-model failure as a circuit-breaker signal for the
+            # remainder of this cycle. Deterministic rules/templates are immediately
+            # available and do not multiply one outage by the ledger size.
+            report.ai_disabled_after_failure = True
         record_ai_outcome(
             session,
             invoice_id=invoice.id,
@@ -498,7 +508,13 @@ def _process_invoice(
                 # Either no model answered, or one did and its figures did not match
                 # the invoice. Both land here, and the distinction matters: a model
                 # inventing an amount is a different problem from a model being down.
-                "no model answered, or its figures did not match the invoice" if fell_back else None
+                (
+                    "AI circuit breaker was open; deterministic template used"
+                    if not use_llm
+                    else "no model answered, or its figures did not match the invoice"
+                )
+                if fell_back
+                else None
             ),
         )
 

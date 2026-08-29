@@ -1,9 +1,9 @@
 /**
  * Dashboard session tokens.
  *
- * The browser holds a signed token and nothing else; the backend admin key never
- * leaves the Next.js server. These tests cover the ways a forged or stale token could
- * otherwise be accepted.
+ * The browser holds a backend-issued signed token and nothing else; the service admin
+ * key is never configured in the frontend. These tests cover the ways a forged or
+ * stale token could otherwise be accepted.
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -12,7 +12,6 @@ describe("session tokens", () => {
   beforeEach(() => {
     vi.resetModules();
     process.env.SESSION_SECRET = "a-test-secret-that-is-long-enough-to-sign-with";
-    process.env.DASHBOARD_PASSWORD = "correct-horse-battery";
   });
 
   it("accepts a token it just minted", async () => {
@@ -59,34 +58,5 @@ describe("session tokens", () => {
     const { createToken } = await import("@/lib/session");
     // Failing loudly beats signing every session with the string "undefined".
     expect(() => createToken()).toThrow(/SESSION_SECRET/);
-  });
-});
-
-describe("password check", () => {
-  beforeEach(() => {
-    vi.resetModules();
-    process.env.DASHBOARD_PASSWORD = "correct-horse-battery";
-  });
-
-  it("accepts the right password", async () => {
-    const { checkPassword } = await import("@/lib/session");
-    expect(checkPassword("correct-horse-battery")).toBe(true);
-  });
-
-  it.each([
-    ["wrong", "wrong-password-entirely"],
-    ["a prefix of the real one", "correct-horse"],
-    ["empty", ""],
-  ])("rejects %s", async (_label, candidate) => {
-    const { checkPassword } = await import("@/lib/session");
-    expect(checkPassword(candidate)).toBe(false);
-  });
-
-  it("rejects everything when no password is configured", async () => {
-    vi.resetModules();
-    delete process.env.DASHBOARD_PASSWORD;
-    const { checkPassword } = await import("@/lib/session");
-    expect(checkPassword("")).toBe(false);
-    expect(checkPassword("anything")).toBe(false);
   });
 });

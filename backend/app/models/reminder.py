@@ -38,6 +38,10 @@ class Reminder(SQLModel, table=True):
         CheckConstraint(
             f"tier >= 1 AND tier <= {MAX_AUTOMATED_REMINDERS}", name="ck_reminders_tier_range"
         ),
+        CheckConstraint(
+            "delivery_state IN ('pending', 'processing', 'sent', 'failed', 'dead')",
+            name="ck_reminders_delivery_state",
+        ),
     )
 
     id: uuid.UUID = Field(sa_column=pk_column())
@@ -79,6 +83,11 @@ class Reminder(SQLModel, table=True):
     #: outage produces a handful of spaced attempts rather than a retry storm that
     #: looks like an attack on our own mail provider.
     next_retry_at: datetime | None = Field(sa_column=timestamp_column(nullable=True))
+    #: Transactional-outbox state. A worker commits `processing` and a lease before
+    #: touching the provider; an expired lease is reclaimable after a process crash.
+    delivery_state: str = "pending"
+    lease_token: str | None = None
+    lease_expires_at: datetime | None = Field(sa_column=timestamp_column(nullable=True))
 
     created_at: datetime = Field(sa_column=timestamp_column(default_now=True))
 
@@ -89,4 +98,8 @@ class Reminder(SQLModel, table=True):
     @property
     def needs_retry(self) -> bool:
         """A recorded attempt that never reached the customer."""
-        return self.sent_at is None and self.attempt_count < MAX_DELIVERY_ATTEMPTS
+        return (
+            self.sent_at is None
+            and self.delivery_state in {"pending", "processing", "failed"}
+            and self.attempt_count < MAX_DELIVERY_ATTEMPTS
+        )

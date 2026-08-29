@@ -17,6 +17,7 @@ from app.core.security import (
     verify_session_token,
 )
 from app.main import create_app
+from tests.integration.conftest import TEST_OPERATOR_PASSWORD, TEST_OPERATOR_USERNAME
 
 #: Endpoints that are public on purpose, each with the reason it is safe.
 #:
@@ -149,34 +150,123 @@ def test_a_key_that_is_a_prefix_of_the_real_one_is_refused(api):
 
 
 def test_login_with_the_right_password_issues_a_session(api):
-    resp = api.post("/api/auth/login", json={"password": settings.dashboard_password})
+    resp = api.post(
+        "/api/auth/login",
+        json={"username": TEST_OPERATOR_USERNAME, "password": TEST_OPERATOR_PASSWORD},
+    )
     assert resp.status_code == 200
     assert SESSION_COOKIE in resp.cookies
+    assert resp.json()["username"] == TEST_OPERATOR_USERNAME
+    assert "session_token" not in resp.json()
 
 
 def test_the_session_cookie_is_not_readable_by_javascript(api):
     """httponly is what stops an XSS bug from exfiltrating the session."""
-    resp = api.post("/api/auth/login", json={"password": settings.dashboard_password})
+    resp = api.post(
+        "/api/auth/login",
+        json={"username": TEST_OPERATOR_USERNAME, "password": TEST_OPERATOR_PASSWORD},
+    )
     header = resp.headers["set-cookie"].lower()
     assert "httponly" in header
     assert "samesite=lax" in header
 
 
 def test_login_with_a_wrong_password_is_refused(api):
-    assert api.post("/api/auth/login", json={"password": "wrong"}).status_code == 401
+    assert (
+        api.post(
+            "/api/auth/login", json={"username": TEST_OPERATOR_USERNAME, "password": "wrong"}
+        ).status_code
+        == 401
+    )
+
+
+def test_unknown_username_has_the_same_public_failure(api):
+    known = api.post(
+        "/api/auth/login", json={"username": TEST_OPERATOR_USERNAME, "password": "wrong"}
+    )
+    unknown = api.post("/api/auth/login", json={"username": "does-not-exist", "password": "wrong"})
+    assert (known.status_code, known.json()) == (unknown.status_code, unknown.json())
+
+
+def test_account_locks_after_repeated_failures(api):
+    for _ in range(5):
+        assert (
+            api.post(
+                "/api/auth/login",
+                json={"username": TEST_OPERATOR_USERNAME, "password": "wrong"},
+            ).status_code
+            == 401
+        )
+    assert (
+        api.post(
+            "/api/auth/login",
+            json={"username": TEST_OPERATOR_USERNAME, "password": TEST_OPERATOR_PASSWORD},
+        ).status_code
+        == 401
+    )
+
+
+def test_disabled_account_is_immediately_revoked(api, session, operator_account):
+    api.post(
+        "/api/auth/login",
+        json={"username": TEST_OPERATOR_USERNAME, "password": TEST_OPERATOR_PASSWORD},
+    )
+    assert api.get("/api/dashboard/overview").status_code == 200
+    operator_account.is_active = False
+    session.add(operator_account)
+    session.commit()
+    assert api.get("/api/dashboard/overview").status_code == 401
+
+
+def test_session_generation_change_immediately_revokes_existing_session(
+    api, session, operator_account
+):
+    """Password reset/disable increments this generation in the management CLI."""
+    api.post(
+        "/api/auth/login",
+        json={"username": TEST_OPERATOR_USERNAME, "password": TEST_OPERATOR_PASSWORD},
+    )
+    assert api.get("/api/dashboard/overview").status_code == 200
+    operator_account.session_version += 1
+    session.add(operator_account)
+    session.commit()
+    assert api.get("/api/dashboard/overview").status_code == 401
+
+
+def test_auditor_account_is_read_only(api, session, operator_account):
+    operator_account.role = "auditor"
+    session.add(operator_account)
+    session.commit()
+    api.post(
+        "/api/auth/login",
+        json={"username": TEST_OPERATOR_USERNAME, "password": TEST_OPERATOR_PASSWORD},
+    )
+    assert api.get("/api/dashboard/overview").status_code == 200
+    assert api.post("/api/admin/run-cycle?dry_run=true").status_code == 403
 
 
 def test_login_with_an_empty_password_is_refused(api):
-    assert api.post("/api/auth/login", json={"password": ""}).status_code == 422
+    assert (
+        api.post(
+            "/api/auth/login", json={"username": TEST_OPERATOR_USERNAME, "password": ""}
+        ).status_code
+        == 422
+    )
 
 
 def test_a_session_cookie_grants_read_access(api):
-    api.post("/api/auth/login", json={"password": settings.dashboard_password})
+    api.post(
+        "/api/auth/login",
+        json={"username": TEST_OPERATOR_USERNAME, "password": TEST_OPERATOR_PASSWORD},
+    )
     assert api.get("/api/dashboard/overview").status_code == 200
 
 
 def test_logout_ends_the_session(api):
-    api.post("/api/auth/login", json={"password": settings.dashboard_password})
+    api.post(
+        "/api/auth/login",
+        json={"username": TEST_OPERATOR_USERNAME, "password": TEST_OPERATOR_PASSWORD},
+    )
     assert api.get("/api/dashboard/overview").status_code == 200
 
     api.post("/api/auth/logout")

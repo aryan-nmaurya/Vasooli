@@ -35,6 +35,7 @@ from app.models import (
 from app.services.disputes import fingerprint, open_case_for, resolve_dispute
 from app.services.recovery import run_recovery_cycle
 from app.services.replies import handle_reply
+from tests.integration.conftest import TEST_OPERATOR_PASSWORD, TEST_OPERATOR_USERNAME
 
 DISPUTE = "We were billed for 12 units but only received 9. Please check before we pay."
 PROMISE = "Cash is tight this month — I'll clear this by the 28th."
@@ -769,26 +770,27 @@ def test_the_resolution_is_attributed_to_the_person_who_made_it(session, chasing
 
 
 def test_a_dashboard_click_is_attributed_to_the_person_not_the_service(session, api, chasing):
-    """Every dashboard action arrives under the same admin key.
-
-    Without the forwarded operator name the audit log records "human:service" for
-    every decision any merchant ever makes, which is not accountability.
-    """
+    """The backend-authenticated account, not a caller-supplied header, is recorded."""
     handle_reply(session, chasing, DISPUTE, use_llm=False)
     case = open_case_for(session, chasing.id)
+    api.post(
+        "/api/auth/login",
+        json={"username": TEST_OPERATOR_USERNAME, "password": TEST_OPERATOR_PASSWORD},
+    )
 
     api.post(
         f"/api/dashboard/disputes/{case.id}/resolve",
         json={"note": "Checked."},
-        headers={"X-Admin-Key": settings.admin_api_key, "X-Operator": "ops@example.com"},
     )
 
     session.expire_all()
-    assert audit(session, chasing, AuditAction.DISPUTE_RESOLVED)[0].actor == "human:ops@example.com"
+    assert (
+        audit(session, chasing, AuditAction.DISPUTE_RESOLVED)[0].actor
+        == f"human:{TEST_OPERATOR_USERNAME}"
+    )
 
 
-def test_the_operator_header_cannot_forge_a_different_actor_kind(session, api, chasing):
-    """ "policy:" and "human:" mean different things to everyone reading the log."""
+def test_the_operator_header_is_ignored_even_with_a_service_key(session, api, chasing):
     handle_reply(session, chasing, DISPUTE, use_llm=False)
     case = open_case_for(session, chasing.id)
 
@@ -800,7 +802,7 @@ def test_the_operator_header_cannot_forge_a_different_actor_kind(session, api, c
 
     session.expire_all()
     actor = audit(session, chasing, AuditAction.DISPUTE_RESOLVED)[0].actor
-    assert actor == "human:policyautomated"
+    assert actor == "human:service"
     assert actor.count(":") == 1
 
 

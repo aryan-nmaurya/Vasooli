@@ -1,5 +1,5 @@
 import { OverviewClient } from "@/components/Overview";
-import { getExceptions, getOverview, getQueue } from "@/lib/api";
+import { getExceptions, getOverview, getQueue, getRuntimeSafety } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
 
@@ -14,18 +14,19 @@ export default async function Page() {
     return <BackendUnreachable />;
   }
 
-  const [overview, queue, exceptions] = data;
+  const [overview, queue, exceptions, runtime] = data;
   return (
     <OverviewClient
       initialOverview={overview}
       initialQueue={queue}
       initialExceptions={exceptions}
+      emailMode={runtime.email}
     />
   );
 }
 
 function loadAll() {
-  return Promise.all([getOverview(), getQueue(), getExceptions()]);
+  return Promise.all([getOverview(), getQueue(), getExceptions(), getRuntimeSafety()]);
 }
 
 function BackendUnreachable() {

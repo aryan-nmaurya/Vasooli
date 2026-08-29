@@ -16,6 +16,7 @@ its own path and this module only records that it happened.
 import hashlib
 import uuid
 
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from app.ai.dispute_analysis import DisputeAnalysis
@@ -155,8 +156,30 @@ def record_dispute(
         detected_by=analysis.source,
         ai_degraded=analysis.degraded,
     )
-    session.add(case)
-    session.flush()
+    try:
+        # The partial unique index is the final authority. The savepoint confines a
+        # concurrent insert failure to this row so the surrounding reply transaction
+        # and audit evidence remain usable.
+        with session.begin_nested():
+            session.add(case)
+            session.flush()
+    except IntegrityError:
+        existing = open_case_for(session, invoice.id)
+        session.add(
+            AuditLog(
+                invoice_id=invoice.id,
+                actor=AuditActor.POLICY,
+                action=AuditAction.DISPUTE_ALREADY_OPEN,
+                detail={
+                    "case_id": str(existing.id) if existing else None,
+                    "repeat_of_same_message": bool(
+                        existing and existing.source_fingerprint == fingerprint(reply_body)
+                    ),
+                    "reason": "concurrent dispute case already opened",
+                },
+            )
+        )
+        return existing
 
     # --- The pause itself ----------------------------------------------------
     # Attributed to POLICY, not AI. The model said what the message meant; this

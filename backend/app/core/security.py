@@ -1,15 +1,11 @@
 """Session tokens and credential checks.
 
-Two ways to prove you are the operator:
+Two ways to prove caller identity:
 
-* `X-Admin-Key` — a long-lived shared secret, for scripts, the scheduler, and the
-  dashboard's server-side proxy. Never reaches a browser.
-* A signed session token — issued after a password login, carried in an httpOnly
+* `X-Admin-Key` — a long-lived shared secret for service scripts and smoke checks.
+  It never reaches a browser or the dashboard server.
+* A signed session token — issued after a database-backed operator login, carried in an httpOnly
   cookie, and expiring on its own.
-
-Both grant the same single operator role. Vasooli runs for one merchant; per-user
-accounts and an IAM model would be scaffolding around a system that has exactly one
-user, and scaffolding nobody needs is where security bugs hide.
 
 The token is a hand-rolled HMAC rather than a JWT: it carries an expiry and a subject
 and nothing else, so a library that also supports thirty algorithms — including `none`
@@ -82,9 +78,3 @@ def check_admin_key(candidate: str | None) -> bool:
     if not candidate:
         return False
     return secrets.compare_digest(candidate, settings.admin_api_key)
-
-
-def check_dashboard_password(candidate: str | None) -> bool:
-    if not candidate or not settings.dashboard_password:
-        return False
-    return secrets.compare_digest(candidate, settings.dashboard_password)

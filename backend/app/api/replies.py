@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 
 from app.api.deps import OperatorRequired
+from app.core.config import settings
 from app.core.db import SessionDep
 from app.models import Invoice
 from app.services.replies import handle_reply
@@ -42,6 +43,19 @@ def simulate_reply(
     invoice_id: uuid.UUID, payload: SimulatedReply, session: SessionDep
 ) -> ReplyResponse:
     """Feed a customer reply into the system as though it had arrived by email."""
+    # Off unless explicitly enabled. The real path is
+    # POST /api/webhooks/resend/inbound, which requires a Svix signature and
+    # correlates the sender against the invoice thread. This endpoint requires
+    # neither, so leaving it reachable in production would mean anyone with the
+    # admin key could fabricate customer statements into the audit trail.
+    if not settings.allow_simulated_replies:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Simulated replies are disabled. Customer replies arrive by email at "
+            "invoice-<number>@<EMAIL_REPLY_TO_DOMAIN> and are processed by "
+            "/api/webhooks/resend/inbound.",
+        )
+
     invoice = session.get(Invoice, invoice_id)
     if invoice is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Invoice not found")

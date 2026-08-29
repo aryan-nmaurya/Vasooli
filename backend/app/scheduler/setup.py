@@ -2,11 +2,17 @@
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 
 from app.core.config import settings
 from app.core.constants import BUSINESS_TIMEZONE
 from app.core.logging import get_logger
-from app.scheduler.jobs import payment_link_sync_job, recovery_cycle_job
+from app.scheduler.jobs import (
+    payment_link_sync_job,
+    recovery_cycle_job,
+    retry_operations_job,
+    service_heartbeat_job,
+)
 
 log = get_logger("scheduler")
 
@@ -51,6 +57,26 @@ def start_scheduler() -> BackgroundScheduler | None:
         max_instances=1,
         coalesce=True,
         misfire_grace_time=1800,
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        retry_operations_job,
+        IntervalTrigger(minutes=1, timezone=BUSINESS_TIMEZONE),
+        id="retry_operations",
+        name="Due delivery, closure and webhook retries",
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=60,
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        service_heartbeat_job,
+        IntervalTrigger(minutes=5, timezone=BUSINESS_TIMEZONE),
+        id="service_heartbeat",
+        name="External service dead-man heartbeat",
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=120,
         replace_existing=True,
     )
 

@@ -1,20 +1,17 @@
 /**
- * Server-side proxy for admin actions.
+ * Server-side proxy for operator actions.
  *
- * The admin key lives in ADMIN_API_KEY (no NEXT_PUBLIC_ prefix), so it stays on the
- * server and never reaches the browser bundle. The dashboard calls this route; this
- * route calls the backend with the key attached.
+ * The browser's backend-issued session remains httpOnly. This route forwards it to
+ * the backend, which re-checks that the named account is active and allowed to write.
  *
- * Only the paths below are reachable. Without an allowlist this becomes an open proxy
- * that will attach the admin key to any URL a caller names.
+ * Only the paths below are reachable. Without an allowlist this becomes an open proxy.
  */
 
 import { NextResponse } from "next/server";
 
-import { currentSession } from "@/lib/session";
+import { currentSessionToken } from "@/lib/session";
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000").replace(/\/$/, "");
-const ADMIN_KEY = process.env.ADMIN_API_KEY ?? "local-dev-key";
 
 const ALLOWED = [
   /^\/api\/admin\/run-cycle(\?.*)?$/,
@@ -32,11 +29,9 @@ const ALLOWED = [
 ];
 
 export async function POST(request: Request) {
-  // Session first, before the admin key is attached to anything. Without this the
-  // route is an anonymous, credentialed proxy to every operational endpoint —
-  // strictly worse than having no proxy at all.
-  const operator = await currentSession();
-  if (!operator) {
+  // Verify locally for a fast rejection; the backend verifies again authoritatively.
+  const sessionToken = await currentSessionToken();
+  if (!sessionToken) {
     return NextResponse.json({ error: "Not signed in" }, { status: 401 });
   }
 
@@ -50,13 +45,7 @@ export async function POST(request: Request) {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "X-Admin-Key": ADMIN_KEY,
-      // Who is signed in, for the audit trail only. Every dashboard action arrives
-      // at the backend under the same admin key, so without this the audit log
-      // attributes every human decision to "service" — which is no attribution at
-      // all. It grants nothing: the admin key is what authorises the call, and this
-      // is read only to name the person who made it.
-      "X-Operator": operator,
+      Cookie: `vasooli_session=${sessionToken}`,
     },
     body: body ? JSON.stringify(body) : undefined,
     cache: "no-store",

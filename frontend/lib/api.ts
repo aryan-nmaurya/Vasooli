@@ -1,9 +1,8 @@
 /**
  * Backend client.
  *
- * Read endpoints are called directly. Mutating ones go through /app/api/action,
- * a Next route handler that holds the admin key server-side — a NEXT_PUBLIC_ variable
- * would ship the key in the browser bundle, where anyone can read it.
+ * Read endpoints are called directly from server components or through the browser
+ * proxy. Both paths carry the backend-issued user session, never a service key.
  */
 
 export const API_BASE =
@@ -12,10 +11,9 @@ export const API_BASE =
 /**
  * One fetch helper, two paths.
  *
- * On the server the backend is called directly with the admin key, which stays in the
- * Node process. In the browser the same logical call goes through /api/proxy, which
- * checks the session cookie before attaching any credential — so the client bundle
- * never contains a backend key and the backend is never a public read API.
+ * On the server the backend is called directly with the current httpOnly token. In
+ * the browser the same call goes through /api/proxy, which forwards that token. The
+ * backend therefore re-checks account status and role on every read in both paths.
  */
 async function get<T>(path: string): Promise<T> {
   const onServer = typeof window === "undefined";
@@ -23,8 +21,9 @@ async function get<T>(path: string): Promise<T> {
   const url = onServer ? `${API_BASE}${path}` : path.replace(/^\/api\//, "/api/proxy/");
   const headers: Record<string, string> = {};
   if (onServer) {
-    const key = process.env.ADMIN_API_KEY;
-    if (key) headers["X-Admin-Key"] = key;
+    const { cookies } = await import("next/headers");
+    const token = (await cookies()).get("vasooli_dash")?.value;
+    if (token) headers.Cookie = `vasooli_session=${token}`;
   }
 
   const res = await fetch(url, { cache: "no-store", headers });
@@ -48,6 +47,15 @@ export type Overview = {
   broken_promises: number;
   counts_by_status: Record<string, number>;
   counts_by_reason: Record<string, number>;
+};
+
+export type RuntimeSafety = {
+  environment: string;
+  scheduler: "enabled" | "disabled";
+  email: "dry_run" | "redirected" | "direct_customer";
+  razorpay: "test" | "live";
+  ai: "enabled" | "deterministic_fallback";
+  inbound_email: "native_resend" | "signed_adapter" | "simulation_only";
 };
 
 export type QueueRow = {
@@ -164,6 +172,8 @@ export type InvoiceDetail = {
   why: string;
   why_next: string;
   why_state: string;
+  /** The simulated-reply demo control is deliberately enabled. Off in production. */
+  simulated_replies_enabled: boolean;
   reply_count: number;
   last_reply_at: string | null;
   last_reply_excerpt: string | null;
@@ -186,6 +196,7 @@ export type AuditEntry = {
 };
 
 export const getOverview = (days = 30) => get<Overview>(`/api/dashboard/overview?days=${days}`);
+export const getRuntimeSafety = () => get<RuntimeSafety>("/api/dashboard/runtime");
 export const getQueue = (qs = "") => get<QueueRow[]>(`/api/dashboard/queue?limit=200${qs}`);
 export const getInvoice = (id: string) => get<InvoiceDetail>(`/api/dashboard/invoices/${id}`);
 export const getPromises = (status?: string) =>

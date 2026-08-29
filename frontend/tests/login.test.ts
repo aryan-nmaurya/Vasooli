@@ -9,14 +9,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { _resetRateLimits } from "@/lib/rate-limit";
+import { createToken } from "@/lib/session";
 
 const POST_URL = "http://localhost:3000/api/auth";
 
-function loginRequest(password: string, ip = "203.0.113.7"): Request {
+function loginRequest(
+  password: string,
+  ip = "203.0.113.7",
+  username = "test-operator",
+): Request {
   return new Request(POST_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-forwarded-for": ip },
-    body: JSON.stringify({ password }),
+    body: JSON.stringify({ username, password }),
   });
 }
 
@@ -26,7 +31,26 @@ function mockBackend(status: number, headers: Record<string, string> = {}) {
   // an empty one — otherwise asserting on the URL is a type error.
   return vi.fn(
     async (_input: RequestInfo | URL, _init?: RequestInit) =>
-      new Response(JSON.stringify({}), { status, headers }),
+      new Response(
+        JSON.stringify(
+          status < 300
+            ? {
+                username: "test-operator",
+                role: "operator",
+              }
+            : {},
+        ),
+        {
+          status,
+          headers:
+            status < 300
+              ? {
+                  ...headers,
+                  "Set-Cookie": `vasooli_session=${createToken("test-operator")}; HttpOnly; Path=/`,
+                }
+              : headers,
+        },
+      ),
   );
 }
 
@@ -73,6 +97,47 @@ describe("POST /api/auth", () => {
     expect(String(backend.mock.calls[0][0])).toContain("/api/auth/login");
   });
 
+  it("signs only the canonical username returned by the backend", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            username: "canonical-user",
+            role: "operator",
+          }),
+          {
+            status: 200,
+            headers: {
+              "Set-Cookie": `vasooli_session=${createToken("canonical-user")}; HttpOnly; Path=/`,
+            },
+          },
+        ),
+      ),
+    );
+    const { POST } = await import("@/app/api/auth/route");
+    const { verifyToken } = await import("@/lib/session");
+
+    const response = await POST(loginRequest("correct", "203.0.113.7", "self-asserted"));
+    const cookie = response.headers.get("set-cookie") ?? "";
+    const token = /vasooli_dash=([^;]+)/.exec(cookie)?.[1];
+    expect(verifyToken(token)).toBe("canonical-user");
+  });
+
+  it("fails closed when the backend omits its httpOnly session cookie", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ username: "test-operator", role: "operator" }), {
+          status: 200,
+        }),
+      ),
+    );
+    const { POST } = await import("@/app/api/auth/route");
+
+    expect((await POST(loginRequest("correct"))).status).toBe(502);
+  });
+
   it("rejects a wrong password", async () => {
     vi.stubGlobal("fetch", mockBackend(401));
     const { POST } = await import("@/app/api/auth/route");
@@ -95,7 +160,7 @@ describe("POST /api/auth", () => {
     const { POST } = await import("@/app/api/auth/route");
 
     const body = await (await POST(loginRequest("wrong"))).json();
-    expect(body.error).toBe("Invalid password");
+    expect(body.error).toBe("Invalid credentials");
   });
 
   it("never echoes the submitted password", async () => {

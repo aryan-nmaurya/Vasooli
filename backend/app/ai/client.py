@@ -126,6 +126,10 @@ class LLMClient:
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
                     response_schema=response_model,
+                    # This client never gives the model tools. New google-genai
+                    # releases enable automatic function calling by default and warn
+                    # on direct generate_content calls unless it is disabled.
+                    automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
                     temperature=0.3,
                     max_output_tokens=1024,
                     # Enforced, not decorative. LLM_TIMEOUT_SECONDS existed in config
@@ -150,10 +154,10 @@ class LLMClient:
     ) -> T:
         """One model, with bounded retries on transient faults.
 
-        Timeouts, 429s and 5xx are worth re-asking the SAME model before giving up on
-        it — failing over on the first blip spends the primary model's better output
-        on a problem that clears in a second. Anything that cannot change on a retry
-        (a bad model id, a malformed request) is raised immediately.
+        Short-lived connection faults and 5xx responses are worth re-asking the SAME
+        model before giving up on it. Timeouts and quota errors fail over immediately:
+        waiting through the same deadline again cannot rescue the current demo cycle.
+        Permanent faults (bad model id, invalid request) also fail over without delay.
 
         LLM_MAX_RETRIES existed in config and was never read.
         """

@@ -37,41 +37,55 @@ most of it without behaviour you would be embarrassed to defend."
 
 Stated up front, because a judge should not have to work it out.
 
-### Real — running code against real services
+### Verified locally or in controlled test-service probes
 
 | | Evidence |
 |---|---|
-| Razorpay Payment Link API | 8 links created against the live test-mode API |
+| Razorpay Payment Link API | Links created against the real Razorpay test-mode API; no real funds |
 | Payment Link cancellation | Verified against the live API, including the already-cancelled case |
 | Webhook HMAC verification | Raw-body signature, timing-safe compare, tested |
 | Webhook idempotency | Unique provider event id; 5 deliveries counted once |
 | Reconciliation | Deterministic, integer paise, running-total semantics |
-| Direct Razorpay sync | Recovered a real ₹9,500 payment whose webhook never arrived |
+| Direct Razorpay sync | Recovered a Razorpay test-mode ₹9,500 payment whose webhook never arrived |
 | Delivery retry, closure retry, webhook reprocessing | Bounded backoff, all tested |
 | Policy engine | Pure functions, 89 tests |
-| Authentication | Session + admin key, every endpoint verified unauthenticated |
-| Outbound email | Really sent through Resend, redirected to one inbox |
+| Authentication | Named DB accounts, roles, lockout/revocation, every endpoint verified unauthenticated |
+| Outbound email | Durable leased outbox implemented; an earlier redirected send succeeded, but the current Resend key now returns 401 |
 | Audit trail | Append-only, enforced by a database trigger |
 
-### Simulated — clearly labelled in the UI as **Demo Controls**
+### Simulated
 
 | | Why |
 |---|---|
-| Customer replies | Injected via `POST /api/invoices/{id}/simulate-reply`. Runs the identical extraction and promise-pausing code a real inbound email would; real inbound parsing needs a verified domain and is **not implemented** |
 | Local webhook replay | `scripts/replay_webhook.py` signs a Razorpay-shaped payload locally. Proves our handling, **not** what Razorpay sends |
 | Evaluation customers | Driven by a stated behaviour model in `eval/config.py`. Measures the policy, not real human behaviour |
 | Evaluation's Razorpay and email | Mocked at the integration boundary. Everything above that boundary is production code |
 
-### Unverified — built but not proven in this environment
+**Simulated customer replies are disabled.** `POST /api/invoices/{id}/simulate-reply`
+injected a reply with no signature, no sender, and no correlation to an invoice
+thread. It now returns 403 unless `ALLOW_SIMULATED_REPLIES=true` is set explicitly,
+which production does not set, and the dashboard hides the control entirely when it is
+off. Customer replies arrive as real email at
+`invoice-<number>@<EMAIL_REPLY_TO_DOMAIN>` and are processed by
+`POST /api/webhooks/resend/inbound`, which requires a valid Svix signature and
+correlates the sender against the invoice thread before recording anything.
 
-| | Blocker |
+### Configured, not yet exercised
+
+Deployed on Vercel (frontend) and AWS EC2 (backend + Postgres).
+
+| | State |
 |---|---|
-| Live Razorpay webhook end-to-end | Requires a public tunnel and a webhook configured in the Razorpay dashboard. See [`docs/DEMO.md`](docs/DEMO.md) for the rehearsal |
-| Docker image build | The Docker daemon is not available on the development machine |
-| Railway / Vercel deployment | Configuration written, never deployed |
+| Live Razorpay webhook end-to-end | Endpoint deployed and reachable; delivery depends on the webhook URL being registered against a host with a valid certificate |
+| Inbound email | Adapter, signature verification, threading and idempotency implemented and tested. Requires a Resend-verified domain with MX records before a reply can physically arrive |
+| Outbound email | Durable leased outbox implemented and tested. Blocked on a valid `RESEND_API_KEY` |
 
-**Nothing in the Simulated or Unverified tables is presented as real anywhere else in
-this repository.** If you find such a claim, it is a bug.
+Run `uv run python -m scripts.preflight --host https://<your-host>` for the current,
+machine-checked state of every one of these. It reports what is configured, what is
+missing, and the remedy for each — in the order they break.
+
+**Nothing above is presented as real anywhere else in this repository.** If you find a
+contrary claim, it is a bug.
 
 ## 3. Architecture
 
@@ -172,7 +186,11 @@ the tier it paused at, never back at polite. A dispute never enters the cadence 
 - **Append-only audit log** — a database trigger rejects `UPDATE`/`DELETE` for every
   role, including the owner
 - **Auth** — every endpoint serving customer data or changing state requires a session
-  cookie or admin key. Health checks are the only exception
+  from an active named account or a service admin key. Operators are independently
+  revocable; auditors cannot mutate. Health checks are the only data-plane exception
+- **Email outbox** — the send intent is committed before provider I/O, workers use
+  expiring leases, and crashes are recovered. Delivery is at-least-once without
+  provider support; the stable idempotency key upgrades providers that honor it
 - **Prompt injection** — customer replies are wrapped and labelled as data, but the
   real defence is structural: the extraction function returns a value and has no
   access to money, mail, or invoice status
@@ -188,7 +206,7 @@ the tier it paused at, never back at polite. A dispute never enters the cadence 
 | Payment Link cancellation fails | The payment stays recorded. Cancellation becomes a retryable task; it can never undo reconciliation |
 | Gemini unavailable | Fails over to the fallback model, then to deterministic rules and templates |
 | Razorpay rate limit | Recognised as transient (Razorpay labels 429 as a *bad request*) and retried with backoff |
-| Two cycles at once | A Postgres advisory lock on a dedicated connection, with an idle-session timeout so a crashed run self-heals |
+| Two cycles at once | A Postgres advisory lock on a dedicated connection; a process/connection crash releases the session lock |
 
 ## 9. Evaluation
 
@@ -215,6 +233,7 @@ uv sync
 cp .env.example .env          # fill in the values below
 createdb vasooli
 uv run alembic upgrade head
+uv run python -m scripts.manage_operator create owner --display-name "Owner" --role admin
 uv run python -m scripts.demo_reset
 uv run uvicorn app.main:app --reload
 ```
@@ -222,7 +241,7 @@ uv run uvicorn app.main:app --reload
 ```bash
 cd frontend
 npm install
-cp .env.example .env.local    # NEXT_PUBLIC_API_URL, ADMIN_API_KEY, SESSION_SECRET, DASHBOARD_PASSWORD
+cp .env.example .env.local    # NEXT_PUBLIC_API_URL and the shared backend SESSION_SECRET
 npm run dev
 ```
 
@@ -238,12 +257,16 @@ npm run dev
 | `EMAIL_DRY_RUN` | Record without sending | `true` unless demoing |
 | `EMAIL_REDIRECT_TO` | Send everything here instead | **Required** to send live |
 | `ADMIN_API_KEY` | Service credential | Never exposed to the browser |
-| `DASHBOARD_PASSWORD` | Dashboard login | ≥12 chars in production |
-| `SESSION_SECRET` | Signs session cookies | ≥32 random chars in production |
+| `RESEND_INBOUND_WEBHOOK_SECRET` | Native inbound signature | From Resend webhook settings |
+| `EMAIL_REPLY_TO_DOMAIN` | Invoice reply routing | Verified receiving-enabled Resend domain |
+| `SESSION_SECRET` | Signs backend-issued operator sessions | Same value in backend and frontend |
 
 ## 11. Demo instructions
 
-See [`docs/DEMO.md`](docs/DEMO.md).
+See [`Docs/DEMO.md`](Docs/DEMO.md). The offline fallback at
+[`Docs/assets/payment-webhook-fallback.gif`](Docs/assets/payment-webhook-fallback.gif)
+combines real Razorpay Test Mode checkout captures with a clearly labelled local
+signed-webhook replay; it does not claim a provider-originated webhook.
 
 ## 12. Testing
 
@@ -271,13 +294,11 @@ npm audit --audit-level=high
 
 ## 13. Deployment
 
-Backend runs from `backend/Dockerfile` — multi-stage, non-root, migrations applied at
-start so a container never boots against an out-of-date schema. `railway.json` and
-`frontend/vercel.json` carry the platform configuration.
-
-> **Not yet verified.** The Docker daemon was unavailable on the development machine,
-> so the image has never been built. The lockfile, migrations, and start command are
-> each verified independently, but treat the first `docker build` as untested.
+Backend runs from `backend/Dockerfile` in Docker Compose on AWS EC2; Caddy terminates
+TLS, and PostgreSQL runs on encrypted private Multi-AZ RDS so it is not in the EC2
+failure domain. The frontend is deployed on Vercel. See `deploy/README.md` for the
+exact migration order, health checks, mandatory off-host backups, restore drills, and
+external dead-man alerts.
 
 ## 14. Known limitations
 
@@ -287,15 +308,21 @@ Stated plainly, because a smaller honest demo beats a fake impressive one.
   Collection is via Payment Links
 - **Payment Links are capped at ₹50,000** on this account, so the synthetic ledger uses
   smaller invoices than a real B2B book would
-- **Inbound email is simulated.** Customer replies are fed through
-  `POST /api/invoices/{id}/simulate-reply`, which runs the identical extraction and
-  promise-pausing code a real inbound email would. Real inbound parsing needs a
-  verified domain and is **not implemented**. The dashboard labels this **Demo Controls**
+- **Inbound email needs working provider configuration.** The native Resend/Svix
+  webhook stores the full message, deduplicates it, correlates the sender to the
+  invoice customer, and runs the same reply logic. The current local Resend key
+  returns HTTP 401, so a verified receiving domain and enabled webhook are still
+  external prerequisites; until then the UI reports simulation-only
 - **All outbound email is redirected** to a single inbox. The 60 synthetic customers
   have invented domains
 - **Gemini free tier is 20 requests/day per model.** A full cycle over 8 invoices uses
   roughly 14. When exhausted, Vasooli falls back to deterministic templates — visibly
   labelled in the UI
-- **Single merchant, single operator role.** No multi-tenancy, no per-user accounts
+- **Single merchant, named operators.** Humans now have independent DB credentials,
+  admin/operator/auditor roles, account lockout, and revocable sessions. This is real
+  per-user IAM for one merchant, not multi-tenant resource isolation or SSO/MFA
+- **Email transport is at-least-once without provider cooperation.** The database
+  outbox prevents lost intent and recovers expired worker leases. Exactly-once
+  delivery still requires the provider to honor the stable idempotency key
 - **The evaluation's customers are simulated**, driven by a stated behaviour model. It
   measures the policy, not real human behaviour

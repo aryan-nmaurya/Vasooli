@@ -172,6 +172,7 @@ def process_event(session: Session, event: ReconciliationEvent) -> None:
     locked = session.exec(select(Invoice).where(Invoice.id == invoice.id).with_for_update()).one()
     previous_paid = locked.amount_paid_paise
     locked.amount_paid_paise = max(previous_paid, reported_paid)
+    applied_paise = max(0, reported_paid - previous_paid)
 
     # A payment can land while a dispute is being worked, and when it does Razorpay
     # wins. The customer's objection does not stop the money being recorded, the
@@ -203,7 +204,7 @@ def process_event(session: Session, event: ReconciliationEvent) -> None:
 
     event.matched_invoice_id = locked.id
     event.match_strategy = strategy
-    event.amount_paise = reported_paid - previous_paid
+    event.amount_paise = applied_paise
     event.status = EventStatus.PROCESSED
     event.processing_error = None
     event.next_retry_at = None
@@ -220,7 +221,8 @@ def process_event(session: Session, event: ReconciliationEvent) -> None:
                 "event_id": event.provider_event_id,
                 "event_type": event.event_type,
                 "match_strategy": strategy,
-                "applied_paise": reported_paid - previous_paid,
+                "applied_paise": applied_paise,
+                "stale_provider_total": reported_paid < previous_paid,
                 "total_paid_paise": locked.amount_paid_paise,
                 "amount_paise": locked.amount_paise,
                 "new_status": locked.status,
@@ -236,7 +238,7 @@ def process_event(session: Session, event: ReconciliationEvent) -> None:
                 detail={
                     "case_id": str(dispute.id),
                     "event_id": event.provider_event_id,
-                    "applied_paise": reported_paid - previous_paid,
+                    "applied_paise": applied_paise,
                     "total_paid_paise": locked.amount_paid_paise,
                     "new_status": locked.status,
                     "dispute_still_open": True,
