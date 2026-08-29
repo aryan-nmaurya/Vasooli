@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import admin, auth, dashboard, health, invoices, replies, webhooks
 from app.core.config import settings
-from app.core.db import check_database
+from app.core.db import check_database, has_active_operator
 from app.core.logging import RequestContextMiddleware, configure_logging, get_logger
 from app.core.middleware import (
     BodySizeLimitMiddleware,
@@ -27,6 +27,10 @@ async def lifespan(app: FastAPI):
     db_ok, error = check_database()
     if db_ok:
         log.info("startup.db_connected")
+        if settings.is_production and not has_active_operator():
+            raise RuntimeError(
+                "No active operator account exists. Run scripts.manage_operator before startup."
+            )
     else:
         # Don't refuse to boot: /health reports 503 and the platform retries. Crashing
         # here turns a transient DB blip into a redeploy loop.

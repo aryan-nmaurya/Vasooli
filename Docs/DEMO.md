@@ -35,31 +35,22 @@ test mode allows about six link creations per minute.
 | `RAZORPAY_WEBHOOK_SECRET` | must match the dashboard (step 5) | Signature verification fails otherwise |
 | `EMAIL_DRY_RUN` | `false` to send real mail | |
 | `EMAIL_REDIRECT_TO` | your inbox | Required before live sending |
-| `DASHBOARD_PASSWORD` | ≥12 chars | Your login |
+| operator account | create with `scripts.manage_operator` | Your individual login |
+| `RESEND_INBOUND_WEBHOOK_SECRET` | `whsec_…` | Native inbound verification |
 | `GOOGLE_API_KEY` | your key | **20 requests/day on the free tier** |
 
 **Never commit these.** `.env` is gitignored; verify with `git check-ignore backend/.env`.
 
-### 4. Public tunnel
+### 4. Deployed backend
 
-Razorpay cannot reach `localhost`. Without this, payments succeed and the webhook
-never arrives.
-
-```bash
-brew install cloudflared
-cloudflared tunnel --url http://localhost:8000
-```
-
-It prints a URL like `https://<random-words>.trycloudflare.com`. **This URL changes
-every restart.** Start the tunnel before configuring the webhook, and leave it running
-for the whole demo.
-
-Confirm it reaches your backend:
+Use the deployed TLS endpoint for the production demo:
 
 ```bash
-curl https://<your-tunnel>.trycloudflare.com/health
-# {"status":"ok","db":"ok",...}
+curl https://api-13-204-55-131.sslip.io/health
 ```
+
+For a fully local rehearsal only, a public tunnel is still required. Never leave a
+temporary tunnel URL configured in Razorpay after the rehearsal.
 
 ### 5. Razorpay webhook
 
@@ -67,7 +58,7 @@ Dashboard → **Test Mode** → Account & Settings → Webhooks → **Add New We
 
 | Field | Value |
 |---|---|
-| Webhook URL | `https://<your-tunnel>.trycloudflare.com/api/webhooks/razorpay` |
+| Webhook URL | `https://api-13-204-55-131.sslip.io/api/webhooks/razorpay` |
 | Secret | the same value as `RAZORPAY_WEBHOOK_SECRET` |
 | Active Events | search `payment_link` → tick **`payment_link.paid`** and **`payment_link.partially_paid`** only |
 
@@ -87,9 +78,30 @@ nothing.
 
 ## Part 2 — The demo
 
+### Offline payment fallback
+
+Keep [`assets/payment-webhook-fallback.gif`](assets/payment-webhook-fallback.gif)
+open in a separate tab before presenting. If Razorpay, mobile internet, or the webhook
+route fails on stage, play this pre-rendered walkthrough and state that it is the
+offline fallback. Its first two frames are captured from a real ₹1 Razorpay Test Mode
+checkout using synthetic public test data. The webhook/reconciliation frames are a
+deterministic rendering of the locally signed replay path—not footage of a provider-
+originated webhook—and are labelled that way in the artifact.
+After this working tree is committed and deployed, the public copy will be available
+at `https://vasooli-phi.vercel.app/demo/payment-webhook-fallback.gif` without signing
+in. Until then that URL may still show the previous artifact.
+
+Regenerate it after changing payment copy or state names:
+
+```bash
+cd backend
+uv run --with pillow python ../scripts/generate_payment_webhook_fallback.py
+cd ..
+```
+
 ### 1 — The queue (20s)
 
-Sign in at `http://localhost:3000`. Eight overdue invoices, largest outstanding first.
+Sign in at `https://vasooli-phi.vercel.app`. Eight overdue invoices, largest outstanding first.
 
 Point at **Total overdue**, **Recovery rate** (by value, not invoice count), and the
 **Why** column — every row explains itself.
@@ -114,9 +126,10 @@ never entered the cadence.
 
 **DEMO SIMULATION.** Under **Demo Controls**, press **Promise to pay** → **Send reply**.
 
-The reply is injected rather than received by email — inbound mail parsing needs a
-verified domain and is **not implemented**. Everything after that point is production
-code: the same extraction, validation, and promise handling.
+This step deliberately uses the labelled simulation control. A native, Svix-verified
+Resend Receiving endpoint is implemented, but it requires an enabled provider webhook
+and verified receiving domain; the runtime banner reports the actual mode. Both
+paths use the same extraction, validation, and promise handling.
 
 Press **Dry run**: that invoice is now *held*.
 
@@ -209,7 +222,7 @@ forever, because a human has to work out what it was for.
 ## The webhook that never arrives
 
 Worth knowing, because it happened during development: a real ₹9,500 payment was made
-while no tunnel was running. Razorpay held the money; Vasooli showed the invoice
+while no reachable webhook was running. Razorpay held the money; Vasooli showed the invoice
 unpaid; no retry on Razorpay's side would ever have fixed it.
 
 An hourly job asks Razorpay directly whether anything has been paid that Vasooli does

@@ -3,7 +3,7 @@
 Three things that are cheap to add and awkward to add later:
 
 * a body-size cap, so an oversized payload is rejected before anything parses it
-* rate limiting, so a single shared password is not brute-forceable
+* rate limiting, so operator account passwords are not brute-forceable
 * security headers, so a browser does not have to guess how to treat a response
 
 All in-process. Rate limiting keyed in memory is not accurate across multiple workers,

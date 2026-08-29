@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { Nav } from "@/components/Nav";
+import { RuntimeBanner } from "@/components/RuntimeBanner";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import "./globals.css";
 
@@ -34,12 +35,16 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body className="min-h-screen bg-surface antialiased">
         <header className="sticky top-0 z-10 border-b border-line bg-surface/85 backdrop-blur">
-          <div className="mx-auto flex max-w-[1200px] items-center gap-4 px-6 py-3.5">
+          <div className="mx-auto flex max-w-[1200px] items-center gap-2 px-3 py-3.5 sm:gap-4 sm:px-6">
             <Link
               href="/"
               className="text-[15px] font-semibold tracking-tight text-ink hover:opacity-80"
             >
-              Vasooli
+              <span className="hidden min-[360px]:inline">Vasooli</span>
+              <span className="min-[360px]:hidden" aria-hidden>
+                V
+              </span>
+              <span className="sr-only min-[360px]:hidden">Vasooli</span>
             </Link>
 
             {/* Divider, so the wordmark reads as a brand rather than a first menu item. */}
@@ -55,7 +60,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <ThemeToggle />
           </div>
         </header>
-        <main className="mx-auto max-w-[1200px] px-6 py-7">{children}</main>
+        <RuntimeBanner />
+        <main className="mx-auto max-w-[1200px] px-3 py-7 sm:px-6">{children}</main>
       </body>
     </html>
   );

@@ -18,9 +18,9 @@ API_URL = "https://api.resend.com/emails"
 class ResendProvider:
     name = "resend"
 
-    def __init__(self, api_key: str | None = None, timeout: float = 20.0) -> None:
+    def __init__(self, api_key: str | None = None, timeout: float | None = None) -> None:
         self._api_key = api_key or settings.resend_api_key
-        self._timeout = timeout
+        self._timeout = timeout or settings.email_provider_timeout_seconds
 
     def send(
         self,
@@ -31,6 +31,7 @@ class ResendProvider:
         text: str,
         reply_to: str | None = None,
         headers: dict[str, str] | None = None,
+        idempotency_key: str | None = None,
     ) -> SendResult:
         payload: dict[str, object] = {
             "from": settings.email_from,
@@ -45,10 +46,13 @@ class ResendProvider:
             payload["headers"] = headers
 
         try:
+            request_headers = {"Authorization": f"Bearer {self._api_key}"}
+            if idempotency_key:
+                request_headers["Idempotency-Key"] = idempotency_key
             response = httpx.post(
                 API_URL,
                 json=payload,
-                headers={"Authorization": f"Bearer {self._api_key}"},
+                headers=request_headers,
                 timeout=self._timeout,
             )
         except httpx.HTTPError as exc:

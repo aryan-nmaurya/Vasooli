@@ -2,20 +2,18 @@
  * Authenticated read proxy.
  *
  * Client components poll through here rather than calling the backend directly, for
- * two reasons: the browser never needs a backend credential, and the backend is not
- * exposed to the public internet as a readable API.
+ * two reasons: the browser never handles a readable credential in JavaScript, and
+ * the backend remains the authoritative account/role check.
  *
- * Every request is checked against the Next session cookie BEFORE the admin key is
- * attached. Without that check this route would be an open, credentialed proxy — a
- * worse hole than the one it closes.
+ * Every request is checked locally, then the backend-issued session is forwarded and
+ * verified again against the operator account.
  */
 
 import { NextResponse } from "next/server";
 
-import { currentSession } from "@/lib/session";
+import { currentSessionToken } from "@/lib/session";
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000").replace(/\/$/, "");
-const ADMIN_KEY = process.env.ADMIN_API_KEY ?? "";
 
 //: Read-only paths. Anything that changes state goes through /api/action, which has
 //: its own tighter allowlist.
@@ -32,7 +30,8 @@ const ALLOWED = [
 ];
 
 export async function GET(request: Request, ctx: { params: Promise<{ path: string[] }> }) {
-  if (!(await currentSession())) {
+  const sessionToken = await currentSessionToken();
+  if (!sessionToken) {
     return NextResponse.json({ error: "Not signed in" }, { status: 401 });
   }
 
@@ -44,7 +43,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ path: strin
 
   const query = new URL(request.url).search;
   const res = await fetch(`${API_BASE}/api/${joined}${query}`, {
-    headers: { "X-Admin-Key": ADMIN_KEY },
+    headers: { Cookie: `vasooli_session=${sessionToken}` },
     cache: "no-store",
   });
 

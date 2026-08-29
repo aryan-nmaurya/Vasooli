@@ -6,6 +6,7 @@ import { Suspense, useState } from "react";
 function LoginForm() {
   const router = useRouter();
   const params = useSearchParams();
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -18,7 +19,7 @@ function LoginForm() {
       const res = await fetch("/api/auth", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password }),
+        body: JSON.stringify({ password, username }),
       });
       if (!res.ok) {
         // Distinguish the causes. Reporting "incorrect password" when the server is
@@ -29,7 +30,7 @@ function LoginForm() {
         } else if (res.status >= 500) {
           setError("Cannot reach the server. Is the backend running?");
         } else {
-          setError("Incorrect password.");
+          setError("Incorrect username or password.");
         }
         return;
       }
@@ -51,16 +52,26 @@ function LoginForm() {
 
       <form onSubmit={submit} className="mt-6 space-y-3">
         <input
-          type="password"
+          type="text"
           autoFocus
+          autoComplete="username"
+          value={username}
+          onChange={(e) => setUsername(e.target.value.replace(/[^A-Za-z0-9_-]/g, "").toLowerCase())}
+          placeholder="Username"
+          aria-label="Username"
+          className="w-full rounded-lg border border-line bg-panel px-3 py-2 text-sm text-ink outline-none focus:border-ink-4"
+        />
+        <input
+          type="password"
+          autoComplete="current-password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
-          placeholder="Dashboard password"
+          placeholder="Password"
           className="w-full rounded-lg border border-line bg-panel px-3 py-2 text-sm text-ink outline-none focus:border-ink-4"
         />
         <button
           type="submit"
-          disabled={busy || !password}
+          disabled={busy || !password || username.length < 2}
           className="w-full rounded-md bg-invert px-3 py-2 text-sm font-medium text-invert-ink transition hover:opacity-90 disabled:opacity-50"
         >
           {busy ? "Signing in…" : "Sign in"}

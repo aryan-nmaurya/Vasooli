@@ -49,6 +49,13 @@ def live_email(monkeypatch):
 
     monkeypatch.setattr(settings, "email_dry_run", False, raising=False)
     monkeypatch.setattr(settings, "email_redirect_to", "ops@example.invalid", raising=False)
+    monkeypatch.setattr(settings, "email_reply_to_domain", "replies.example.test", raising=False)
+    monkeypatch.setattr(
+        settings,
+        "resend_inbound_webhook_secret",
+        "whsec_dGVzdC13ZWJob29rLXNlY3JldA==",
+        raising=False,
+    )
 
 
 def cycle(session, provider=None, **kw):
@@ -79,6 +86,8 @@ def test_a_successful_send_counts_toward_the_cadence(session, invoice, live_emai
     assert reminder.attempt_count == 1
     assert reminder.next_retry_at is None
     assert reminder.send_error is None
+    assert reminder.delivery_state == "sent"
+    assert reminder.lease_token is None
 
     session.refresh(invoice)
     assert invoice.reminders_sent == 1
@@ -97,6 +106,7 @@ def test_a_failed_send_does_not_count_as_a_reminder(session, invoice, live_email
     assert reminder.sent_at is None
     assert reminder.attempt_count == 1
     assert "550" in (reminder.send_error or "")
+    assert reminder.delivery_state == "failed"
 
     session.refresh(invoice)
     assert invoice.reminders_sent == 0, "a bounce must not consume a reminder"
@@ -195,6 +205,40 @@ def test_a_retry_before_its_backoff_elapses_is_not_attempted(session, invoice, l
     assert mailer.calls == []
 
 
+def test_an_active_delivery_lease_cannot_be_double_claimed(session, invoice, live_email):
+    cycle(session, Mailer(fail_times=1))
+    reminder = session.exec(select(Reminder)).one()
+    reminder.delivery_state = "processing"
+    reminder.lease_token = "worker-one"
+    reminder.lease_expires_at = utcnow() + timedelta(minutes=1)
+    reminder.next_retry_at = utcnow() - timedelta(seconds=1)
+    session.add(reminder)
+    session.commit()
+
+    mailer = Mailer()
+    assert retry_failed_deliveries(session, provider=mailer)["attempted"] == 0
+    assert mailer.calls == []
+
+
+def test_an_expired_delivery_lease_is_recovered_after_a_crash(session, invoice, live_email):
+    cycle(session, Mailer(fail_times=1))
+    reminder = session.exec(select(Reminder)).one()
+    reminder.delivery_state = "processing"
+    reminder.lease_token = "crashed-worker"
+    reminder.lease_expires_at = utcnow() - timedelta(seconds=1)
+    # A processing lease is reclaimable when it expires even if the ordinary retry
+    # backoff is later; otherwise a crash after claiming strands the row.
+    reminder.next_retry_at = utcnow() + timedelta(hours=1)
+    session.add(reminder)
+    session.commit()
+
+    report = retry_failed_deliveries(session, provider=Mailer())
+    assert report["recovered"] == 1
+    session.refresh(reminder)
+    assert reminder.delivery_state == "sent"
+    assert reminder.lease_token is None
+
+
 def test_a_successful_reminder_is_never_retried(session, invoice, live_email):
     cycle(session, Mailer())
     mailer = Mailer()
@@ -241,6 +285,23 @@ def test_a_retry_is_abandoned_once_the_invoice_is_paid(session, invoice, live_em
     session.refresh(reminder)
     assert reminder.next_retry_at is None
     assert "abandoned" in (reminder.send_error or "")
+
+
+def test_a_retry_is_abandoned_when_a_dispute_pauses_recovery(session, invoice, live_email):
+    cycle(session, Mailer(fail_times=1))
+    reminder = session.exec(select(Reminder)).one()
+    _make_retry_due(session, reminder)
+
+    invoice.status = InvoiceStatus.HUMAN_REVIEW
+    invoice.escalation_reason = "complaint_in_reply"
+    session.add(invoice)
+    session.commit()
+
+    mailer = Mailer()
+    retry_failed_deliveries(session, provider=mailer)
+    assert mailer.calls == []
+    session.refresh(reminder)
+    assert reminder.next_retry_at is None
 
 
 # ===========================================================================

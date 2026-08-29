@@ -38,3 +38,18 @@ def check_database() -> tuple[bool, str | None]:
         return True, None
     except Exception as exc:  # noqa: BLE001 - health check reports, never raises
         return False, f"{type(exc).__name__}: {exc}"
+
+
+def has_active_operator() -> bool:
+    """Whether production has at least one independently authenticated human."""
+    from sqlmodel import select
+
+    from app.models import OperatorAccount
+
+    with Session(engine) as session:
+        return (
+            session.exec(
+                select(OperatorAccount.id).where(OperatorAccount.is_active.is_(True))  # type: ignore[union-attr]
+            ).first()
+            is not None
+        )

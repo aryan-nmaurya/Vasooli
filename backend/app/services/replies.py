@@ -84,6 +84,7 @@ def handle_reply(
     raw_body: str,
     *,
     use_llm: bool = True,
+    inbound_message_id: str | None = None,
 ) -> ReplyOutcome:
     """Record a reply and act on what it says."""
     body = strip_quoted_text(raw_body)
@@ -108,6 +109,7 @@ def handle_reply(
                 "excerpt": body[:400],
                 "raw_length": len(raw_body),
                 "reply_number": invoice.reply_count,
+                "inbound_message_id": inbound_message_id,
             },
         )
     )

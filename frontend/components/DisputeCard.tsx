@@ -36,6 +36,18 @@ export function DisputeCard({ dispute }: { dispute: DisputeView }) {
   const [error, setError] = useState<string | null>(null);
 
   async function resolve(resume: boolean) {
+    if (resume && !note.trim()) {
+      setError("Add a decision note before resuming recovery.");
+      return;
+    }
+    if (
+      resume &&
+      !window.confirm(
+        "Resume automated recovery for this invoice? Future due reminders may contact the customer.",
+      )
+    ) {
+      return;
+    }
     setBusy(resume ? "resume" : "resolve");
     setError(null);
     try {

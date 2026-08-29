@@ -2,8 +2,9 @@
  * Dashboard session, held server-side.
  *
  * The browser gets an httpOnly cookie containing a signed token and nothing else. The
- * backend's admin key stays in the Next.js server process, so it is never in the
- * client bundle and never in a request the browser can inspect or replay.
+ * backend-issued operator token stays in the Next.js server process, so it is never
+ * in the client bundle or readable by browser JavaScript. The service admin key is
+ * not configured in the frontend at all.
  *
  * The signature is HMAC-SHA256 over `subject.expiry`, verified with Node's timing-safe
  * comparison. Same scheme as the backend, so either side can mint a session if that
@@ -30,9 +31,9 @@ function sign(payload: string): string {
   return createHmac("sha256", secret()).update(payload).digest("base64url");
 }
 
-export function createToken(subject = "operator"): string {
+export function createToken(subject = "operator", sessionVersion = 1): string {
   const expires = Math.floor(Date.now() / 1000) + TTL_SECONDS;
-  const payload = `${VERSION}.${subject}.${expires}`;
+  const payload = `${VERSION}.${subject}~${sessionVersion}.${expires}`;
   return `${payload}.${sign(payload)}`;
 }
 
@@ -51,7 +52,9 @@ export function verifyToken(token: string | undefined): string | null {
   const expires = Number(expiresRaw);
   if (!Number.isFinite(expires) || expires < Date.now() / 1000) return null;
 
-  return subject;
+  const separator = subject.lastIndexOf("~");
+  if (separator <= 0 || !/^\d+$/.test(subject.slice(separator + 1))) return null;
+  return subject.slice(0, separator);
 }
 
 export async function currentSession(): Promise<string | null> {
@@ -59,10 +62,8 @@ export async function currentSession(): Promise<string | null> {
   return verifyToken(store.get(SESSION_COOKIE)?.value);
 }
 
-export function checkPassword(candidate: string): boolean {
-  const expected = process.env.DASHBOARD_PASSWORD ?? "";
-  if (!expected) return false;
-  const a = Buffer.from(candidate);
-  const b = Buffer.from(expected);
-  return a.length === b.length && timingSafeEqual(a, b);
+export async function currentSessionToken(): Promise<string | null> {
+  const store = await cookies();
+  const token = store.get(SESSION_COOKIE)?.value;
+  return verifyToken(token) ? token ?? null : null;
 }

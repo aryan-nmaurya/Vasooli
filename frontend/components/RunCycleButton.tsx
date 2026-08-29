@@ -22,13 +22,23 @@ type Report = {
   errors: { invoice_number: string; error: string }[];
 };
 
-export function RunCycleButton() {
+export function RunCycleButton({ emailMode = "dry_run" }: { emailMode?: string }) {
   const router = useRouter();
   const [busy, setBusy] = useState<null | "live" | "dry">(null);
   const [report, setReport] = useState<Report | null>(null);
   const [dry, setDry] = useState(false);
 
   async function run(dryRun: boolean) {
+    if (
+      !dryRun &&
+      !window.confirm(
+        emailMode === "direct_customer"
+          ? "This will contact customers directly. Confirm that the ledger and recipients have been reviewed."
+          : `Run the recovery cycle now? Email mode: ${emailMode.replace("_", " ")}.`,
+      )
+    ) {
+      return;
+    }
     setBusy(dryRun ? "dry" : "live");
     setReport(null);
     setDry(dryRun);

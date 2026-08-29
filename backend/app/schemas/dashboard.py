@@ -154,6 +154,10 @@ class InvoiceDetail(BaseModel):
     why: str
     why_next: str
     why_state: str
+    #: True only where the simulated-reply demo control is deliberately enabled.
+    #: The dashboard hides the control otherwise rather than rendering a button that
+    #: can only return 403.
+    simulated_replies_enabled: bool = False
     #: Latest customer reply, so "previous communication" is visible at a glance.
     reply_count: int
     last_reply_at: datetime | None

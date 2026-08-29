@@ -7,16 +7,17 @@ rather than waiting to be noticed.
 
 ## The model
 
-One operator role. Vasooli runs for a single merchant; per-user accounts and an IAM
-model would be scaffolding around a system with exactly one user, and scaffolding
-nobody needs is where security bugs hide.
+Every human has a named database account. Accounts have independent password hashes,
+lockouts, active/disabled state, session generations, and one of three roles:
+`admin`, `operator`, or read-only `auditor`. Password reset and disable both revoke
+that account's existing sessions immediately.
 
-Two ways to prove you are that operator:
+Two credential types are accepted:
 
 | Credential | Used by | Lifetime |
 |---|---|---|
-| `X-Admin-Key` header | scripts, scheduler, the dashboard's server-side proxy | long-lived, never in a browser |
-| `vasooli_session` cookie | a browser that has logged in | 12 hours, httpOnly, SameSite=Lax |
+| `X-Admin-Key` header | service scripts and deployment smoke checks | long-lived, never configured in the frontend |
+| `vasooli_session` cookie | a named human who has logged in | 12 hours, httpOnly, SameSite=Lax, independently revocable |
 
 **There is no resource-ownership check, and there should not be.** Every invoice belongs
 to the one merchant; an ownership check over a single-tenant dataset would be a
@@ -27,35 +28,30 @@ protection.
 
 | Endpoint | Why | What protects it instead |
 |---|---|---|
-| `/health`, `/live`, `/ready` | Deployment platforms probe before any credential exists | Exposes no data |
+| `/health`, `/live` | Deployment platforms probe before any credential exists | Exposes no customer data |
 | `/api/webhooks/razorpay` | Razorpay cannot log in | HMAC-SHA256 over the raw body, plus a unique event id |
-| `/api/auth/login` | It is how you get a credential | 10 attempts/min per client |
+| `/api/webhooks/resend/inbound` | Resend cannot log in | Svix signature over raw body, event-id dedup, authenticated body retrieval, sender/thread correlation |
+| `/api/webhooks/inbound-email` | A trusted custom normalizer cannot log in | HMAC-SHA256 over raw body, event-id dedup, sender/thread correlation |
+| `/api/auth/login` | It is how you get a credential | edge rate limit plus 5 failures/account → 15-minute lock |
 
 **CORS is not authorization.** The origin allowlist is a browser convenience; a
 non-browser client ignores it entirely. Every endpoint is gated independently.
 
-## Full table
+## Route classes
 
-| Endpoint | R/W | Auth | Sensitive data | Risk if unprotected |
-|---|---|---|---|---|
-| `POST /api/admin/run-cycle` | W | **session or admin key** | — | Unauthorised state change or outbound contact. |
-| `POST /api/auth/login` | W | public, rate limited | — | Brute force. 10 attempts/min per client. |
-| `POST /api/auth/logout` | W | public, rate limited | — | Brute force. 10 attempts/min per client. |
-| `GET /api/dashboard/audit` | R | **session or admin key** | everything, in one list | Customer PII disclosure. |
-| `GET /api/dashboard/exceptions` | R | **session or admin key** | payment + customer data | Customer PII disclosure. |
-| `POST /api/dashboard/exceptions/events/{provider_event_id}/retry` | W | **session or admin key** | — | Unauthorised state change or outbound contact. |
-| `POST /api/dashboard/exceptions/reminders/{reminder_id}/retry` | W | **session or admin key** | — | Unauthorised state change or outbound contact. |
-| `GET /api/dashboard/invoices/{invoice_id}` | R | **session or admin key** | customer email, full history | Customer PII disclosure. |
-| `POST /api/dashboard/invoices/{invoice_id}/escalate` | W | **session or admin key** | — | Unauthorised state change or outbound contact. |
-| `POST /api/dashboard/invoices/{invoice_id}/write-off` | W | **session or admin key** | — | Unauthorised state change or outbound contact. |
-| `GET /api/dashboard/overview` | R | **session or admin key** | aggregate money figures | Customer PII disclosure. |
-| `GET /api/dashboard/promises` | R | **session or admin key** | customer names, quoted replies | Customer PII disclosure. |
-| `GET /api/dashboard/queue` | R | **session or admin key** | customer names, amounts owed | Customer PII disclosure. |
-| `GET /api/invoices` | R | **session or admin key** | customer names, amounts | Customer PII disclosure. |
-| `POST /api/invoices/batch` | W | **session or admin key** | — | Unauthorised state change or outbound contact. |
-| `POST /api/invoices/provision-batch` | W | **session or admin key** | — | Unauthorised state change or outbound contact. |
-| `GET /api/invoices/{invoice_id}` | R | **session or admin key** | customer names, amounts | Customer PII disclosure. |
-| `POST /api/invoices/{invoice_id}/provision` | W | **session or admin key** | — | Unauthorised state change or outbound contact. |
-| `POST /api/invoices/{invoice_id}/simulate-reply` | W | **session or admin key** | — | Unauthorised state change or outbound contact. |
-| `POST /api/webhooks/razorpay` | W | HMAC signature | — | Forged payment. HMAC over the raw body + unique event id. |
-| `GET /health` | R | public | — | None — no data. Probed before any credential exists. |
+The dynamic integration test is the authoritative inventory; this grouped summary is
+kept intentionally smaller so it cannot pretend to be exhaustive while going stale.
+
+| Route class | Reads | Writes | Protection |
+|---|---|---|---|
+| `/api/dashboard/**` | named session or service key | admin/operator session or service key; auditor rejected | active account and session generation checked on every request |
+| `/api/invoices/**` and `/api/admin/**` | named session or service key | admin/operator session or service key; auditor rejected | same central dependency; object lookup never bypasses it |
+| `/api/invoices/{id}/simulate-reply` | — | admin/operator session or service key | explicitly labelled demo control |
+| `/api/webhooks/**` | — | provider signature only | raw-body verification plus provider event deduplication and correlation |
+| `/api/auth/login`, `/api/auth/logout` | public | public | generic failures, rate limits, account lockout, httpOnly session cookie |
+| `/health`, `/live` | public | — | operational status only; no customer records |
+
+`backend/tests/integration/test_auth.py` discovers the live OpenAPI schema on every
+run. Every non-public read must return 401 anonymously, every non-public mutation must
+return 401 anonymously, auditors must be read-only, and a disabled or generation-
+rotated account must lose access immediately.

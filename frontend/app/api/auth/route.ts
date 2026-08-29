@@ -1,7 +1,7 @@
 /**
  * Dashboard login and logout.
  *
- * The password is verified by the BACKEND, not here.
+ * The named operator account and password are verified by the BACKEND, not here.
  *
  * That matters for more than tidiness: this route is what a browser actually posts to,
  * so a password check performed locally means the backend's rate limiter never sees a
@@ -17,7 +17,7 @@
 import { NextResponse } from "next/server";
 
 import { clientKey, rateLimit } from "@/lib/rate-limit";
-import { SESSION_COOKIE, createToken } from "@/lib/session";
+import { SESSION_COOKIE, verifyToken } from "@/lib/session";
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000").replace(/\/$/, "");
 
@@ -36,6 +36,7 @@ const COOKIE_OPTIONS = {
 export async function POST(request: Request) {
   const body = (await request.json().catch(() => ({}))) as {
     password?: string;
+    username?: string;
     action?: string;
   };
 
@@ -53,8 +54,9 @@ export async function POST(request: Request) {
     );
   }
 
-  if (!body.password) {
-    return NextResponse.json({ error: "Invalid password" }, { status: 401 });
+  const username = body.username?.toLowerCase() ?? "";
+  if (!body.password || !/^[a-z0-9_-]{2,64}$/.test(username)) {
+    return NextResponse.json({ error: "Invalid credentials" }, { status: 401 });
   }
 
   let upstream: Response;
@@ -62,7 +64,7 @@ export async function POST(request: Request) {
     upstream = await fetch(`${API_BASE}/api/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ password: body.password }),
+      body: JSON.stringify({ password: body.password, username }),
       cache: "no-store",
     });
   } catch {
@@ -85,10 +87,29 @@ export async function POST(request: Request) {
   if (!upstream.ok) {
     // Deliberately vague, and identical for every kind of failure: distinguishing
     // "no such account" from "wrong password" only helps someone guessing.
-    return NextResponse.json({ error: "Invalid password" }, { status: 401 });
+    return NextResponse.json({ error: "Invalid credentials" }, { status: 401 });
+  }
+
+  const identity = (await upstream.json().catch(() => null)) as
+    | { username?: string; role?: string }
+    | null;
+  // Read the backend's httpOnly Set-Cookie server-side. The token is deliberately
+  // absent from the JSON body, so browser JavaScript cannot retrieve it by calling
+  // the backend login endpoint directly from an allowed origin.
+  const upstreamCookie = upstream.headers.get("set-cookie") ?? "";
+  const issuedToken = /(?:^|[,;]\s*)vasooli_session=([^;,]+)/.exec(upstreamCookie)?.[1];
+  // Trust only the canonical identity returned by the backend. Signing the submitted
+  // username would recreate self-asserted attribution even though the password check
+  // itself was database-backed.
+  if (
+    !identity?.username ||
+    !/^[a-z0-9_-]{2,64}$/.test(identity.username) ||
+    verifyToken(issuedToken) !== identity.username
+  ) {
+    return NextResponse.json({ error: "Invalid authentication response" }, { status: 502 });
   }
 
   const res = NextResponse.json({ status: "ok" });
-  res.cookies.set(SESSION_COOKIE, createToken(), COOKIE_OPTIONS);
+  res.cookies.set(SESSION_COOKIE, issuedToken!, COOKIE_OPTIONS);
   return res;
 }

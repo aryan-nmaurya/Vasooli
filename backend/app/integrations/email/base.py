@@ -32,4 +32,5 @@ class EmailProvider(Protocol):
         text: str,
         reply_to: str | None = None,
         headers: dict[str, str] | None = None,
+        idempotency_key: str | None = None,
     ) -> SendResult: ...

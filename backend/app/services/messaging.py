@@ -11,9 +11,12 @@ network call is exercised, so turning sending on later is a configuration change
 rather than a new code path appearing on demo day.
 """
 
+import re
+import uuid
 from dataclasses import dataclass
 from datetime import timedelta
 
+from sqlalchemy import or_
 from sqlmodel import Session, select
 
 from app.ai.drafting import Draft
@@ -30,6 +33,7 @@ from app.policy import PolicyDecision
 log = get_logger("messaging")
 
 DRY_RUN_PROVIDER = "dry_run"
+DELIVERY_LEASE_SECONDS = 120
 
 
 @dataclass(frozen=True)
@@ -38,6 +42,7 @@ class DeliveryResult:
     provider: str
     message_id: str | None = None
     error: str | None = None
+    retryable: bool = False
 
 
 def resolve_recipient(customer_email: str) -> tuple[str, str | None]:
@@ -60,6 +65,12 @@ def _subject_for(subject: str, intended_for: str | None) -> str:
     nobody can tell which customer each one was for.
     """
     return f"[→ {intended_for}] {subject}" if intended_for else subject
+
+
+def reply_address_for(invoice_number: str) -> str:
+    """A stable, provider-routable address that binds replies to one invoice."""
+    local_invoice = re.sub(r"[^a-z0-9-]", "-", invoice_number.casefold()).strip("-")
+    return f"invoice-{local_invoice}@{settings.email_reply_to_domain}"
 
 
 def render_html(body: str) -> str:
@@ -87,6 +98,7 @@ def _send_email(
     subject: str,
     body: str,
     invoice_number: str,
+    idempotency_key: str,
     provider: EmailProvider | None = None,
 ) -> DeliveryResult:
     """Hand the message to a provider, or record it in dry-run."""
@@ -111,12 +123,15 @@ def _send_email(
         html=render_html(body),
         text=body,
         headers={"X-Vasooli-Invoice": invoice_number},
+        reply_to=reply_address_for(invoice_number),
+        idempotency_key=idempotency_key,
     )
     return DeliveryResult(
         sent=result.sent,
         provider=result.provider,
         message_id=result.message_id,
         error=result.error,
+        retryable=result.retryable,
     )
 
 
@@ -130,25 +145,42 @@ def _backoff_seconds(attempt: int) -> int:
     return min(300 * (2 ** max(0, attempt - 1)), 7200)
 
 
-def _record_attempt(reminder: Reminder, result: DeliveryResult) -> None:
-    """Fold one delivery outcome into the reminder row."""
+def _begin_attempt(reminder: Reminder, lease_token: str) -> None:
+    """Durably claim an outbox row before the provider side effect begins."""
     reminder.attempt_count += 1
     reminder.last_attempt_at = utcnow()
+    reminder.provider = "pending"
+    reminder.delivery_state = "processing"
+    reminder.lease_token = lease_token
+    reminder.lease_expires_at = utcnow() + timedelta(seconds=DELIVERY_LEASE_SECONDS)
+    reminder.next_retry_at = utcnow() + timedelta(seconds=_backoff_seconds(reminder.attempt_count))
+
+
+def _record_attempt(reminder: Reminder, result: DeliveryResult) -> None:
+    """Fold a provider result into an attempt already counted by `_begin_attempt`."""
 
     if result.sent:
         reminder.sent_at = utcnow()
         reminder.send_error = None
         reminder.next_retry_at = None
+        reminder.delivery_state = "sent"
     else:
         reminder.sent_at = None
         reminder.send_error = (result.error or "unknown")[:500]
+        reminder.delivery_state = (
+            "failed"
+            if result.retryable and reminder.attempt_count < MAX_DELIVERY_ATTEMPTS
+            else "dead"
+        )
         reminder.next_retry_at = (
-            utcnow() + timedelta(seconds=_backoff_seconds(reminder.attempt_count))
-            if reminder.attempt_count < MAX_DELIVERY_ATTEMPTS
-            else None  # exhausted; a human decides what happens next
+            None
+            if not result.retryable or reminder.attempt_count >= MAX_DELIVERY_ATTEMPTS
+            else reminder.next_retry_at
         )
     reminder.provider = result.provider
     reminder.provider_message_id = result.message_id
+    reminder.lease_token = None
+    reminder.lease_expires_at = None
 
 
 def _audit_attempt(
@@ -173,6 +205,7 @@ def _audit_attempt(
                 "to": customer.email,
                 "attempt": reminder.attempt_count,
                 "error": result.error,
+                "retryable": result.retryable,
                 "next_retry_at": (
                     reminder.next_retry_at.isoformat() if reminder.next_retry_at else None
                 ),
@@ -180,6 +213,114 @@ def _audit_attempt(
             },
         )
     )
+
+
+def _dispatch_reminder(
+    session: Session,
+    reminder_id: uuid.UUID,
+    *,
+    provider: EmailProvider | None = None,
+) -> tuple[Reminder | None, DeliveryResult | None]:
+    """Claim and deliver one durable outbox row without holding a DB lock on I/O."""
+    now = utcnow()
+    reminder = session.exec(
+        select(Reminder).where(Reminder.id == reminder_id).with_for_update(skip_locked=True)
+    ).first()
+    if reminder is None or reminder.sent_at is not None:
+        session.rollback()
+        return None, None
+    active_lease = (
+        reminder.delivery_state == "processing"
+        and reminder.lease_expires_at is not None
+        and reminder.lease_expires_at > now
+    )
+    expired_lease = (
+        reminder.delivery_state == "processing"
+        and reminder.lease_expires_at is not None
+        and reminder.lease_expires_at <= now
+    )
+    due = expired_lease or reminder.next_retry_at is None or reminder.next_retry_at <= now
+    if active_lease or not due or reminder.attempt_count >= MAX_DELIVERY_ATTEMPTS:
+        session.rollback()
+        return None, None
+
+    invoice = session.get(Invoice, reminder.invoice_id)
+    if invoice is None:
+        reminder.delivery_state = "dead"
+        reminder.send_error = "abandoned: invoice missing"
+        reminder.next_retry_at = None
+        session.add(reminder)
+        session.commit()
+        return reminder, None
+
+    dispute_paused = (
+        invoice.status == InvoiceStatus.HUMAN_REVIEW
+        and invoice.escalation_reason == "complaint_in_reply"
+    )
+    if invoice.status in (InvoiceStatus.RECOVERED, InvoiceStatus.WRITTEN_OFF) or dispute_paused:
+        reminder.delivery_state = "dead"
+        reminder.send_error = "abandoned: invoice no longer being chased"
+        reminder.next_retry_at = None
+        session.add(reminder)
+        session.commit()
+        return reminder, None
+
+    customer = session.get(Customer, invoice.customer_id)
+    if customer is None:
+        reminder.delivery_state = "dead"
+        reminder.send_error = "abandoned: customer missing"
+        reminder.next_retry_at = None
+        session.add(reminder)
+        session.commit()
+        return reminder, None
+
+    lease_token = uuid.uuid4().hex
+    _begin_attempt(reminder, lease_token)
+    session.add(reminder)
+    session.commit()
+
+    try:
+        result = _send_email(
+            to=customer.email,
+            subject=reminder.subject,
+            body=reminder.body,
+            invoice_number=invoice.invoice_number,
+            idempotency_key=f"vasooli-reminder-{reminder.id}",
+            provider=provider,
+        )
+    except Exception as exc:  # provider adapters should return failures, but fail safe
+        result = DeliveryResult(
+            sent=False,
+            provider=getattr(provider, "name", "unknown"),
+            error=f"{type(exc).__name__}: {exc}",
+            retryable=True,
+        )
+
+    claimed = session.exec(
+        select(Reminder).where(Reminder.id == reminder_id).with_for_update()
+    ).one()
+    if claimed.lease_token != lease_token:
+        # The lease is deliberately much longer than a provider timeout, so this can
+        # happen only after severe scheduler/database delay. Never let a stale worker
+        # overwrite the newer owner's outcome.
+        session.rollback()
+        log.warning("messaging.stale_lease_result", reminder_id=str(reminder_id))
+        return claimed, None
+
+    invoice = session.get(Invoice, claimed.invoice_id)
+    customer = session.get(Customer, invoice.customer_id) if invoice else None
+    _record_attempt(claimed, result)
+    session.add(claimed)
+    if result.sent and invoice is not None:
+        invoice.reminders_sent += 1
+        invoice.current_tier = max(invoice.current_tier, claimed.tier)
+        invoice.last_reminder_at = utcnow()
+        session.add(invoice)
+    if invoice is not None and customer is not None:
+        _audit_attempt(session, invoice, claimed, customer, result)
+    session.commit()
+    session.refresh(claimed)
+    return claimed, result
 
 
 def deliver_reminder(
@@ -200,14 +341,6 @@ def deliver_reminder(
     untouched, and the tier remains owed. Before that distinction existed, a bounced
     email silently consumed the tier and the invoice was never chased again.
     """
-    result = _send_email(
-        to=customer.email,
-        subject=draft.subject,
-        body=draft.body,
-        invoice_number=invoice.invoice_number,
-        provider=provider,
-    )
-
     reminder = Reminder(
         invoice_id=invoice.id,
         tier=tier,
@@ -218,20 +351,16 @@ def deliver_reminder(
         policy_decision=decision.to_dict(),
         generated_by=draft.generated_by,
         llm_degraded=draft.degraded,
+        delivery_state="pending",
+        next_retry_at=utcnow(),
     )
-    _record_attempt(reminder, result)
     session.add(reminder)
-
-    if result.sent:
-        # Cadence counters advance only on a delivery a provider accepted. They are
-        # denormalized onto the invoice because app.policy is pure and cannot COUNT(*).
-        invoice.reminders_sent += 1
-        invoice.current_tier = tier
-        invoice.last_reminder_at = utcnow()
-        session.add(invoice)
-
-    _audit_attempt(session, invoice, reminder, customer, result)
-    return reminder
+    # This commit is the transactional outbox boundary: a crash from this point on
+    # leaves a reclaimable pending row; no provider call can exist without its intent.
+    session.commit()
+    session.refresh(reminder)
+    delivered, _ = _dispatch_reminder(session, reminder.id, provider=provider)
+    return delivered or reminder
 
 
 def retry_failed_deliveries(
@@ -251,63 +380,47 @@ def retry_failed_deliveries(
     contact anyone twice inside the cooldown window.
     """
     now = utcnow()
-    due = session.exec(
+    due_ids = session.exec(
         select(Reminder)
         .where(
             Reminder.sent_at.is_(None),  # type: ignore[union-attr]
             Reminder.attempt_count < MAX_DELIVERY_ATTEMPTS,
-            Reminder.next_retry_at.is_not(None),  # type: ignore[union-attr]
-            Reminder.next_retry_at <= now,  # type: ignore[operator]
+            or_(
+                (
+                    Reminder.delivery_state.in_(["pending", "failed"])  # type: ignore[union-attr]
+                    & (Reminder.next_retry_at.is_not(None))  # type: ignore[union-attr]
+                    & (Reminder.next_retry_at <= now)  # type: ignore[operator]
+                ),
+                (
+                    (Reminder.delivery_state == "processing")
+                    & (Reminder.lease_expires_at.is_not(None))  # type: ignore[union-attr]
+                    & (Reminder.lease_expires_at <= now)  # type: ignore[operator]
+                ),
+            ),
         )
+        .order_by(Reminder.next_retry_at)
         .limit(limit)
     ).all()
 
     recovered = 0
     still_failing = 0
+    attempted = 0
 
-    for reminder in due:
-        invoice = session.get(Invoice, reminder.invoice_id)
-        if invoice is None:
+    for due in due_ids:
+        _, result = _dispatch_reminder(session, due.id, provider=provider)
+        if result is None:
             continue
-
-        # An invoice settled or handed over since the attempt no longer needs chasing.
-        if invoice.status in (InvoiceStatus.RECOVERED, InvoiceStatus.WRITTEN_OFF):
-            reminder.next_retry_at = None
-            reminder.send_error = "abandoned: invoice no longer being chased"
-            session.add(reminder)
-            continue
-
-        customer = session.get(Customer, invoice.customer_id)
-        if customer is None:
-            continue
-
-        result = _send_email(
-            to=customer.email,
-            subject=reminder.subject,
-            body=reminder.body,
-            invoice_number=invoice.invoice_number,
-            provider=provider,
-        )
-        _record_attempt(reminder, result)
-        session.add(reminder)
-
+        attempted += 1
         if result.sent:
-            invoice.reminders_sent += 1
-            invoice.current_tier = max(invoice.current_tier, reminder.tier)
-            invoice.last_reminder_at = utcnow()
-            session.add(invoice)
             recovered += 1
         else:
             still_failing += 1
 
-        _audit_attempt(session, invoice, reminder, customer, result)
-
-    session.commit()
-    if due:
+    if attempted:
         log.info(
             "messaging.retry_complete",
-            attempted=len(due),
+            attempted=attempted,
             recovered=recovered,
             still_failing=still_failing,
         )
-    return {"attempted": len(due), "recovered": recovered, "still_failing": still_failing}
+    return {"attempted": attempted, "recovered": recovered, "still_failing": still_failing}

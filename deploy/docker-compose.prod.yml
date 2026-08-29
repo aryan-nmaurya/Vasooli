@@ -39,6 +39,11 @@ services:
       resources:
         limits:
           memory: 640M
+    logging: &bounded-logging
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
 
   api:
     build:
@@ -54,10 +59,17 @@ services:
         condition: service_healthy
     expose:
       - "8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     deploy:
       resources:
         limits:
           memory: 900M
+    logging: *bounded-logging
 
   caddy:
     image: caddy:2-alpine
@@ -75,7 +87,9 @@ services:
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
-      - api
+      api:
+        condition: service_healthy
+    logging: *bounded-logging
 
 volumes:
   pgdata:

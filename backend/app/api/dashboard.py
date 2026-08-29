@@ -8,14 +8,14 @@ kind of bug that shows up as ₹1 missing on a slide.
 
 import uuid
 from datetime import timedelta
-from typing import Annotated
 
-from fastapi import APIRouter, Header, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, HTTPException, Query, status
+from pydantic import BaseModel, Field, model_validator
 from sqlmodel import select
 
 from app.api.deps import Operator, OperatorRequired
 from app.core.clock import utcnow
+from app.core.config import settings
 from app.core.constants import DisputeStatus, InvoiceStatus, PromiseStatus
 from app.core.db import SessionDep
 from app.core.money import format_inr
@@ -25,6 +25,7 @@ from app.models import (
     AuditLog,
     Customer,
     DisputeCase,
+    InboundMessage,
     Invoice,
     PaymentLink,
     Promise,
@@ -53,6 +54,39 @@ from app.services.recovery import escalate_to_human
 # addresses, amounts owed and the audit trail — that is a breach if it is
 # public, whether or not the caller can also change anything.
 router = APIRouter(prefix="/api", tags=["dashboard"], dependencies=[OperatorRequired])
+
+
+class RuntimeSafety(BaseModel):
+    environment: str
+    scheduler: str
+    email: str
+    razorpay: str
+    ai: str
+    inbound_email: str
+
+
+@router.get("/dashboard/runtime", response_model=RuntimeSafety)
+def runtime_safety() -> RuntimeSafety:
+    """Non-secret operating modes the UI must disclose before an action is taken."""
+    if settings.email_dry_run:
+        email = "dry_run"
+    elif settings.email_redirect_to:
+        email = "redirected"
+    else:
+        email = "direct_customer"
+    return RuntimeSafety(
+        environment=settings.environment,
+        scheduler="enabled" if settings.scheduler_enabled else "disabled",
+        email=email,
+        razorpay=("live" if settings.razorpay_key_id.startswith("rzp_live_") else "test"),
+        ai="enabled" if settings.google_api_key else "deterministic_fallback",
+        inbound_email=(
+            "native_resend"
+            if settings.resend_inbound_webhook_secret
+            else ("signed_adapter" if settings.inbound_email_webhook_secret else "simulation_only")
+        ),
+    )
+
 
 #: Maps an audit actor to the badge shown on the timeline.
 _PROVENANCE = {
@@ -150,7 +184,11 @@ _CONVERSATION_KINDS: dict[str, tuple[str, str]] = {
 }
 
 
-def _conversation_body(entry: AuditLog, reminders_by_tier: dict[int, Reminder]) -> str | None:
+def _conversation_body(
+    entry: AuditLog,
+    reminders_by_tier: dict[int, Reminder],
+    inbound_by_id: dict[str, InboundMessage],
+) -> str | None:
     """The actual words for this entry, where there were any.
 
     A conversation with the messages left out is a status log. The customer's excerpt
@@ -159,6 +197,9 @@ def _conversation_body(entry: AuditLog, reminders_by_tier: dict[int, Reminder]) 
     """
     detail = entry.detail or {}
     if entry.action == AuditAction.REPLY_RECEIVED:
+        inbound = inbound_by_id.get(str(detail.get("inbound_message_id") or ""))
+        if inbound is not None:
+            return inbound.body_text
         excerpt = detail.get("excerpt")
         return str(excerpt) if excerpt else None
     if entry.action in (AuditAction.REMINDER_SENT, AuditAction.REMINDER_FAILED):
@@ -191,7 +232,7 @@ def _conversation_meta(entry: AuditLog) -> dict:
 
 
 def _build_conversation(
-    entries: list[AuditLog], reminders: list[Reminder]
+    entries: list[AuditLog], reminders: list[Reminder], inbound: list[InboundMessage]
 ) -> list[ConversationEntry]:
     """Reshape the audit log into a conversation, in order.
 
@@ -201,6 +242,7 @@ def _build_conversation(
     settles ties, which is the order they happened in.
     """
     by_tier = {r.tier: r for r in reminders}
+    inbound_by_id = {str(message.id): message for message in inbound}
     conversation: list[ConversationEntry] = []
 
     for entry in sorted(entries, key=lambda e: e.created_at):
@@ -219,7 +261,7 @@ def _build_conversation(
                 kind=kind,  # type: ignore[arg-type]
                 speaker=speaker,
                 headline=_summarise(entry),
-                body=_conversation_body(entry, by_tier),
+                body=_conversation_body(entry, by_tier, inbound_by_id),
                 meta=_conversation_meta(entry),
             )
         )
@@ -408,6 +450,13 @@ def invoice_detail(invoice_id: uuid.UUID, session: SessionDep) -> InvoiceDetail:
             select(AuditLog).where(AuditLog.invoice_id == invoice.id).order_by(AuditLog.created_at)
         ).all()
     )
+    inbound = list(
+        session.exec(
+            select(InboundMessage)
+            .where(InboundMessage.invoice_id == invoice.id)
+            .order_by(InboundMessage.received_at)
+        ).all()
+    )
     cases = cases_for(session, invoice.id)
 
     # Read once from the entries already loaded rather than issuing another query:
@@ -443,6 +492,7 @@ def invoice_detail(invoice_id: uuid.UUID, session: SessionDep) -> InvoiceDetail:
         why=reason.headline,
         why_next=reason.next_step,
         why_state=reason.state,
+        simulated_replies_enabled=settings.allow_simulated_replies,
         reply_count=invoice.reply_count,
         last_reply_at=invoice.last_reply_at,
         last_reply_excerpt=invoice.last_reply_excerpt,
@@ -481,7 +531,7 @@ def invoice_detail(invoice_id: uuid.UUID, session: SessionDep) -> InvoiceDetail:
         dispute_history=[
             _dispute_view(c, payment_while_open=payment_while_open) for c in cases if not c.is_open
         ],
-        conversation=_build_conversation(entries, list(reminders)),
+        conversation=_build_conversation(entries, list(reminders), inbound),
         timeline=[
             TimelineEntry(
                 at=e.created_at,
@@ -828,6 +878,12 @@ class ResolveDispute(BaseModel):
     #: to False keeps the safe choice the default one.
     resume_recovery: bool = False
 
+    @model_validator(mode="after")
+    def require_resume_reason(self) -> "ResolveDispute":
+        if self.resume_recovery and not self.note.strip():
+            raise ValueError("A decision note is required before recovery can resume")
+        return self
+
 
 @router.post("/dashboard/disputes/{case_id}/resolve")
 def resolve_dispute_case(
@@ -835,7 +891,6 @@ def resolve_dispute_case(
     payload: ResolveDispute,
     session: SessionDep,
     operator: Operator,
-    on_behalf_of: Annotated[str | None, Header(alias="X-Operator")] = None,
 ) -> dict:
     """Close a dispute case, and optionally put the invoice back in the cadence.
 
@@ -857,18 +912,10 @@ def resolve_dispute_case(
             "note": "This case was already resolved.",
         }
 
-    # The dashboard reaches this endpoint through its server-side proxy, which
-    # authenticates with the admin key — so `operator` is "service" for every click a
-    # merchant makes, and the audit trail would attribute all of them to nobody. The
-    # proxy forwards who is signed in, and it is used only for the audit attribution:
-    # the header grants no access on its own, because the request had to pass
-    # `require_operator` before this line is reached at all.
-    acting_as = _acting_operator(operator, on_behalf_of)
-
     case, resumed = resolve_dispute(
         session,
         case,
-        resolved_by=acting_as,
+        resolved_by=AuditActor.human(operator),
         note=payload.note,
         resume_recovery=payload.resume_recovery,
     )
@@ -887,22 +934,6 @@ def resolve_dispute_case(
             else "Dispute resolved. Recovery stays stopped for this invoice."
         ),
     }
-
-
-def _acting_operator(operator: str, on_behalf_of: str | None) -> str:
-    """Who a human action is attributed to.
-
-    The header is trusted only for naming, and only when the request already
-    authenticated as the service credential — the case a browser session reaches
-    through the dashboard proxy. It is length-capped and stripped of anything that
-    could forge a different actor kind, because "human:" and "policy:" mean different
-    things to every reader of the audit log.
-    """
-    if operator != "service" or not on_behalf_of:
-        return AuditActor.human(operator)
-
-    cleaned = on_behalf_of.strip().replace(":", "").replace("\n", "")[:120]
-    return AuditActor.human(cleaned) if cleaned else AuditActor.human(operator)
 
 
 @router.get("/dashboard/disputes")

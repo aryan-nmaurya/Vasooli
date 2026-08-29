@@ -13,16 +13,16 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const NAV = [
-  { href: "/", label: "Overview" },
-  { href: "/promises", label: "Promises" },
-  { href: "/audit", label: "Audit log" },
+  { href: "/", label: "Overview", compactLabel: "Overview" },
+  { href: "/promises", label: "Promises", compactLabel: "Promises" },
+  { href: "/audit", label: "Audit log", compactLabel: "Audit" },
 ];
 
 export function Nav() {
   const pathname = usePathname();
 
   return (
-    <nav className="flex items-center gap-1 text-sm">
+    <nav className="flex items-center gap-0 text-xs sm:gap-1 sm:text-sm">
       {NAV.map((item) => {
         const active =
           item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
@@ -31,13 +31,14 @@ export function Nav() {
             key={item.href}
             href={item.href}
             aria-current={active ? "page" : undefined}
-            className={`rounded-md px-3 py-1.5 transition ${
+            className={`rounded-md px-2 py-1.5 transition sm:px-3 ${
               active
                 ? "bg-panel-2 font-medium text-ink"
                 : "text-ink-3 hover:bg-panel-2 hover:text-ink"
             }`}
           >
-            {item.label}
+            <span className="hidden min-[360px]:inline">{item.label}</span>
+            <span className="min-[360px]:hidden">{item.compactLabel}</span>
           </Link>
         );
       })}

@@ -2,8 +2,8 @@
  * Route guard — convenience only.
  *
  * Sends anonymous visitors to /login instead of a page that will fail to load. It
- * deliberately does NOT verify the token signature: middleware runs on the Edge
- * runtime, where Node's crypto is unavailable, and duplicating the verification with
+ * deliberately does NOT verify the token signature: Proxy is only an optimistic
+ * navigation guard, and duplicating the verification with
  * a second implementation would be one more thing to get subtly wrong.
  *
  * The real checks are in the route handlers (`lib/session.verifyToken`) and in the
@@ -16,11 +16,12 @@ import type { NextRequest } from "next/server";
 
 const SESSION_COOKIE = "vasooli_dash";
 
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   const isPublic =
     pathname === "/login" ||
+    pathname.startsWith("/demo/") ||
     pathname.startsWith("/api/auth") ||
     pathname.startsWith("/_next") ||
     pathname === "/favicon.ico";
