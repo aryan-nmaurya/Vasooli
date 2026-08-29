@@ -21,6 +21,10 @@ export function proxy(request: NextRequest) {
 
   const isPublic =
     pathname === "/login" ||
+    // The reviewer guide is deliberately reachable without a session: someone sent
+    // this link cold should learn what the product is before being asked for a
+    // password. It carries no data and no credentials.
+    pathname === "/guide" ||
     pathname.startsWith("/demo/") ||
     pathname.startsWith("/api/auth") ||
     pathname.startsWith("/_next") ||

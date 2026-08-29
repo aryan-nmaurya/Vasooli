@@ -87,6 +87,31 @@ missing, and the remedy for each — in the order they break.
 **Nothing above is presented as real anywhere else in this repository.** If you find a
 contrary claim, it is a bug.
 
+## For reviewers
+
+**Live:** [vasooli.space/guide](https://vasooli.space/guide) — a public page, no login
+required. It states what is real, what is test-mode, and where to click first.
+
+**Credentials** are issued per reviewer on request. Ask for an `auditor` account
+rather than an operator one: the role is enforced in `app/api/deps.py`, which refuses
+every non-GET request, so it cannot run a cycle, resolve a dispute, or send an email
+no matter what is clicked.
+
+If you have ten minutes and want to check the central claim rather than the interface:
+
+| Read | What it proves |
+|---|---|
+| `backend/tests/architecture/test_layering.py` | The AI layer cannot import a mailer, a DB session, or the Razorpay client. Parsed from the AST, so the build fails if it is ever crossed |
+| `backend/app/policy/disputes.py` | The decision to pause recovery is a pure function. No model, no clock, no database |
+| `backend/tests/integration/test_disputes.py` | When recovery pauses, the audit trail attributes the *reading* to the AI and the *decision* to the policy engine — asserted, not described |
+| `backend/eval/` + `backend/eval/out/results.csv` | The three-arm evaluation, including the arm where a naive chaser beats us |
+
+```bash
+cd backend && uv run pytest -q          # 691 tests
+uv run python -m scripts.preflight      # every integration, live
+```
+
+
 ## 3. Architecture
 
 ```
@@ -308,11 +333,10 @@ Stated plainly, because a smaller honest demo beats a fake impressive one.
   Collection is via Payment Links
 - **Payment Links are capped at ₹50,000** on this account, so the synthetic ledger uses
   smaller invoices than a real B2B book would
-- **Inbound email needs working provider configuration.** The native Resend/Svix
-  webhook stores the full message, deduplicates it, correlates the sender to the
-  invoice customer, and runs the same reply logic. The current local Resend key
-  returns HTTP 401, so a verified receiving domain and enabled webhook are still
-  external prerequisites; until then the UI reports simulation-only
+- **Inbound email is live.** `vasooli.space` is verified in Resend for both sending
+  and receiving, and the Svix-signed webhook stores the full message, deduplicates it,
+  correlates the sender to the invoice customer, and runs the same reply logic. The
+  simulated-reply endpoint is disabled in production and returns 403
 - **All outbound email is redirected** to a single inbox. The 60 synthetic customers
   have invented domains
 - **Gemini free tier is 20 requests/day per model.** A full cycle over 8 invoices uses
@@ -326,3 +350,32 @@ Stated plainly, because a smaller honest demo beats a fake impressive one.
   delivery still requires the provider to honor the stable idempotency key
 - **The evaluation's customers are simulated**, driven by a stated behaviour model. It
   measures the policy, not real human behaviour
+
+## 15. What production would require
+
+Vasooli today is a **single-merchant system on test-mode payment keys**. Everything in
+it is real — real Razorpay, real email in and out, real model calls, real reconciliation
+— but it serves one merchant, and it has never moved a real customer's money.
+
+This section exists so that gap is stated rather than left for a reader to discover.
+The work below is deliberately *not* built: each item is a real engineering commitment,
+and shipping a half-version of any of them would be worse than the honest absence.
+
+| | What it means | Why it is not here |
+|---|---|---|
+| **Multi-tenancy** | Every query scoped to a merchant, enforced at the database, not in application code | Row-level isolation has to be right on day one. Retrofitting tenant scoping onto a single-tenant schema is how cross-tenant data leaks happen |
+| **Live payment keys** | Real money, real settlement, real refunds | Requires completed KYC, a settlement account, and a reconciliation process that survives a disputed chargeback — none of which is demonstrable in a hackathon |
+| **Merchant onboarding** | Sign-up, ledger import, domain verification for sending | Each merchant needs their own verified sending domain, or their reminders land in spam under someone else's reputation |
+| **SSO / MFA** | Real identity, not a shared operator account | Per-user IAM with roles, lockout and revocable sessions already exists; federated identity does not |
+| **Data retention and erasure** | A defined lifetime for customer messages, and a way to delete them on request | The audit log is append-only by database trigger — deliberately. Erasure and immutability have to be reconciled explicitly, not bolted on |
+| **Horizontal scale** | More than one worker running cycles | The advisory lock already makes a second worker safe rather than harmful, so this is a capacity question, not a correctness one |
+
+**What is production-shaped already**, and would carry over unchanged: the policy
+engine, the AI/deterministic boundary and its architecture tests, idempotent webhook
+handling with running-total semantics, the append-only audit trail, bounded retries
+with backoff, the durable email outbox, and the deployment's migration-on-boot,
+health-checked container setup.
+
+The honest summary: the *recovery engine* is production-grade; the *product around it*
+is not, and the list above is what standing that up actually costs.
+

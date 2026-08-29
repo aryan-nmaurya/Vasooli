@@ -62,6 +62,26 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         </header>
         <RuntimeBanner />
         <main className="mx-auto max-w-[1200px] px-3 py-7 sm:px-6">{children}</main>
+        {/* The evidence for this system's central claim lives in the test suite, not
+            the interface. Without a link out, a reviewer browsing the dashboard alone
+            never learns it exists. */}
+        <footer className="mt-8 border-t border-line">
+          <div className="mx-auto flex max-w-[1200px] flex-wrap items-center gap-x-4 gap-y-2 px-3 py-5 text-xs text-ink-4 sm:px-6">
+            <span>Vasooli — AI receivables recovery</span>
+            <Link href="/guide" className="text-ink-3 hover:text-ink">
+              Reviewer guide
+            </Link>
+            <a
+              href="https://github.com/aryan-nmaurya/Vasooli"
+              target="_blank"
+              rel="noreferrer"
+              className="text-ink-3 hover:text-ink"
+            >
+              Source and tests
+            </a>
+            <span className="ml-auto">Single merchant · Razorpay test mode</span>
+          </div>
+        </footer>
       </body>
     </html>
   );

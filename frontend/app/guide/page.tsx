@@ -1,0 +1,232 @@
+import Link from "next/link";
+
+/**
+ * The page a reviewer lands on when nobody is there to narrate.
+ *
+ * Public on purpose — it is listed in the proxy's isPublic allowlist. Before this
+ * existed, an unaccompanied visitor hit a password field and learned nothing: not
+ * what the product does, not that it is a hackathon build, not that the interesting
+ * behaviour is two clicks away behind a login they do not have.
+ *
+ * It carries no credentials. Those are handed over separately, per reviewer, so a
+ * public URL never becomes a way in.
+ */
+
+export const metadata = {
+  title: "Reviewer guide — Vasooli",
+  description: "What Vasooli is, what is real, and where to click first.",
+};
+
+const REPO = "https://github.com/aryan-nmaurya/Vasooli";
+
+function Section({
+  eyebrow,
+  title,
+  children,
+}: {
+  eyebrow: string;
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="flex flex-col gap-3">
+      <div className="flex flex-col gap-1 border-b border-line pb-2.5">
+        <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-ink-4">
+          {eyebrow}
+        </span>
+        <h2 className="text-lg font-semibold text-ink">{title}</h2>
+      </div>
+      {children}
+    </section>
+  );
+}
+
+export default function GuidePage() {
+  return (
+    <div className="mx-auto flex max-w-2xl flex-col gap-9 py-4">
+      <header className="flex flex-col gap-3">
+        <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-ink-4">
+          For reviewers and mentors
+        </span>
+        <h1 className="text-2xl font-semibold tracking-tight text-ink">
+          Start here
+        </h1>
+        <p className="text-[15px] leading-relaxed text-ink-2">
+          Vasooli chases overdue B2B invoices on a bounded, auditable schedule. It
+          works out <em>why</em> each invoice is unpaid, writes a reminder in a tone
+          that matches, stops the moment a customer promises to pay or disputes the
+          bill, and stops permanently the moment money actually arrives — confirmed by
+          a signed Razorpay webhook, never by a model&apos;s opinion.
+        </p>
+      </header>
+
+      <Section eyebrow="The claim worth testing" title="The AI cannot touch money">
+        <p className="text-sm leading-relaxed text-ink-2">
+          A language model reads customer replies and drafts reminder copy. It cannot
+          mark an invoice paid, change an amount, pause recovery, or send anything —
+          not because the prompt asks it not to, but because the code it would need is
+          unreachable from the AI layer. That boundary is enforced by a test that
+          parses the import graph and fails the build if it is ever crossed.
+        </p>
+        <div className="rounded-lg border border-line bg-panel px-4 py-3">
+          <div className="text-xs uppercase tracking-wider text-ink-3">
+            Where to verify it
+          </div>
+          <ul className="mt-2 flex flex-col gap-1.5 font-mono text-[12px] text-ink-2">
+            <li>backend/tests/architecture/test_layering.py</li>
+            <li>backend/tests/integration/test_disputes.py</li>
+            <li>backend/app/policy/disputes.py</li>
+          </ul>
+          <p className="mt-2.5 text-xs leading-relaxed text-ink-3">
+            The first proves the AI layer cannot import a mailer, a database session,
+            or the payment client. The second asserts that when recovery pauses, the
+            pause is attributed to the policy engine and the <em>reading</em> to the
+            AI — two separate actors in the audit trail. The third is the decision
+            itself: a pure function, no model involved.
+          </p>
+        </div>
+      </Section>
+
+      <Section eyebrow="Honesty" title="What is real, and what is not">
+        <div className="overflow-x-auto rounded-lg border border-line">
+          <table className="w-full min-w-[30rem] text-sm">
+            <tbody className="divide-y divide-line-2">
+              {[
+                ["Payment links, reconciliation, webhooks", "Real Razorpay — test mode"],
+                ["Reminder emails", "Real, sent through Resend from this domain"],
+                ["Customer replies", "Real inbound email, signature-verified"],
+                ["Reason diagnosis, reply reading, drafting", "Real Gemini, with deterministic fallbacks"],
+                ["Recipients", "Redirected to the operator inbox, not customers"],
+                ["The ledger", "Eight seeded demo invoices, not real merchants"],
+              ].map(([what, state]) => (
+                <tr key={what}>
+                  <td className="px-4 py-2.5 text-ink">{what}</td>
+                  <td className="px-4 py-2.5 text-right text-ink-3">{state}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p className="text-xs leading-relaxed text-ink-3">
+          The amber bar at the top of every dashboard page reports these modes live. It
+          turns red if the system is ever pointed at real customers or live payment
+          keys.
+        </p>
+      </Section>
+
+      <Section eyebrow="Two minutes" title="Where to click">
+        <ol className="flex flex-col gap-3">
+          {[
+            [
+              "Open the recovery queue",
+              "Every row answers “why is this happening?” in one sentence — no need to open anything to understand the state of the ledger.",
+            ],
+            [
+              "Open the invoice marked Disputed",
+              "This is the one worth seeing. Recovery is paused, and the card shows the customer’s own words beside the AI’s reading of them, the claims it extracted, and how confident it was.",
+            ],
+            [
+              "Scroll to the conversation",
+              "Every reminder, reply, AI reading, policy decision and payment event in order — colour-coded by who acted.",
+            ],
+            [
+              "Open the audit log",
+              "Append-only, enforced by a database trigger rather than convention. Nothing in the application can edit or delete a row.",
+            ],
+          ].map(([title, body], i) => (
+            <li key={title} className="flex gap-3">
+              <span className="mt-0.5 font-mono text-sm font-semibold text-accent">
+                {i + 1}
+              </span>
+              <div className="flex flex-col gap-0.5">
+                <span className="text-sm font-medium text-ink">{title}</span>
+                <span className="text-sm leading-relaxed text-ink-2">{body}</span>
+              </div>
+            </li>
+          ))}
+        </ol>
+        <p className="rounded-lg border border-line bg-panel px-4 py-3 text-xs leading-relaxed text-ink-3">
+          <strong className="text-ink-2">Safe to explore.</strong> Reviewer accounts
+          are read-only at the framework level — they cannot run a cycle, resolve a
+          dispute, or send an email, whatever they click. If you were given an operator
+          account instead, the grey <strong className="text-ink-2">Dry run</strong>{" "}
+          button evaluates the whole cadence and sends nothing.
+        </p>
+      </Section>
+
+      <Section eyebrow="Measured, not asserted" title="How well it actually works">
+        <p className="text-sm leading-relaxed text-ink-2">
+          An evaluation harness runs three strategies over 150 invoices and 45
+          simulated days: no chasing, a naive chaser, and Vasooli.
+        </p>
+        <div className="overflow-x-auto rounded-lg border border-line">
+          <table className="w-full min-w-[26rem] text-sm">
+            <thead>
+              <tr className="border-b border-line text-left">
+                <th className="px-4 py-2 text-xs font-medium uppercase tracking-wider text-ink-3">
+                  &nbsp;
+                </th>
+                <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-ink-3">
+                  Naive
+                </th>
+                <th className="px-4 py-2 text-right text-xs font-medium uppercase tracking-wider text-ink-3">
+                  Vasooli
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-line-2 tabular-nums">
+              <tr>
+                <td className="px-4 py-2.5 text-ink">Recovered, by value</td>
+                <td className="px-4 py-2.5 text-right text-ink-2">85.0%</td>
+                <td className="px-4 py-2.5 text-right font-medium text-ink">65.1%</td>
+              </tr>
+              <tr>
+                <td className="px-4 py-2.5 text-ink">Contacts per invoice</td>
+                <td className="px-4 py-2.5 text-right text-ink-2">5.17</td>
+                <td className="px-4 py-2.5 text-right font-medium text-ink">1.10</td>
+              </tr>
+              <tr>
+                <td className="px-4 py-2.5 text-ink">Compliance breaches</td>
+                <td className="px-4 py-2.5 text-right text-ink-2">92</td>
+                <td className="px-4 py-2.5 text-right font-medium text-ink">0</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p className="text-sm leading-relaxed text-ink-2">
+          The naive chaser recovers more. It does so by contacting every customer five
+          times and never stopping — including customers who already paid and customers
+          disputing the bill. Vasooli recovers 77% of that with a fifth of the contacts
+          and no breaches of its own rules. The claim is not &ldquo;recovers the
+          most&rdquo;; it is &ldquo;recovers most of it without behaviour you would be
+          embarrassed to defend.&rdquo;
+        </p>
+      </Section>
+
+      <Section eyebrow="Scope" title="What this is not">
+        <p className="text-sm leading-relaxed text-ink-2">
+          A single-merchant system running on test-mode payment keys. It is not
+          multi-tenant, has no billing, and has never processed a real customer&apos;s
+          money. What production would require is written up honestly in the
+          repository rather than implied here.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <a
+            href={REPO}
+            target="_blank"
+            rel="noreferrer"
+            className="rounded-md bg-invert px-3 py-1.5 text-sm font-medium text-invert-ink transition hover:opacity-90"
+          >
+            Read the source
+          </a>
+          <Link
+            href="/login"
+            className="rounded-md px-3 py-1.5 text-sm text-ink-2 ring-1 ring-inset ring-line transition hover:bg-panel-2 hover:text-ink"
+          >
+            Sign in
+          </Link>
+        </div>
+      </Section>
+    </div>
+  );
+}
