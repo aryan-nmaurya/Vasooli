@@ -53,25 +53,29 @@ export function Landing() {
             tracks what customers promise, and stops as soon as the payment is
             confirmed — by Razorpay, or by a bank transfer you record.
           </p>
+          {/* Two audiences, two destinations. A merchant wants their own ledger; a
+              reviewer wants to see it work without being handed a credential.
+              Previously both were funnelled into "open the demo", which undersold the
+              product to the first and told the second nothing about what they'd get. */}
           <div className="landing-actions">
-            <Link href="/login" className="landing-button landing-button-primary">
-              Open the read-only demo <Arrow />
+            <Link href="/register" className="landing-button landing-button-primary">
+              Start your workspace <Arrow />
             </Link>
-            <a href="#how" className="landing-button landing-button-quiet">
-              See how it works ↓
-            </a>
+            <Link href="/login" className="landing-button landing-button-quiet">
+              Try the live demo — no sign-up
+            </Link>
           </div>
         </div>
         <div className="landing-proof-strip landing-reveal" data-reveal>
-          <span>Razorpay test mode · no real money</span>
-          <span>Single merchant</span>
+          <span>Connects to your ERP</span>
+          <span>Your own Razorpay account</span>
           <span>Every action audited</span>
           <span>Bounded by policy</span>
         </div>
-        <div className="landing-scroll-cue" aria-hidden>
+        <a href="#how" className="landing-scroll-cue">
           <span>Scroll to follow the recovery loop</span>
-          <i />
-        </div>
+          <i aria-hidden />
+        </a>
       </section>
 
       <section className="landing-statement landing-grid" aria-labelledby="problem-title">
@@ -212,7 +216,7 @@ export function Landing() {
             as equally soft, which none of them are. */}
         <div className="landing-metrics">
           <div className="landing-metric landing-reveal" data-reveal>
-            <strong>943</strong><span>tests passing</span><small>836 backend, 107 frontend. Run them yourself.</small>
+            <strong>1,003</strong><span>tests passing</span><small>894 backend, 109 frontend. Run them yourself.</small>
           </div>
           <div className="landing-metric landing-reveal" data-reveal>
             <strong>10</strong><span>policy checks before any send</span><small>Pure functions, no model involved</small>
@@ -239,8 +243,65 @@ export function Landing() {
         </div>
       </section>
 
+      {/* The demo is what most visitors will click, but it is not the product. This
+          section exists so a merchant evaluating Vasooli does not conclude from a
+          seeded ledger that it only runs on one. */}
+      <section className="landing-safety landing-grid" aria-labelledby="live-title">
+        <div className="landing-story-heading">
+          <span className="landing-section-number landing-reveal" data-reveal>05</span>
+          <div>
+            <p className="landing-eyebrow landing-reveal" data-reveal>Beyond the demo</p>
+            <h2 id="live-title" className="landing-section-title landing-reveal" data-reveal>
+              Built to run
+              <br />
+              your books.
+            </h2>
+          </div>
+        </div>
+
+        <div className="landing-boundary landing-reveal" data-reveal>
+          <div className="landing-boundary-row">
+            <span>Your data</span>
+            <strong>A workspace only you can read</strong>
+            <small>
+              Isolation enforced by the database itself, not by remembering to filter —
+              one merchant cannot read another&rsquo;s invoices even if the application
+              code asks wrongly
+            </small>
+          </div>
+          <div className="landing-boundary-row">
+            <span>Your money</span>
+            <strong>Your own Razorpay account</strong>
+            <small>
+              Customers pay you directly. Vasooli creates the link and reconciles the
+              webhook; it never holds your funds
+            </small>
+          </div>
+          <div className="landing-boundary-row">
+            <span>Your ledger</span>
+            <strong>Invoices arrive from your ERP</strong>
+            <small>
+              Cursor-based sync that resumes where it stopped, skips what it has already
+              seen, and stops chasing anything cancelled upstream
+            </small>
+          </div>
+          <div className="landing-boundary-row landing-boundary-final">
+            <span>Your rules</span>
+            <strong>Your schedule, within limits</strong>
+            <small>
+              Chase at three, seven and fourteen days, or whatever suits your trade —
+              validated when you save it, so a cadence can never be quietly ignored
+            </small>
+          </div>
+          <p className="landing-boundary-note">
+            The floors are not adjustable. A merchant can be gentler than the defaults;
+            nobody gets to be harsher.
+          </p>
+        </div>
+      </section>
+
       <section className="landing-scope landing-grid" aria-labelledby="scope-title">
-        <span className="landing-section-number landing-reveal" data-reveal>05</span>
+        <span className="landing-section-number landing-reveal" data-reveal>06</span>
         <div>
           <p className="landing-eyebrow landing-reveal" data-reveal>Honest scope</p>
           <h2 id="scope-title" className="landing-section-title landing-reveal" data-reveal>
@@ -249,17 +310,20 @@ export function Landing() {
             Test money.
           </h2>
           <p className="landing-explainer landing-reveal" data-reveal>
-            Vasooli is a single-merchant system using Razorpay test keys. The payment
-            links, outbound email, delivery and bounce events, inbound replies, AI
-            calls, stopping rules, and audit trail are implemented and tested. No real
-            customer money has moved through it.
+            The demo runs on Razorpay test keys and a seeded ledger of synthetic
+            customers. The payment links, outbound email, delivery and bounce events,
+            inbound replies, AI calls, stopping rules and audit trail are all real and
+            tested — but no customer money has moved through this system yet.
           </p>
           <p className="landing-explainer landing-reveal" data-reveal>
-            What it is not: it has no connector to your accounting system, so invoices
-            are imported rather than discovered and a change in your books does not
-            reach it. It does not ingest Razorpay refunds or chargebacks. One merchant,
-            one currency. Calling this production-grade would be a stretch; it is a
-            production-shaped prototype with the money paths built properly.
+            The multi-tenant layer above is built and tested: isolated workspaces,
+            per-merchant payment accounts, subscription billing, versioned recovery
+            policies, suppression and sending limits. What is not finished is the ERP
+            connectors — the synchronisation engine is complete and proven against
+            fixtures, but Zoho and Tally are not yet wired to live credentials, so
+            today a ledger arrives by CSV rather than by itself. One currency, India
+            only. Production-shaped, with the money paths built properly, and honest
+            about the last mile.
           </p>
           <a className="landing-text-link landing-reveal" data-reveal href={REPO} target="_blank" rel="noreferrer">
             Inspect the source and tests <Arrow />
@@ -275,11 +339,14 @@ export function Landing() {
           on a safe path home.
         </h2>
         <div className="landing-actions landing-reveal" data-reveal>
-          <Link href="/login" className="landing-button landing-button-primary">
-            Explore the dashboard <Arrow />
+          <Link href="/register" className="landing-button landing-button-primary">
+            Start your workspace <Arrow />
+          </Link>
+          <Link href="/pricing" className="landing-button landing-button-quiet">
+            See pricing
           </Link>
           <Link href="/guide" className="landing-button landing-button-quiet">
-            Read the reviewer guide
+            Reviewer guide
           </Link>
         </div>
       </section>

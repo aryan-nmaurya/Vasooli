@@ -95,3 +95,28 @@ class IntegrationFailure(SQLModel, table=True):
     next_retry_at: datetime | None = Field(sa_column=timestamp_column(nullable=True))
     resolved_at: datetime | None = Field(sa_column=timestamp_column(nullable=True))
     created_at: datetime = Field(sa_column=timestamp_column(default_now=True))
+
+
+class ErpWebhookEvent(SQLModel, table=True):
+    """Replay-safe inbound event envelope for signed custom ERP feeds."""
+
+    __tablename__ = "erp_webhook_events"
+    __table_args__ = (
+        UniqueConstraint(
+            "connection_id", "provider_event_id", name="uq_erp_webhook_connection_event"
+        ),
+    )
+
+    id: uuid.UUID = Field(sa_column=pk_column())
+    merchant_id: uuid.UUID = Field(sa_column=fk_column("merchants.id"))
+    connection_id: uuid.UUID = Field(sa_column=fk_column("erp_connections.id"))
+    provider_event_id: str = Field(sa_column=Column(String(180), nullable=False, index=True))
+    payload_hash: str = Field(sa_column=Column(String(64), nullable=False))
+    raw_payload: dict[str, Any] = Field(default_factory=dict, sa_column=jsonb_column(default=dict))
+    signature_verified: bool = False
+    status: str = Field(default="received", sa_column=Column(String(30), nullable=False))
+    processing_error: str | None = Field(
+        default=None, sa_column=Column(String(1000), nullable=True)
+    )
+    received_at: datetime = Field(sa_column=timestamp_column(default_now=True))
+    processed_at: datetime | None = Field(sa_column=timestamp_column(nullable=True))

@@ -9,11 +9,13 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sqlmodel import select
 
+from app.core.clock import utcnow
 from app.core.db import SessionDep
 from app.models import ReminderPolicyVersion, SendingDomain, SuppressionEntry
 from app.services.auth import audit
 from app.services.authorization import LiveContext, require_live_permission
 from app.services.policy_versions import PRESETS, create_policy
+from app.services.sending_domains import verify_domain_dns
 
 router = APIRouter(prefix="/api/live/controls", tags=["live-controls"])
 
@@ -134,11 +136,12 @@ def add_sending_domain(
     normalized = domain.strip().casefold()
     if not normalized or "." not in normalized:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "A valid domain is required")
+    token = secrets.token_urlsafe(24)
     row = SendingDomain(
         merchant_id=context.merchant.id,
         domain=normalized,
-        verification_token=secrets.token_urlsafe(24),
-        dns_records=[{"type": "TXT", "name": f"_vasooli.{normalized}", "value": "pending"}],
+        verification_token=token,
+        dns_records=[{"type": "TXT", "name": f"_vasooli.{normalized}", "value": token}],
     )
     session.add(row)
     session.commit()
@@ -148,6 +151,40 @@ def add_sending_domain(
         "status": row.status,
         "dns_records": row.dns_records,
     }
+
+
+@router.post("/sending-domains/{domain_id}/verify")
+def verify_sending_domain(
+    domain_id: uuid.UUID,
+    request: Request,
+    session: SessionDep,
+    context: Annotated[LiveContext, Depends(require_live_permission("merchant.write"))],
+) -> dict[str, Any]:
+    row = session.exec(
+        select(SendingDomain).where(
+            SendingDomain.id == domain_id,
+            SendingDomain.merchant_id == context.merchant.id,
+        )
+    ).first()
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Sending domain not found")
+    result = verify_domain_dns(row.domain, row.verification_token)
+    row.status = "verified" if result.verified else "pending"
+    row.verified_at = utcnow() if result.verified else None
+    row.updated_at = utcnow()
+    session.add(row)
+    audit(
+        session,
+        action="sending_domain.verification_checked",
+        merchant_id=context.merchant.id,
+        actor_user_id=context.user.id,
+        object_type="sending_domain",
+        object_id=row.id,
+        ip_address=request.client.host if request.client else None,
+        detail={"verified": result.verified, "records": result.records},
+    )
+    session.commit()
+    return {"id": str(row.id), "status": row.status, "records": result.records}
 
 
 def _policy_dict(row: ReminderPolicyVersion) -> dict[str, Any]:

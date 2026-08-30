@@ -359,9 +359,6 @@ def run_recovery_cycle(
             report.events_retried = events["attempted"]
             report.events_recovered = events["recovered"]
 
-        merchant = session.exec(select(Merchant)).first()
-        merchant_name = merchant.name if merchant else "Vasooli"
-
         invoices = _eligible_invoices(session, invoice_ids)
         if limit:
             invoices = invoices[:limit]
@@ -369,10 +366,11 @@ def run_recovery_cycle(
         for invoice in invoices:
             report.considered += 1
             try:
+                merchant = session.get(Merchant, invoice.merchant_id)
                 _process_invoice(
                     session,
                     invoice,
-                    merchant_name=merchant_name,
+                    merchant_name=merchant.name if merchant else "Vasooli",
                     report=report,
                     dry_run=dry_run,
                     use_llm=use_llm and not report.ai_disabled_after_failure,

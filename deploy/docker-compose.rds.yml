@@ -1,4 +1,5 @@
-# Production API stack with PostgreSQL in a separate AWS RDS failure domain.
+# Production stack with PostgreSQL in a separate AWS RDS failure domain. API,
+# scheduler, and worker are independently deployable processes.
 # DATABASE_URL must point at an SSL-required RDS endpoint; there is deliberately no
 # local database service or database volume in this topology.
 
@@ -13,6 +14,8 @@ services:
     env_file: .env
     environment:
       DATABASE_URL: ${DATABASE_URL:?set the private RDS DATABASE_URL in deploy/.env}
+      PROCESS_ROLE: api
+      SCHEDULER_ENABLED: "false"
     expose:
       - "8000"
     healthcheck:
@@ -30,6 +33,47 @@ services:
       options:
         max-size: "10m"
         max-file: "5"
+
+  scheduler:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set the private RDS DATABASE_URL in deploy/.env}
+      PROCESS_ROLE: scheduler
+      SCHEDULER_ENABLED: "true"
+    command: ["sh", "-c", "alembic upgrade head && python -m app.scheduler_process"]
+    depends_on:
+      api:
+        condition: service_started
+    deploy:
+      resources:
+        limits:
+          memory: 500M
+    logging: *bounded-logging
+
+  worker:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set the private RDS DATABASE_URL in deploy/.env}
+      PROCESS_ROLE: worker
+      SCHEDULER_ENABLED: "false"
+      WORKER_KIND: all
+    command: ["sh", "-c", "alembic upgrade head && python -m app.worker"]
+    depends_on:
+      api:
+        condition: service_started
+    deploy:
+      resources:
+        limits:
+          memory: 700M
+    logging: *bounded-logging
 
   caddy:
     image: caddy:2-alpine

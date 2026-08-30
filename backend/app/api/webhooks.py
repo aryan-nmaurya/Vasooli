@@ -39,12 +39,14 @@ from app.models import (
     AuditActor,
     AuditLog,
     Customer,
+    DemoSettings,
     InboundMessage,
     Invoice,
     Merchant,
     PaymentConnection,
     ReconciliationEvent,
 )
+from app.services.authorization import set_merchant_context
 from app.services.delivery_events import record_delivery_event
 from app.services.messaging import reply_address_for
 from app.services.reconciliation import (
@@ -136,7 +138,13 @@ def _find_inbound_invoice(
     # The same effective address messaging.resolve_recipient sent to. Reading the raw
     # setting here would mean a reviewer who redirected mail to their own inbox could
     # receive a reminder and then have their reply rejected as an unknown sender.
-    redirect_to = (effective_email_redirect() or "").casefold()
+    persisted_redirect = session.get(DemoSettings, 1)
+    redirect_to = (
+        persisted_redirect.email_redirect_override
+        if persisted_redirect and persisted_redirect.email_redirect_override
+        else effective_email_redirect()
+    )
+    redirect_to = (redirect_to or "").casefold()
     sender_is_operator = bool(redirect_to) and sender_address == parseaddr(redirect_to)[1]
 
     # Live aliases contain a random per-invoice token. Resolve that token first, then
@@ -463,6 +471,10 @@ async def razorpay_webhook(request: Request, session: SessionDep) -> dict[str, s
     matched_invoice, _, _ = match_invoice(session, payload)
     if matched_invoice is not None:
         merchant = session.get(Merchant, matched_invoice.merchant_id)
+        # The append-only collection ledger is RLS-protected. Establish the tenant
+        # context before inserting the envelope or applying the payment, including
+        # demo events; unmatched events never write merchant-owned rows.
+        set_merchant_context(session, matched_invoice.merchant_id)
         account_id = payload.get("account_id") or _link_account_id(payload)
         if merchant is not None and merchant.mode == "live":
             if not account_id:

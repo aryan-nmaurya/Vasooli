@@ -19,7 +19,12 @@ these reads have to move to the database (they are rare enough to afford it) or 
 shared cache — module state is the wrong home the moment there is more than one.
 """
 
+from typing import TYPE_CHECKING
+
 from app.core.config import settings
+
+if TYPE_CHECKING:
+    from sqlmodel import Session
 
 _email_redirect_override: str | None = None
 
@@ -31,11 +36,23 @@ def set_email_redirect_override(address: str | None) -> None:
     _email_redirect_override = cleaned or None
 
 
-def email_redirect_override() -> str | None:
+def email_redirect_override(session: "Session | None" = None) -> str | None:
+    """Return the persisted demo override when a database session is available.
+
+    The no-session form remains for compatibility with startup/tests, but request and
+    worker hot paths should pass their session so replicas never depend on process
+    memory for a reviewer-controlled setting.
+    """
+    if session is not None:
+        from app.models import DemoSettings
+        from app.models.demo_settings import SINGLETON_ID
+
+        row = session.get(DemoSettings, SINGLETON_ID)
+        return row.email_redirect_override if row else None
     return _email_redirect_override
 
 
-def effective_email_redirect() -> str | None:
+def effective_email_redirect(session: "Session | None" = None) -> str | None:
     """The address reminder mail is actually redirected to, if any.
 
     The runtime override wins over the environment default, but it can only ever
@@ -44,4 +61,4 @@ def effective_email_redirect() -> str | None:
     runtime settings can turn a demo into an outbound campaign against the invented
     addresses in the seeded ledger.
     """
-    return _email_redirect_override or settings.email_redirect_to
+    return email_redirect_override(session) or settings.email_redirect_to

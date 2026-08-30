@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import Cookie, Header, HTTPException, Request, status
+from fastapi import Cookie, Depends, Header, HTTPException, Request, status
 from sqlalchemy import text
 from sqlmodel import select
 
@@ -20,6 +20,7 @@ from app.models import (
     User,
     UserSession,
 )
+from app.services.reauth import consume_challenge
 
 LIVE_ACCESS_COOKIE = "vasooli_live_access"
 LIVE_REFRESH_COOKIE = "vasooli_live_refresh"
@@ -128,6 +129,31 @@ def require_live_permission(codename: str):
         request.state.live_user_id = str(user.id)
         request.state.merchant_id = str(merchant.id)
         return LiveContext(user, merchant, membership, live_session, codename)
+
+    return dependency
+
+
+def require_live_reauth(codename: str):
+    """Require a fresh password/MFA-backed re-auth proof for sensitive actions.
+
+    The challenge is single-use and bound to the authenticated user. Keeping this as
+    a dependency makes it difficult for a new sensitive endpoint to accidentally omit
+    the second factor while retaining the normal merchant permission checks.
+    """
+    permission_dependency = require_live_permission(codename)
+
+    def dependency(
+        session: SessionDep,
+        context: LiveContext = Depends(permission_dependency),
+        x_reauth_token: Annotated[str | None, Header(alias="X-Reauth-Token")] = None,
+    ) -> LiveContext:
+        if not x_reauth_token or not consume_challenge(session, context.user, x_reauth_token):
+            raise HTTPException(
+                status.HTTP_428_PRECONDITION_REQUIRED,
+                "Recent re-authentication is required for this action",
+            )
+        session.commit()
+        return context
 
     return dependency
 

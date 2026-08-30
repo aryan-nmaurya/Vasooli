@@ -73,8 +73,31 @@ describe("Landing", () => {
   it("states what the system does not do", () => {
     const html = renderToStaticMarkup(<Landing />);
 
-    expect(html).toContain("no connector to your accounting system");
-    expect(html).toContain("does not ingest Razorpay refunds or chargebacks");
-    expect(html).toContain("production-shaped prototype");
+    // The unfinished last mile, named. The sync engine is built and tested against
+    // fixtures, but no live ERP credentials are wired — so a merchant still arrives
+    // with a CSV, and the page has to say so rather than imply otherwise.
+    expect(html).toContain("Zoho and Tally are not yet wired to live credentials");
+    expect(html).toContain("a ledger arrives by CSV rather than by itself");
+    expect(html).toContain("no customer money has moved through this system yet");
+    expect(html).toContain("Production-shaped");
+  });
+
+  it("sells the product before the demo, without overstating either", () => {
+    const html = renderToStaticMarkup(<Landing />);
+
+    // The hero used to funnel everyone into the demo, which undersold the product to
+    // a merchant and told a reviewer nothing about what they would get.
+    expect(html).toContain("Start your workspace");
+    expect(html).toContain("Try the live demo");
+    expect(html.indexOf("Start your workspace")).toBeLessThan(html.indexOf("Try the live demo"));
+  });
+
+  it("keeps the cadence floors described as non-negotiable", () => {
+    const html = renderToStaticMarkup(<Landing />);
+
+    // The compliance story is the product's spine. A merchant may widen the gaps and
+    // may not tighten them past the platform minimum, and the page should not blur it.
+    expect(html).toContain("The floors are not adjustable");
+    expect(html).toContain("nobody gets to be harsher");
   });
 });

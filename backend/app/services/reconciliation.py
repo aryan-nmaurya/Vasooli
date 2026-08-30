@@ -22,6 +22,7 @@ from app.models import (
     AuditAction,
     AuditActor,
     AuditLog,
+    CollectionLedgerEntry,
     Invoice,
     PaymentLink,
     PaymentLinkStatus,
@@ -29,6 +30,7 @@ from app.models import (
     ReconciliationEvent,
 )
 from app.models.reconciliation_event import MAX_EVENT_ATTEMPTS, EventStatus
+from app.services.authorization import set_merchant_context
 from app.services.closure import close_link_for_invoice
 from app.services.disputes import open_case_for
 from app.services.events import publish
@@ -163,6 +165,11 @@ def process_event(session: Session, event: ReconciliationEvent) -> None:
         log.warning("reconciliation.unmatched", event_id=event.provider_event_id)
         return
 
+    # Webhook envelopes are committed before processing, so any previous transaction
+    # setting has been cleared. Re-establish the tenant context in this transaction
+    # before touching the RLS-protected collection ledger.
+    set_merchant_context(session, invoice.merchant_id)
+
     entity = _link_entity(payload)
     # Razorpay reports the running total paid against the link, so this is set rather
     # than incremented. Incrementing would double-count a redelivered event, and
@@ -222,6 +229,17 @@ def process_event(session: Session, event: ReconciliationEvent) -> None:
     event.processed_at = utcnow()
     session.add(event)
     session.add(locked)
+    session.add(
+        CollectionLedgerEntry(
+            merchant_id=locked.merchant_id,
+            invoice_id=locked.id,
+            provider_event_id=event.provider_event_id,
+            event_type=event.event_type,
+            amount_paise=applied_paise,
+            provider_reference=str(entity.get("id") or "") or None,
+            payload=event.raw_payload,
+        )
+    )
 
     session.add(
         AuditLog(

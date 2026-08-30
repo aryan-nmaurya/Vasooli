@@ -21,6 +21,12 @@ export function proxy(request: NextRequest) {
 
   const isPublic =
     pathname === "/login" ||
+    pathname === "/register" ||
+    pathname === "/pricing" ||
+    pathname === "/verify-email" ||
+    pathname === "/forgot-password" ||
+    pathname === "/reset-password" ||
+    pathname.startsWith("/live") ||
     // The root renders a public landing page for anonymous visitors and the
     // dashboard for signed-in ones — the branch is in app/page.tsx, not here.
     // Gating it in the proxy would send a cold visitor to a password field, which

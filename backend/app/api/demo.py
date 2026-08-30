@@ -71,8 +71,8 @@ def _state(session) -> ClockState:
         simulated_date=now_ist().strftime("%d %b %Y, %H:%M"),
         real_date=real.strftime("%d %b %Y, %H:%M"),
         updated_by=row.updated_by if row else None,
-        email_to=effective_email_redirect(),
-        email_is_override=bool(email_redirect_override()),
+        email_to=effective_email_redirect(session),
+        email_is_override=bool(email_redirect_override(session)),
     )
 
 

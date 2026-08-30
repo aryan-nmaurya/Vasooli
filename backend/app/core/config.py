@@ -40,6 +40,18 @@ class Settings(BaseSettings):
     razorpay_plan_id_growth: str | None = None
     razorpay_plan_id_scale: str | None = None
     razorpay_subscriptions_enabled: bool = False
+    razorpay_oauth_client_id: str | None = None
+    razorpay_oauth_client_secret: str | None = None
+    razorpay_oauth_redirect_uri: str | None = None
+    razorpay_oauth_token_url: str = "https://auth.razorpay.com/token"
+    razorpay_oauth_scope: str = "read_write"
+    razorpay_oauth_mode: Literal["test", "live"] = "test"
+    zoho_oauth_client_id: str | None = None
+    zoho_oauth_client_secret: str | None = None
+    zoho_oauth_redirect_uri: str | None = None
+    zoho_accounts_url: str = "https://accounts.zoho.com"
+    zoho_oauth_scope: str = "ZohoBooks.invoices.READ,ZohoBooks.settings.READ"
+    frontend_live_integrations_url: str = "http://localhost:3000/live/integrations"
     #: Minimum gap between Razorpay API calls. Test mode rate-limits aggressively —
     #: a 60-invoice batch fired flat out trips it within a few requests.
     razorpay_min_request_interval_seconds: float = 1.5
@@ -80,6 +92,8 @@ class Settings(BaseSettings):
     email_provider_timeout_seconds: float = 10.0
     email_dry_run: bool = True
     allow_direct_customer_email: bool = False
+    global_send_kill_switch: bool = False
+    global_daily_send_quota: int = 100000
 
     #: When set, every reminder is delivered here instead of to the customer, with the
     #: intended recipient shown in the subject. The synthetic ledger contains 52 fake
@@ -91,6 +105,8 @@ class Settings(BaseSettings):
     # --- Ops ---
     scheduler_enabled: bool = True
     process_role: Literal["api", "scheduler", "worker"] = "api"
+    worker_kind: Literal["all", "recovery", "email", "erp", "billing"] = "all"
+    worker_poll_seconds: int = Field(default=15, ge=1, le=300)
     ops_heartbeat_url: str = ""
     ops_recovery_heartbeat_url: str = ""
     admin_api_key: str

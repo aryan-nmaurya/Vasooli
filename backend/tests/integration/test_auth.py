@@ -65,11 +65,27 @@ PUBLIC_BY_DESIGN = {
 #: to an unsigned payload. Billing lives outside /api/webhooks/ because it is the
 #: platform's own Razorpay account rather than a merchant's, and the two use
 #: different secrets — but it is verified the same way.
-SIGNATURE_GATED_PREFIX = ("/api/webhooks/", "/api/live/billing/webhook")
+SIGNATURE_GATED_PREFIX = (
+    "/api/webhooks/",
+    "/api/live/billing/webhook",
+    # Custom ERP push. Verified with X-ERP-Signature over the raw body and a
+    # replay-safe envelope; a sender cannot hold a session cookie.
+    "/api/live/integrations/custom/",
+)
 
 #: The multi-tenant surface. These require a live session and an explicit
 #: X-Merchant-ID; the tenancy-free admin key is refused by design.
 LIVE_PREFIX = "/api/live/"
+
+#: OAuth redirect targets. The provider sends the merchant's browser here, so a
+#: session cookie cannot be relied on — these are authenticated by a one-time
+#: `state` value instead: hashed at rest, single-use via `used_at`, and expiring.
+#: See `app.services.oauth.consume_state`. Answering 400 to a missing or spent
+#: state is the correct refusal here, exactly as 400 is for a bad signature.
+STATE_GATED_PATHS = (
+    "/api/live/integrations/zoho/oauth/callback",
+    "/api/live/payment-connections/oauth/callback",
+)
 
 
 def _discover(app_client, *, methods: tuple[str, ...]) -> list[tuple[str, str]]:
@@ -115,6 +131,7 @@ def test_every_read_rejects_anonymous_callers(api):
         for _, path in _discover(api, methods=("GET",))
         if path not in PUBLIC_BY_DESIGN
         and not path.startswith(SIGNATURE_GATED_PREFIX)
+        and path not in STATE_GATED_PATHS
         and path not in ("/openapi.json", "/docs", "/redoc", "/docs/oauth2-redirect")
         and api.get(_concrete(path)).status_code != 401
     ]
@@ -122,14 +139,43 @@ def test_every_read_rejects_anonymous_callers(api):
 
 
 def test_every_action_rejects_anonymous_callers(api):
+    """Nothing may be *done* without a credential.
+
+    422 counts as refused alongside 401. This sweep posts an empty body, and FastAPI
+    validates the body before the endpoint runs — so a 422 means the request never
+    reached the handler and nothing changed. Insisting on 401 here would force every
+    endpoint to accept a malformed body just to prove it rejects anonymous callers.
+    The stronger claim, that a *well-formed* anonymous request gets 401, is asserted
+    directly in `test_session_gated_endpoints_answer_401_to_a_valid_anonymous_body`.
+    """
     unprotected = [
         f"{verb} {path}"
         for verb, path in _discover(api, methods=("POST", "PUT", "PATCH", "DELETE"))
         if path not in PUBLIC_BY_DESIGN
         and not path.startswith(SIGNATURE_GATED_PREFIX)
-        and api.request(verb, _concrete(path), json={}).status_code != 401
+        and path not in STATE_GATED_PATHS
+        and api.request(verb, _concrete(path), json={}).status_code not in (401, 422)
     ]
     assert not unprotected, "state-changing without a credential:\n  " + "\n  ".join(unprotected)
+
+
+def test_session_gated_endpoints_answer_401_to_a_valid_anonymous_body(api):
+    """The endpoints the sweep above can only clear on a 422, proven properly.
+
+    Each is sent a body that passes validation, so the only thing left to reject it
+    is the missing session. A 422 here would mean the shape changed; a 200 would mean
+    the gate is gone.
+    """
+    cases = [
+        ("/api/live/auth/mfa/verify?code=123456", None),
+        ("/api/live/auth/reauth/challenge", {"purpose": "billing", "password": "x" * 12}),
+    ]
+    wrong = []
+    for path, body in cases:
+        resp = api.post(path, json=body) if body else api.post(path)
+        if resp.status_code != 401:
+            wrong.append(f"POST {path.split('?')[0]} -> {resp.status_code}")
+    assert not wrong, "expected 401 without a session:\n  " + "\n  ".join(wrong)
 
 
 def test_no_customer_data_leaks_in_the_401_body(api, merchant, customer, invoice):
@@ -152,6 +198,8 @@ def test_the_admin_key_grants_access_to_every_legacy_read(api):
     refused = []
     for _, path in _discover(api, methods=("GET",)):
         if path in PUBLIC_BY_DESIGN or path.startswith(SIGNATURE_GATED_PREFIX):
+            continue
+        if path in STATE_GATED_PATHS:
             continue
         if path.startswith(LIVE_PREFIX):
             continue
@@ -181,6 +229,8 @@ def test_the_admin_key_does_not_reach_live_tenant_data(api):
         if not path.startswith(LIVE_PREFIX):
             continue
         if path in PUBLIC_BY_DESIGN or path.startswith(SIGNATURE_GATED_PREFIX):
+            continue
+        if path in STATE_GATED_PATHS:
             continue
         resp = api.get(_concrete(path), headers={"X-Admin-Key": settings.admin_api_key})
         if resp.status_code != 401:
@@ -458,7 +508,14 @@ def test_every_endpoint_is_gated_or_deliberately_public(api):
                 # 400 = rejected on signature. A 401 would mean it wrongly expects a
                 # session; a 200 would mean it accepts unsigned payloads.
                 assert response.status_code == 400, f"{verb} {path} -> {response.status_code}"
-            elif response.status_code != 401:
+            elif path in STATE_GATED_PATHS:
+                # OAuth redirect targets: refused on a missing or spent one-time
+                # `state`, which is a 400 for the same reason a bad signature is.
+                assert response.status_code == 400, f"{verb} {path} -> {response.status_code}"
+            elif response.status_code not in (401, 422):
+                # 422 = the body was rejected before the handler ran, so nothing was
+                # served and nothing changed. See the note on the anonymous-action
+                # sweep above for why that counts as refused here.
                 unprotected.append(f"{verb} {path} -> {response.status_code}")
 
     assert not unprotected, "endpoints served without a credential:\n  " + "\n  ".join(unprotected)

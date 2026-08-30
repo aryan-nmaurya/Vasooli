@@ -5,11 +5,17 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel, Field
+from sqlalchemy import text
 from sqlmodel import select
 
 from app.core.db import SessionDep
 from app.models import BillingPlan, BillingSubscription
-from app.services.authorization import LiveContext, require_live_permission
+from app.services.authorization import (
+    LiveContext,
+    require_live_permission,
+    require_live_reauth,
+    set_merchant_context,
+)
 from app.services.billing import (
     apply_subscription_event,
     create_checkout_subscription,
@@ -47,7 +53,7 @@ def plans(session: SessionDep) -> list[dict]:
 def checkout(
     payload: CheckoutRequest,
     session: SessionDep,
-    context: Annotated[LiveContext, Depends(require_live_permission("billing.manage"))],
+    context: Annotated[LiveContext, Depends(require_live_reauth("billing.manage"))],
 ) -> dict:
     plans = ensure_plans(session)
     plan = next((item for item in plans if item.slug == payload.plan_slug), None)
@@ -127,6 +133,19 @@ async def webhook(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid webhook signature")
     try:
         payload = json.loads(raw)
+        # Platform webhooks have no merchant header. After signature verification,
+        # temporarily allow provider-ID lookup, then pin all writes to that merchant.
+        session.exec(text("SELECT set_config('app.webhook_mode', 'true', true)"))
+        entity = payload.get("payload", {}).get("subscription", {}).get("entity", {})
+        provider_id = entity.get("id") or payload.get("subscription_id")
+        if provider_id:
+            existing = session.exec(
+                select(BillingSubscription).where(
+                    BillingSubscription.razorpay_subscription_id == str(provider_id)
+                )
+            ).first()
+            if existing is not None:
+                set_merchant_context(session, existing.merchant_id)
         event = apply_subscription_event(
             session,
             raw,

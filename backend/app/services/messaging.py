@@ -27,11 +27,26 @@ from app.core.logging import get_logger
 from app.core.runtime import effective_email_redirect
 from app.integrations.email.base import EmailProvider
 from app.integrations.email.resend_client import ResendProvider
-from app.models import AuditAction, AuditActor, AuditLog, Customer, Invoice, Merchant, Reminder
+from app.models import (
+    AuditAction,
+    AuditActor,
+    AuditLog,
+    Customer,
+    DemoSettings,
+    Invoice,
+    Merchant,
+    Reminder,
+)
+from app.models.demo_settings import SINGLETON_ID
 from app.models.reminder import MAX_DELIVERY_ATTEMPTS
 from app.policy import PolicyDecision
 from app.services.disputes import has_open_dispute
-from app.services.outbound_controls import OutboundBlockedError, claim_send_slot, is_suppressed
+from app.services.outbound_controls import (
+    OutboundBlockedError,
+    assert_can_send,
+    claim_send_slot,
+    is_suppressed,
+)
 
 log = get_logger("messaging")
 
@@ -48,7 +63,9 @@ class DeliveryResult:
     retryable: bool = False
 
 
-def resolve_recipient(customer_email: str) -> tuple[str, str | None]:
+def resolve_recipient(
+    customer_email: str, *, redirect_override: str | None = None
+) -> tuple[str, str | None]:
     """Where this message actually goes, and who it was meant for.
 
     The synthetic ledger has 52 invented domains, so unredirected live mail would
@@ -59,7 +76,7 @@ def resolve_recipient(customer_email: str) -> tuple[str, str | None]:
     # Effective, not the raw setting: a reviewer can point mail at their own inbox at
     # runtime, and the inbound path below must agree about where it went or their
     # reply is refused as coming from a stranger.
-    redirect = effective_email_redirect()
+    redirect = redirect_override or effective_email_redirect()
     if redirect:
         return redirect, customer_email
     return customer_email, None
@@ -115,9 +132,10 @@ def _send_email(
     idempotency_key: str,
     provider: EmailProvider | None = None,
     reply_to: str | None = None,
+    redirect_override: str | None = None,
 ) -> DeliveryResult:
     """Hand the message to a provider, or record it in dry-run."""
-    recipient, intended_for = resolve_recipient(to)
+    recipient, intended_for = resolve_recipient(to, redirect_override=redirect_override)
     final_subject = _subject_for(subject, intended_for)
 
     if settings.email_dry_run:
@@ -363,6 +381,10 @@ def _dispatch_reminder(
         return claimed, None
 
     merchant = session.get(Merchant, fresh.merchant_id)
+    demo_settings = (
+        session.get(DemoSettings, SINGLETON_ID) if merchant and merchant.is_demo else None
+    )
+    redirect_override = demo_settings.email_redirect_override if demo_settings else None
     try:
         if merchant is None:
             result = DeliveryResult(
@@ -382,6 +404,9 @@ def _dispatch_reminder(
             )
         else:
             if not merchant.is_demo:
+                # Domain first, then quota: a merchant who cannot legitimately send at
+                # all should not have the attempt counted against their daily budget.
+                assert_can_send(session, merchant.id, is_demo=merchant.is_demo)
                 claim_send_slot(session, merchant.id)
             result = _send_email(
                 to=customer.email,
@@ -395,6 +420,7 @@ def _dispatch_reminder(
                     reply_token=fresh.reply_token,
                     is_demo=merchant.is_demo,
                 ),
+                redirect_override=redirect_override,
             )
     except OutboundBlockedError as exc:
         result = DeliveryResult(

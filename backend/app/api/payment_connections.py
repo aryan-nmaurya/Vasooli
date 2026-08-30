@@ -3,14 +3,26 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 from sqlmodel import select
 
 from app.core.clock import utcnow
+from app.core.config import settings
 from app.core.db import SessionDep
 from app.models import PaymentConnection
-from app.services.authorization import LiveContext, require_live_permission
-from app.services.payment_connections import save_connection
+from app.services.authorization import LiveContext, require_live_permission, require_live_reauth
+from app.services.oauth import (
+    OAuthConfigurationError,
+    OAuthExchangeError,
+    consume_state,
+    create_state,
+    exchange_razorpay_code,
+    razorpay_authorization_url,
+    refresh_razorpay_token,
+    store_razorpay_tokens,
+)
+from app.services.payment_connections import decrypt_secret, save_connection
 
 router = APIRouter(prefix="/api/live/payment-connections", tags=["live-payment-connections"])
 
@@ -23,6 +35,109 @@ class ConnectionRequest(BaseModel):
     api_key_id: str | None = Field(default=None, max_length=160)
     api_key_secret: str | None = Field(default=None, max_length=500)
     scopes: list[str] = Field(default_factory=list, max_length=20)
+
+
+@router.get("/oauth/start")
+def oauth_start(
+    request: Request,
+    session: SessionDep,
+    context: Annotated[LiveContext, Depends(require_live_reauth("erp.configure"))],
+) -> dict[str, str]:
+    """Create a one-time Razorpay Partner OAuth authorization URL."""
+    redirect_uri = settings.razorpay_oauth_redirect_uri or str(
+        request.url_for("razorpay_oauth_callback")
+    )
+    try:
+        state = create_state(
+            session,
+            merchant_id=context.merchant.id,
+            user_id=context.user.id,
+            provider="razorpay",
+            redirect_uri=redirect_uri,
+        )
+        url = razorpay_authorization_url(state, redirect_uri)
+    except OAuthConfigurationError as exc:
+        session.rollback()
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
+    session.commit()
+    return {"authorization_url": url, "provider": "razorpay"}
+
+
+@router.get("/oauth/callback", name="razorpay_oauth_callback")
+def oauth_callback(
+    request: Request,
+    session: SessionDep,
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+):
+    """Consume OAuth state and persist encrypted provider credentials.
+
+    No browser redirect is trusted for entitlements or payment state. The callback
+    only records the connection; the account is verified by the first signed API
+    operation and by webhook account-id routing.
+    """
+    if error:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Razorpay authorization failed: {error}")
+    if not code or not state:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "OAuth code and state are required")
+    try:
+        state_row = consume_state(session, provider="razorpay", raw_state=state)
+        from app.services.authorization import set_merchant_context
+
+        set_merchant_context(session, state_row.merchant_id)
+        tokens = exchange_razorpay_code(code, state_row.redirect_uri)
+        connection = store_razorpay_tokens(session, state_row, tokens)
+        session.commit()
+    except (OAuthConfigurationError, OAuthExchangeError, ValueError) as exc:
+        session.rollback()
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    target = settings.frontend_live_integrations_url
+    if settings.environment in {"local", "test"}:
+        return {
+            "status": "connected",
+            "provider": "razorpay",
+            "provider_account_id": connection.provider_account_id,
+        }
+    return RedirectResponse(
+        url=f"{target}?connected=razorpay", status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+@router.post("/oauth/refresh")
+def oauth_refresh(
+    request: Request,
+    session: SessionDep,
+    context: Annotated[LiveContext, Depends(require_live_reauth("erp.configure"))],
+) -> dict[str, str | None]:
+    row = session.exec(
+        select(PaymentConnection).where(PaymentConnection.merchant_id == context.merchant.id)
+    ).first()
+    if row is None or row.mode != "oauth" or not row.refresh_token_encrypted:
+        raise HTTPException(status.HTTP_409_CONFLICT, "No refreshable Razorpay OAuth connection")
+    try:
+        tokens = refresh_razorpay_token(decrypt_secret(row.refresh_token_encrypted))
+        refreshed = save_connection(
+            session,
+            context.merchant.id,
+            mode="oauth",
+            provider_account_id=tokens.account_id or row.provider_account_id or "unknown",
+            access_token=tokens.access_token,
+            refresh_token=tokens.refresh_token,
+            scopes=tokens.scopes or row.scopes,
+            token_expires_in=tokens.expires_in,
+        )
+        session.commit()
+    except (OAuthConfigurationError, OAuthExchangeError, ValueError) as exc:
+        session.rollback()
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+    return {
+        "status": refreshed.status,
+        "provider_account_id": refreshed.provider_account_id,
+        "expires_at": refreshed.token_expires_at.isoformat()
+        if refreshed.token_expires_at
+        else None,
+    }
 
 
 @router.get("")
@@ -53,7 +168,7 @@ def connect(
     payload: ConnectionRequest,
     request: Request,
     session: SessionDep,
-    context: Annotated[LiveContext, Depends(require_live_permission("erp.configure"))],
+    context: Annotated[LiveContext, Depends(require_live_reauth("erp.configure"))],
 ) -> dict:
     if payload.mode == "oauth" and not payload.access_token:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "OAuth access token is required")
@@ -92,7 +207,7 @@ def connect(
 def disconnect(
     request: Request,
     session: SessionDep,
-    context: Annotated[LiveContext, Depends(require_live_permission("erp.configure"))],
+    context: Annotated[LiveContext, Depends(require_live_reauth("erp.configure"))],
 ) -> dict[str, str]:
     row = session.exec(
         select(PaymentConnection).where(PaymentConnection.merchant_id == context.merchant.id)

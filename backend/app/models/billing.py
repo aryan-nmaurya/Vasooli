@@ -142,3 +142,21 @@ class BillingRefund(SQLModel, table=True):
     amount_paise: int = Field(sa_column=money_column())
     status: str = Field(default="created", sa_column=Column(String(30), nullable=False))
     created_at: datetime = Field(sa_column=timestamp_column(default_now=True))
+
+
+class BillingReconciliationRun(SQLModel, table=True):
+    """Durable evidence of the daily provider-vs-ledger comparison."""
+
+    __tablename__ = "billing_reconciliation_runs"
+
+    id: uuid.UUID = Field(sa_column=pk_column())
+    merchant_id: uuid.UUID | None = Field(
+        default=None, sa_column=fk_column("merchants.id", nullable=True)
+    )
+    status: str = Field(default="running", sa_column=Column(String(30), nullable=False, index=True))
+    checked_count: int = 0
+    drift_count: int = 0
+    detail: dict[str, Any] = Field(default_factory=dict, sa_column=jsonb_column(default=dict))
+    error: str | None = Field(default=None, sa_column=Column(String(1000), nullable=True))
+    started_at: datetime = Field(sa_column=timestamp_column(default_now=True))
+    finished_at: datetime | None = Field(sa_column=timestamp_column(nullable=True))

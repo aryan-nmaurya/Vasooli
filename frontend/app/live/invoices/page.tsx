@@ -1,0 +1,18 @@
+"use client";
+
+import { FormEvent, useEffect, useState } from "react";
+import Link from "next/link";
+
+import { liveGet, livePost } from "@/lib/live-api";
+
+type Invoice = { id: string; invoice_number: string; amount_display: string; outstanding_display: string; status: string; customer_name: string };
+
+export default function LiveInvoicesPage() {
+  const [merchant, setMerchant] = useState("");
+  const [rows, setRows] = useState<Invoice[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  useEffect(() => { const value = window.localStorage.getItem("vasooli_live_merchant") || ""; Promise.resolve().then(() => setMerchant(value)); if (value) liveGet<Invoice[]>("/api/live/invoices", value).then(setRows).catch((cause) => setError(cause instanceof Error ? cause.message : "Unable to load invoices")); }, []);
+  async function importLedger(event: FormEvent<HTMLFormElement>) { event.preventDefault(); if (!merchant) { setError("Sign in to a live workspace first."); return; } const data = new FormData(event.currentTarget); try { const payload = JSON.parse(String(data.get("payload"))); const result = await livePost<{ accepted: number; duplicates: number }>("/api/live/invoices/batch", merchant, { invoices: payload }); setMessage(`Import accepted: ${result.accepted} new, ${result.duplicates} duplicates.`); const refreshed = await liveGet<Invoice[]>("/api/live/invoices", merchant); setRows(refreshed); } catch (cause) { setError(cause instanceof Error ? cause.message : "Import failed"); } }
+  return <main className="mx-auto max-w-6xl px-4 py-14 sm:px-6"><Link href="/live" className="text-sm text-accent">← Setup</Link><div className="mt-5 flex flex-wrap items-end justify-between gap-4"><div><h1 className="text-3xl font-semibold">Live invoices</h1><p className="mt-2 text-ink-3">Import is entitlement-gated and tenant-scoped.</p></div><Link href="/live/readiness" className="rounded-lg border border-line px-3 py-2 text-sm">Readiness</Link></div><form onSubmit={importLedger} className="mt-8 rounded-2xl border border-line bg-panel p-5"><label className="block text-sm font-medium">Import JSON rows<span className="mt-1 block text-xs font-normal text-ink-4">Use the canonical invoice fields: invoice_number, customer_name, customer_email, amount_inr, issued_at, due_at.</span><textarea name="payload" required className="mt-3 min-h-28 w-full rounded-lg border border-line bg-surface px-3 py-2 font-mono text-xs" placeholder='[{"invoice_number":"INV-001","customer_name":"Buyer","customer_email":"ap@example.com","amount_inr":"1000","issued_at":"2026-01-01","due_at":"2026-02-01"}]' /></label><button className="mt-3 rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white">Import invoices</button></form>{message ? <p className="mt-4 rounded-lg bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700">{message}</p> : null}{error ? <p role="alert" className="mt-4 rounded-lg bg-rose-500/10 px-3 py-2 text-sm text-rose-700">{error}</p> : null}<div className="mt-8 overflow-hidden rounded-2xl border border-line bg-panel"><div className="grid grid-cols-4 gap-3 border-b border-line px-4 py-3 text-xs font-semibold uppercase tracking-wider text-ink-4"><span>Invoice</span><span>Customer</span><span>Outstanding</span><span>Status</span></div>{rows.length ? rows.map((row) => <div key={row.id} className="grid grid-cols-4 gap-3 border-b border-line px-4 py-3 text-sm last:border-0"><span>{row.invoice_number}</span><span>{row.customer_name}</span><span>{row.outstanding_display}</span><span className="capitalize text-ink-3">{row.status.replaceAll("_", " ")}</span></div>) : <p className="px-4 py-8 text-sm text-ink-4">No invoices loaded yet.</p>}</div></main>;
+}

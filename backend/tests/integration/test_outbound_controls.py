@@ -16,7 +16,12 @@ from sqlmodel import select
 
 from app.core.clock import utcnow
 from app.models import MerchantUsageBucket, SuppressionEntry
-from app.services.outbound_controls import OutboundBlockedError, claim_send_slot, is_suppressed
+from app.services.outbound_controls import (
+    OutboundBlockedError,
+    assert_can_send,
+    claim_send_slot,
+    is_suppressed,
+)
 
 
 def _suppress(session, merchant, *, email=None, customer=None, reason="hard_bounce", **over):
@@ -162,3 +167,69 @@ def test_the_quota_resets_on_a_new_day(session, merchant):
         select(MerchantUsageBucket).where(MerchantUsageBucket.merchant_id == merchant.id)
     ).all()
     assert len(buckets) == 2
+
+
+# ===========================================================================
+# Sending-domain verification
+# ===========================================================================
+
+
+def _verified_domain(session, merchant, *, status="verified"):
+    from app.models import SendingDomain
+
+    row = SendingDomain(
+        merchant_id=merchant.id,
+        domain="billing.merchant.example",
+        status=status,
+        verification_token="tok",
+    )
+    session.add(row)
+    session.commit()
+    return row
+
+
+def test_a_live_merchant_without_a_verified_domain_cannot_send(session, merchant):
+    """Unverified collections mail is the textbook spam profile. It is filtered, and
+    it degrades the sending reputation every other merchant shares."""
+    merchant.is_demo = False
+    merchant.mode = "live"
+    session.add(merchant)
+    session.commit()
+
+    with pytest.raises(OutboundBlockedError, match="verified sending domain"):
+        assert_can_send(session, merchant.id, is_demo=False)
+
+
+def test_a_pending_domain_does_not_count_as_verified(session, merchant):
+    """Started is not finished — DNS records exist but were never confirmed."""
+    _verified_domain(session, merchant, status="pending")
+    with pytest.raises(OutboundBlockedError):
+        assert_can_send(session, merchant.id, is_demo=False)
+
+
+def test_a_verified_domain_allows_sending(session, merchant):
+    _verified_domain(session, merchant)
+    assert_can_send(session, merchant.id, is_demo=False)
+
+
+def test_the_demo_is_exempt(session, merchant):
+    """Demo mail is redirected to an operator inbox and never reaches a customer, so
+    there is no reputation at stake and no domain to prove. The freeze depends on
+    this staying true."""
+    assert_can_send(session, merchant.id, is_demo=True)
+
+
+def test_verification_is_per_merchant(session, merchant):
+    """One merchant's verified domain must not authorise another's sending."""
+    from app.models import Merchant
+
+    other = Merchant(name="Other Traders", contact_email="ops@other.example.test")
+    session.add(other)
+    session.commit()
+    session.refresh(other)
+
+    _verified_domain(session, merchant)
+
+    assert_can_send(session, merchant.id, is_demo=False)
+    with pytest.raises(OutboundBlockedError):
+        assert_can_send(session, other.id, is_demo=False)

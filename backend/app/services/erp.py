@@ -1,12 +1,19 @@
 """Cursor-based, idempotent ERP synchronization orchestration."""
 
+import json
 from datetime import timedelta
 from decimal import Decimal
 
 from sqlmodel import Session, select
 
 from app.core.clock import utcnow
-from app.integrations.erp import CanonicalInvoice, adapter_for, json_safe, payload_hash
+from app.integrations.erp import (
+    CanonicalInvoice,
+    adapter_for,
+    adapter_for_credentials,
+    json_safe,
+    payload_hash,
+)
 from app.models import ErpConnection, ErpRecord, ErpSyncRun, IntegrationFailure
 from app.schemas.invoice import InvoiceIngestRow
 from app.services.billing import assert_live_entitled
@@ -30,7 +37,15 @@ def sync_connection(
     session.flush()
     try:
         assert_live_entitled(session, connection.merchant_id)
-        adapter = adapter_for(connection.provider, fixture_rows)
+        if fixture_rows is not None or connection.provider == "custom":
+            adapter = adapter_for(connection.provider, fixture_rows)
+        else:
+            from app.services.payment_connections import decrypt_secret
+
+            credentials = json.loads(decrypt_secret(connection.credentials_encrypted or ""))
+            adapter = adapter_for_credentials(
+                connection.provider, credentials, source_tenant=connection.source_tenant
+            )
         page = adapter.fetch_invoices(cursor=connection.cursor, limit=min(max(limit, 1), 500))
         ledger_rows = [
             InvoiceIngestRow(

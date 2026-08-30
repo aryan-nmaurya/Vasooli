@@ -11,7 +11,7 @@ from app.core.clock import utcnow
 from app.core.db import SessionDep, check_database
 from app.models import DataRequest, JobRun
 from app.services.auth import audit
-from app.services.authorization import LiveContext, require_live_permission
+from app.services.authorization import LiveContext, require_live_permission, require_live_reauth
 
 router = APIRouter(prefix="/api/live/operations", tags=["live-operations"])
 
@@ -28,7 +28,13 @@ def readiness(
     db_ok, detail = check_database()
     now = utcnow()
     jobs: dict[str, Any] = {}
-    for job_id in ("recovery_cycle", "payment_link_sync", "retry_operations", "service_heartbeat"):
+    for job_id in (
+        "recovery_cycle",
+        "payment_link_sync",
+        "retry_operations",
+        "service_heartbeat",
+        "billing_reconciliation",
+    ):
         row = session.exec(
             select(JobRun).where(JobRun.job_id == job_id).order_by(JobRun.started_at.desc())
         ).first()
@@ -72,7 +78,7 @@ def request_export(
     payload: DataRequestPayload,
     request: Request,
     session: SessionDep,
-    context: Annotated[LiveContext, Depends(require_live_permission("audit.export"))],
+    context: Annotated[LiveContext, Depends(require_live_reauth("audit.export"))],
 ) -> dict[str, str]:
     return _create_request(session, request, context, "export", payload.reason)
 
@@ -82,7 +88,7 @@ def request_deletion(
     payload: DataRequestPayload,
     request: Request,
     session: SessionDep,
-    context: Annotated[LiveContext, Depends(require_live_permission("merchant.write"))],
+    context: Annotated[LiveContext, Depends(require_live_reauth("merchant.write"))],
 ) -> dict[str, str]:
     return _create_request(session, request, context, "deletion", payload.reason)
 

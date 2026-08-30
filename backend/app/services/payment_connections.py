@@ -3,13 +3,18 @@
 import base64
 import hashlib
 import uuid
+from datetime import timedelta
 
 from cryptography.fernet import Fernet
 from sqlmodel import Session, select
 
 from app.core.clock import utcnow
 from app.core.config import settings
-from app.integrations.razorpay_client import RazorpayClient, get_razorpay_client
+from app.integrations.razorpay_client import (
+    RazorpayClient,
+    RazorpayOAuthClient,
+    get_razorpay_client,
+)
 from app.models import PaymentConnection
 
 
@@ -53,10 +58,12 @@ def decrypt_secret(value: str) -> str:
     return _fernet().decrypt(value.encode()).decode()
 
 
-def client_for_connection(row: PaymentConnection) -> RazorpayClient:
+def client_for_connection(row: PaymentConnection) -> RazorpayClient | RazorpayOAuthClient:
     """Construct a merchant collection client without exposing stored secrets."""
+    if row.mode == "oauth" and row.access_token_encrypted:
+        return RazorpayOAuthClient(decrypt_secret(row.access_token_encrypted))
     if row.mode != "byok" or not row.api_key_id or not row.api_key_secret_encrypted:
-        raise ValueError("OAuth collection adapter is not configured")
+        raise ValueError("Razorpay collection credentials are not configured")
     return get_razorpay_client(
         key_id=row.api_key_id,
         key_secret=decrypt_secret(row.api_key_secret_encrypted),
@@ -74,6 +81,7 @@ def save_connection(
     api_key_id: str | None = None,
     api_key_secret: str | None = None,
     scopes: list[str] | None = None,
+    token_expires_in: int | None = None,
 ) -> PaymentConnection:
     row = session.exec(
         select(PaymentConnection).where(PaymentConnection.merchant_id == merchant_id)
@@ -93,6 +101,9 @@ def save_connection(
         row.api_key_id = api_key_id
         row.api_key_secret_encrypted = encrypt_secret(api_key_secret) if api_key_secret else None
     row.scopes = scopes or row.scopes
+    row.token_expires_at = (
+        utcnow() + timedelta(seconds=token_expires_in) if token_expires_in else row.token_expires_at
+    )
     row.status = "connected"
     row.last_verified_at = utcnow()
     row.revoked_at = None

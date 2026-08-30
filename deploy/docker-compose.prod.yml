@@ -1,18 +1,16 @@
 # Production stack for a single host. Customer Conversation Safety era.
 #
-# Three services, one box: Postgres, the FastAPI app, and Caddy for TLS. Sized for
-# the demo ledger, not for scale — if this ever needs to scale, the database moves to
-# RDS first (swap DATABASE_URL, delete the `db` service) and nothing else changes.
+# Five services, one box: Postgres, stateless API, scheduler, worker, and Caddy for
+# TLS. Sized for the demo ledger, not for scale — if this ever needs to scale, the
+# database moves to RDS first (swap DATABASE_URL, delete the `db` service).
 #
 # Two things here are load-bearing rather than stylistic:
 #
 #   * NEITHER `db` NOR `api` publishes a port. Only Caddy is reachable from the
 #     internet. A Postgres with 5432 open to 0.0.0.0 is found by scanners within
 #     hours, and `vasooli:vasooli` is the first password they try.
-#   * The app runs ONE replica. It carries an in-process APScheduler (the 10:00 IST
-#     recovery cycle and the hourly payment sync). A second replica would run a second
-#     scheduler; the advisory lock in app/services/recovery.py would stop them
-#     double-sending, but there is no reason to rely on that here.
+#   * The API never starts APScheduler. The dedicated scheduler and worker services
+#     own background execution, with Postgres advisory locks preventing duplicates.
 
 name: vasooli
 
@@ -54,6 +52,8 @@ services:
     environment:
       # Composed here rather than in .env so the password lives in exactly one place.
       DATABASE_URL: postgresql://${POSTGRES_USER:-vasooli}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-vasooli}
+      PROCESS_ROLE: api
+      SCHEDULER_ENABLED: "false"
     depends_on:
       db:
         condition: service_healthy
@@ -69,6 +69,47 @@ services:
       resources:
         limits:
           memory: 900M
+    logging: *bounded-logging
+
+  scheduler:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-vasooli}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-vasooli}
+      PROCESS_ROLE: scheduler
+      SCHEDULER_ENABLED: "true"
+    command: ["sh", "-c", "alembic upgrade head && python -m app.scheduler_process"]
+    depends_on:
+      db:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 500M
+    logging: *bounded-logging
+
+  worker:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-vasooli}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-vasooli}
+      PROCESS_ROLE: worker
+      SCHEDULER_ENABLED: "false"
+      WORKER_KIND: all
+    command: ["sh", "-c", "alembic upgrade head && python -m app.worker"]
+    depends_on:
+      db:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 700M
     logging: *bounded-logging
 
   caddy:

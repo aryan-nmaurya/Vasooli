@@ -92,8 +92,15 @@ def auth_modes() -> dict[str, bool]:
     The login page is unauthenticated by definition, so it cannot ask a gated endpoint
     whether the reviewer button should be rendered. Showing a button that can only
     return 404 is worse than showing none.
+
+    `live_registration` answers the same question for the live door. The sign-in page
+    offers both a live workspace and the demo, and self-serve registration ships dark —
+    so without this the page would advertise a "Create workspace" link that 403s.
     """
-    return {"reviewer_access": settings.reviewer_access_enabled}
+    return {
+        "reviewer_access": settings.reviewer_access_enabled,
+        "live_registration": settings.live_registration_enabled,
+    }
 
 
 @router.post("/reviewer")

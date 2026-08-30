@@ -3,10 +3,12 @@
 import uuid
 from datetime import date
 
+from sqlalchemy import func
 from sqlmodel import Session, select
 
 from app.core.clock import utcnow
-from app.models import Customer, MerchantUsageBucket, SuppressionEntry
+from app.core.config import settings
+from app.models import Customer, MerchantUsageBucket, SendingDomain, SuppressionEntry
 
 
 class OutboundBlockedError(ValueError):
@@ -60,7 +62,16 @@ def claim_send_slot(
     quota: int = 100,
     bucket_date: date | None = None,
 ) -> MerchantUsageBucket:
+    if settings.global_send_kill_switch:
+        raise OutboundBlockedError("Outbound email is paused by the platform kill switch")
     today = bucket_date or utcnow().date()
+    global_sent = session.exec(
+        select(func.coalesce(func.sum(MerchantUsageBucket.sent_count), 0)).where(
+            MerchantUsageBucket.bucket_date == today
+        )
+    ).one()
+    if int(global_sent or 0) >= settings.global_daily_send_quota:
+        raise OutboundBlockedError("Global daily outbound email quota exceeded")
     bucket = session.exec(
         select(MerchantUsageBucket).where(
             MerchantUsageBucket.merchant_id == merchant_id,
@@ -75,3 +86,45 @@ def claim_send_slot(
     session.add(bucket)
     session.flush()
     return bucket
+
+
+def sending_domain_is_verified(session: Session, merchant_id: uuid.UUID) -> bool:
+    """Has this merchant proven they own the domain their mail claims to come from?
+
+    Recorded but unenforced until now: `SendingDomain` rows and the verification API
+    existed, and nothing on the send path consulted them. A live merchant could send
+    from a domain with no SPF or DKIM, which is the textbook spam profile — the mail
+    is filtered, the merchant concludes the product does not work, and the sending
+    reputation of every other merchant on the platform degrades with it.
+
+    Collections mail is exactly the category providers scrutinise hardest, so this is
+    a gate rather than a warning. Demo sending is unaffected: it is redirected to an
+    operator inbox and never reaches a customer, so there is no reputation to protect
+    and no domain to prove.
+    """
+    return (
+        session.exec(
+            select(SendingDomain).where(
+                SendingDomain.merchant_id == merchant_id,
+                SendingDomain.status == "verified",
+            )
+        ).first()
+        is not None
+    )
+
+
+def assert_can_send(session: Session, merchant_id: uuid.UUID, *, is_demo: bool) -> None:
+    """Every precondition that is about the merchant rather than the recipient.
+
+    Raises `OutboundBlockedError`, which the delivery path already records as a
+    non-retryable failure — retrying an unverified domain would just fail identically
+    while burning quota.
+    """
+    if is_demo:
+        return
+    if not sending_domain_is_verified(session, merchant_id):
+        raise OutboundBlockedError(
+            "No verified sending domain. Verify one under Settings before sending live "
+            "reminders — unverified mail is filtered as spam and harms deliverability "
+            "for every merchant on this platform."
+        )

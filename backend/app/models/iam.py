@@ -183,6 +183,19 @@ class AuthEvent(SQLModel, table=True):
     created_at: datetime = Field(sa_column=timestamp_column(default_now=True, index=True))
 
 
+class ReauthChallenge(SQLModel, table=True):
+    """Short-lived proof used before sensitive live actions."""
+
+    __tablename__ = "reauth_challenges"
+
+    id: uuid.UUID = Field(sa_column=pk_column())
+    user_id: uuid.UUID = Field(sa_column=fk_column("users.id"))
+    token_hash: str = Field(sa_column=Column(String(64), nullable=False, unique=True, index=True))
+    expires_at: datetime = Field(sa_column=timestamp_column(index=True))
+    used_at: datetime | None = Field(sa_column=timestamp_column(nullable=True))
+    created_at: datetime = Field(sa_column=timestamp_column(default_now=True))
+
+
 class AuditEvent(SQLModel, table=True):
     __tablename__ = "audit_events"
 

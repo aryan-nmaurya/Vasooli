@@ -146,11 +146,15 @@ function PublicShell({ children }: { children: React.ReactNode }) {
             <Link href="/#how">How it works</Link>
             <Link href="/#safety">Safety</Link>
             <Link href="/#proof">Proof</Link>
+            <Link href="/pricing">Pricing</Link>
           </nav>
           <div className="ml-auto flex items-center gap-1.5">
             <span className="anonymous-theme-toggle contents"><ThemeToggle /></span>
             <a href="https://github.com/aryan-nmaurya/Vasooli" target="_blank" rel="noreferrer" className="landing-github-cta">GitHub <span aria-hidden>↗</span></a>
-            <Link href="/login" className="landing-header-cta">Open demo <span aria-hidden>↗</span></Link>
+            {/* The header sold the demo, which is the thing you try, not the thing you
+                buy. A merchant landing here should be one click from a workspace; the
+                demo is still one click away too, from the hero and from /login. */}
+            <Link href="/register" className="landing-header-cta">Get started <span aria-hidden>↗</span></Link>
           </div>
         </div>
       </header>

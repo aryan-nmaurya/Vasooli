@@ -8,6 +8,7 @@ from app.core.config import settings
 from app.core.constants import BUSINESS_TIMEZONE
 from app.core.logging import get_logger
 from app.scheduler.jobs import (
+    billing_reconciliation_job,
     payment_link_sync_job,
     recovery_cycle_job,
     retry_operations_job,
@@ -88,6 +89,16 @@ def start_scheduler() -> BackgroundScheduler | None:
         max_instances=1,
         coalesce=True,
         misfire_grace_time=120,
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        billing_reconciliation_job,
+        CronTrigger(hour=3, minute=15, timezone=BUSINESS_TIMEZONE),
+        id="billing_reconciliation",
+        name="Daily billing reconciliation",
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=3600,
         replace_existing=True,
     )
 

@@ -20,10 +20,10 @@ Phase 6 covers operations, security, and pilot readiness from
 ## Verification
 
 - `uv run ruff check app tests alembic/versions` — green.
-- `uv run pytest -q --ignore=tests/integration` — 356 passed at the current head.
+- `uv run pytest -q --ignore=tests/integration` — 358 passed at the current head.
 - `uv run python -m compileall -q app alembic tests` — green.
 - `uv run alembic upgrade head --sql` — PostgreSQL SQL generated through
-  `c5d9e7f1a203`.
+  `a0b1c2d3e456`.
 
 Remaining launch gates are external operational evidence: independent penetration
 testing, an observed encrypted-backup restore with measured RPO/RTO, legal/DPA

@@ -15,6 +15,7 @@ from app.core.config import settings
 from app.core.db import engine
 from app.core.logging import get_logger
 from app.services.automation import record_run
+from app.services.billing_reconciliation import reconcile_billing
 from app.services.closure import retry_pending_closures
 from app.services.messaging import retry_failed_deliveries
 from app.services.reconciliation import retry_failed_events
@@ -32,6 +33,7 @@ _JOB_LOCK_KEYS = {
     "payment_link_sync": 1,
     "retry_operations": 2,
     "service_heartbeat": 3,
+    "billing_reconciliation": 4,
 }
 
 
@@ -165,3 +167,19 @@ def service_heartbeat_job() -> None:
             _heartbeat(settings.ops_heartbeat_url, check="service")
     except Exception:
         log.exception("scheduler.heartbeat_failed", check="service")
+
+
+def billing_reconciliation_job() -> None:
+    """Compare signed-webhook billing state with Razorpay once per day."""
+    try:
+        with _only_one_runner("billing_reconciliation") as mine:
+            if not mine:
+                return
+            with record_run("billing_reconciliation") as detail:
+                with Session(engine) as session:
+                    report = reconcile_billing(session)
+                detail.update(report)
+                if report["status"] != "completed":
+                    log.warning("scheduler.billing_reconciliation_drift", **report)
+    except Exception:
+        log.exception("scheduler.billing_reconciliation_failed")

@@ -14,9 +14,11 @@ from app.models.billing import (
     BillingInvoice,
     BillingPaymentAttempt,
     BillingPlan,
+    BillingReconciliationRun,
     BillingRefund,
     BillingSubscription,
 )
+from app.models.collection_ledger import CollectionLedgerEntry
 from app.models.controls import (
     MerchantUsageBucket,
     ReminderPolicyVersion,
@@ -36,16 +38,24 @@ from app.models.iam import (
     MerchantMembership,
     MFAFactor,
     Permission,
+    ReauthChallenge,
     Role,
     RolePermission,
     UserPermissionOverride,
     UserSession,
 )
 from app.models.inbound_message import InboundMessage
-from app.models.integrations import ErpConnection, ErpRecord, ErpSyncRun, IntegrationFailure
+from app.models.integrations import (
+    ErpConnection,
+    ErpRecord,
+    ErpSyncRun,
+    ErpWebhookEvent,
+    IntegrationFailure,
+)
 from app.models.invoice import Invoice
 from app.models.job_run import JobRun, JobStatus
 from app.models.merchant import Merchant
+from app.models.oauth import OAuthState
 from app.models.operations import DataRequest
 from app.models.operator_account import OperatorAccount
 from app.models.payment_connection import PaymentConnection
@@ -67,6 +77,8 @@ __all__ = [
     "BillingPaymentAttempt",
     "BillingPlan",
     "BillingRefund",
+    "CollectionLedgerEntry",
+    "BillingReconciliationRun",
     "BillingSubscription",
     "AuthEvent",
     "AuthToken",
@@ -81,11 +93,13 @@ __all__ = [
     "ErpRecord",
     "ErpSyncRun",
     "IntegrationFailure",
+    "ErpWebhookEvent",
     "InboundMessage",
     "JobRun",
     "JobStatus",
     "Merchant",
     "DataRequest",
+    "OAuthState",
     "MerchantInvitation",
     "MerchantMembership",
     "MFAFactor",
@@ -104,6 +118,7 @@ __all__ = [
     "Reminder",
     "Role",
     "RolePermission",
+    "ReauthChallenge",
     "UserPermissionOverride",
     "User",
     "UserSession",

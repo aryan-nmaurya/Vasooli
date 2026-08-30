@@ -21,7 +21,14 @@ from app.core.passwords import (
     verify_live_password,
 )
 from app.core.security import create_session_token
-from app.models import AuthEvent, Merchant, MerchantMembership, User, UserSession
+from app.models import (
+    AuthEvent,
+    Merchant,
+    MerchantMembership,
+    MFAFactor,
+    User,
+    UserSession,
+)
 from app.services.auth import (
     ACCESS_TTL_SECONDS,
     LiveAuthError,
@@ -42,6 +49,9 @@ from app.services.authorization import (
     parse_live_access,
     set_merchant_context,
 )
+from app.services.mfa import new_secret, provisioning_uri, verify_code
+from app.services.payment_connections import decrypt_secret, encrypt_secret
+from app.services.reauth import consume_challenge, issue_challenge
 
 router = APIRouter(prefix="/api/live/auth", tags=["live-auth"])
 
@@ -82,10 +92,19 @@ class TokenRequest(BaseModel):
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=1, max_length=512)
+    otp: str | None = Field(default=None, min_length=6, max_length=8)
 
 
 class ForgotRequest(BaseModel):
     email: EmailStr
+
+
+class ReauthRequest(BaseModel):
+    password: str = Field(min_length=1, max_length=512)
+
+
+class ReauthVerifyRequest(BaseModel):
+    token: str = Field(min_length=20, max_length=200)
 
 
 class ResetRequest(TokenRequest):
@@ -241,7 +260,27 @@ def login(payload: LoginRequest, request: Request, response: Response, session: 
     now = utcnow()
     valid = user is not None and verify_live_password(payload.password, user.password_hash)
     locked = user is not None and user.locked_until is not None and user.locked_until > now
-    if user is None or not valid or locked or user.status != "active" or not user.is_email_verified:
+    mfa_factor = None
+    if user is not None:
+        mfa_factor = session.exec(
+            select(MFAFactor).where(
+                MFAFactor.user_id == user.id,
+                MFAFactor.verified_at.is_not(None),
+                MFAFactor.revoked_at.is_(None),  # type: ignore[union-attr]
+            )
+        ).first()
+    mfa_ok = mfa_factor is None or (
+        payload.otp is not None
+        and verify_code(decrypt_secret(mfa_factor.secret_encrypted or ""), payload.otp)
+    )
+    if (
+        user is None
+        or not valid
+        or locked
+        or user.status != "active"
+        or not user.is_email_verified
+        or not mfa_ok
+    ):
         if user is not None and not locked and not valid:
             user.failed_login_attempts += 1
             if user.failed_login_attempts >= MAX_FAILURES:
@@ -338,6 +377,116 @@ def _current_session(
     ):
         return None
     return user, row
+
+
+@router.post("/mfa/enroll")
+def enroll_mfa(
+    session: SessionDep,
+    access_token: Annotated[str | None, Cookie(alias=LIVE_ACCESS_COOKIE)] = None,
+) -> dict[str, str]:
+    current = _current_session(session, access_token)
+    if current is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Live authentication required")
+    user, _ = current
+    secret = new_secret()
+    factor = MFAFactor(
+        user_id=user.id,
+        factor_type="totp",
+        label="Authenticator app",
+        secret_encrypted=encrypt_secret(secret),
+    )
+    session.add(factor)
+    session.commit()
+    return {
+        "factor_id": str(factor.id),
+        "secret": secret,
+        "otpauth_uri": provisioning_uri(secret, user.email),
+    }
+
+
+@router.post("/mfa/verify")
+def verify_mfa(
+    code: str,
+    session: SessionDep,
+    access_token: Annotated[str | None, Cookie(alias=LIVE_ACCESS_COOKIE)] = None,
+) -> dict[str, str]:
+    current = _current_session(session, access_token)
+    if current is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Live authentication required")
+    factor = session.exec(
+        select(MFAFactor)
+        .where(
+            MFAFactor.user_id == current[0].id,
+            MFAFactor.revoked_at.is_(None),  # type: ignore[union-attr]
+        )
+        .order_by(MFAFactor.created_at.desc())
+    ).first()
+    if factor is None or not verify_code(decrypt_secret(factor.secret_encrypted or ""), code):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid authenticator code")
+    factor.verified_at = utcnow()
+    factor.is_primary = True
+    factor.last_used_at = utcnow()
+    session.add(factor)
+    session.commit()
+    return {"status": "verified"}
+
+
+@router.delete("/mfa")
+def disable_mfa(
+    session: SessionDep,
+    access_token: Annotated[str | None, Cookie(alias=LIVE_ACCESS_COOKIE)] = None,
+) -> dict[str, str]:
+    current = _current_session(session, access_token)
+    if current is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Live authentication required")
+    for factor in session.exec(
+        select(MFAFactor).where(
+            MFAFactor.user_id == current[0].id,
+            MFAFactor.revoked_at.is_(None),  # type: ignore[union-attr]
+        )
+    ).all():
+        factor.revoked_at = utcnow()
+        session.add(factor)
+    session.commit()
+    return {"status": "disabled"}
+
+
+@router.post("/reauth/challenge")
+def reauth_challenge(
+    payload: ReauthRequest,
+    session: SessionDep,
+    access_token: Annotated[str | None, Cookie(alias=LIVE_ACCESS_COOKIE)] = None,
+) -> dict[str, str | None]:
+    current = _current_session(session, access_token)
+    if current is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Live authentication required")
+    try:
+        token = issue_challenge(session, current[0], payload.password)
+    except ValueError as exc:
+        session.rollback()
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, str(exc)) from exc
+    session.commit()
+    # The token is intentionally short-lived and single-use. It must be returned to
+    # the authenticated client so the next sensitive request can present it in
+    # X-Reauth-Token; production transport is TLS-protected and no secret is logged.
+    return {"status": "issued", "reauth_token": token}
+
+
+@router.post("/reauth/verify")
+def reauth_verify(
+    payload: ReauthVerifyRequest,
+    session: SessionDep,
+    access_token: Annotated[str | None, Cookie(alias=LIVE_ACCESS_COOKIE)] = None,
+) -> dict[str, str]:
+    current = _current_session(session, access_token)
+    if current is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Live authentication required")
+    if not consume_challenge(session, current[0], payload.token):
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED, "Re-authentication token is invalid or expired"
+        )
+    session.commit()
+    return {"status": "verified"}
 
 
 @router.post("/logout")
