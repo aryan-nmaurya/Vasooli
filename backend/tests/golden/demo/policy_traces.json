@@ -1,0 +1,533 @@
+{
+  "trace_count": 8,
+  "traces": [
+    {
+      "days_overdue": 2,
+      "decision": {
+        "approved": false,
+        "checks": [
+          {
+            "detail": "Invoice status is chasing",
+            "name": "not_already_resolved",
+            "passed": true
+          },
+          {
+            "detail": "Outstanding balance is 1250000 paise",
+            "name": "amount_still_outstanding",
+            "passed": true
+          },
+          {
+            "detail": "Customer not flagged dispute-likely",
+            "name": "not_dispute_likely",
+            "passed": true
+          },
+          {
+            "detail": "No open dispute case",
+            "name": "no_open_dispute",
+            "passed": true
+          },
+          {
+            "detail": "Reminder count (0) < cap (3)",
+            "name": "reminder_cap",
+            "passed": true
+          },
+          {
+            "detail": "Days overdue (2) < Tier-1 threshold (3)",
+            "name": "cadence_due",
+            "passed": false
+          },
+          {
+            "detail": "No previous contact",
+            "name": "cooldown_respected",
+            "passed": true
+          },
+          {
+            "detail": "Tier 1 not yet sent",
+            "name": "tier_not_repeated",
+            "passed": true
+          },
+          {
+            "detail": "No active promise-to-pay in effect",
+            "name": "no_active_promise",
+            "passed": true
+          },
+          {
+            "detail": "No banned phrases in drafted message",
+            "name": "no_banned_language",
+            "passed": true
+          }
+        ],
+        "invoice_number": "INV-3001",
+        "proposed_tier": 1,
+        "reason": "Days overdue (2) < Tier-1 threshold (3)",
+        "rendered": "Invoice: INV-3001\nProposed action: Send Tier-1 reminder\n✓ Invoice status is chasing\n✓ Outstanding balance is 1250000 paise\n✓ Customer not flagged dispute-likely\n✓ No open dispute case\n✓ Reminder count (0) < cap (3)\n✗ Days overdue (2) < Tier-1 threshold (3)\n✓ No previous contact\n✓ Tier 1 not yet sent\n✓ No active promise-to-pay in effect\n✓ No banned phrases in drafted message\nResult: HOLD\nReason: Days overdue (2) < Tier-1 threshold (3)",
+        "required_action": "hold"
+      },
+      "diagnosis": "oversight",
+      "draft_tone": "polite",
+      "invoice_number": "INV-3001"
+    },
+    {
+      "days_overdue": 3,
+      "decision": {
+        "approved": true,
+        "checks": [
+          {
+            "detail": "Invoice status is chasing",
+            "name": "not_already_resolved",
+            "passed": true
+          },
+          {
+            "detail": "Outstanding balance is 1800000 paise",
+            "name": "amount_still_outstanding",
+            "passed": true
+          },
+          {
+            "detail": "Customer not flagged dispute-likely",
+            "name": "not_dispute_likely",
+            "passed": true
+          },
+          {
+            "detail": "No open dispute case",
+            "name": "no_open_dispute",
+            "passed": true
+          },
+          {
+            "detail": "Reminder count (0) < cap (3)",
+            "name": "reminder_cap",
+            "passed": true
+          },
+          {
+            "detail": "Days overdue (3) ≥ Tier-1 threshold (3)",
+            "name": "cadence_due",
+            "passed": true
+          },
+          {
+            "detail": "No previous contact",
+            "name": "cooldown_respected",
+            "passed": true
+          },
+          {
+            "detail": "Tier 1 not yet sent",
+            "name": "tier_not_repeated",
+            "passed": true
+          },
+          {
+            "detail": "No active promise-to-pay in effect",
+            "name": "no_active_promise",
+            "passed": true
+          },
+          {
+            "detail": "No banned phrases in drafted message",
+            "name": "no_banned_language",
+            "passed": true
+          }
+        ],
+        "invoice_number": "INV-3002",
+        "proposed_tier": 1,
+        "reason": "All policy checks passed",
+        "rendered": "Invoice: INV-3002\nProposed action: Send Tier-1 reminder\n✓ Invoice status is chasing\n✓ Outstanding balance is 1800000 paise\n✓ Customer not flagged dispute-likely\n✓ No open dispute case\n✓ Reminder count (0) < cap (3)\n✓ Days overdue (3) ≥ Tier-1 threshold (3)\n✓ No previous contact\n✓ Tier 1 not yet sent\n✓ No active promise-to-pay in effect\n✓ No banned phrases in drafted message\nResult: APPROVED",
+        "required_action": "send"
+      },
+      "diagnosis": "oversight",
+      "draft_tone": "polite",
+      "invoice_number": "INV-3002"
+    },
+    {
+      "days_overdue": 10,
+      "decision": {
+        "approved": true,
+        "checks": [
+          {
+            "detail": "Invoice status is chasing",
+            "name": "not_already_resolved",
+            "passed": true
+          },
+          {
+            "detail": "Outstanding balance is 3400000 paise",
+            "name": "amount_still_outstanding",
+            "passed": true
+          },
+          {
+            "detail": "Customer not flagged dispute-likely",
+            "name": "not_dispute_likely",
+            "passed": true
+          },
+          {
+            "detail": "No open dispute case",
+            "name": "no_open_dispute",
+            "passed": true
+          },
+          {
+            "detail": "Reminder count (0) < cap (3)",
+            "name": "reminder_cap",
+            "passed": true
+          },
+          {
+            "detail": "Days overdue (10) ≥ Tier-2 threshold (10)",
+            "name": "cadence_due",
+            "passed": true
+          },
+          {
+            "detail": "No previous contact",
+            "name": "cooldown_respected",
+            "passed": true
+          },
+          {
+            "detail": "Tier 2 not yet sent",
+            "name": "tier_not_repeated",
+            "passed": true
+          },
+          {
+            "detail": "No active promise-to-pay in effect",
+            "name": "no_active_promise",
+            "passed": true
+          },
+          {
+            "detail": "No banned phrases in drafted message",
+            "name": "no_banned_language",
+            "passed": true
+          }
+        ],
+        "invoice_number": "INV-3003",
+        "proposed_tier": 2,
+        "reason": "All policy checks passed",
+        "rendered": "Invoice: INV-3003\nProposed action: Send Tier-2 reminder\n✓ Invoice status is chasing\n✓ Outstanding balance is 3400000 paise\n✓ Customer not flagged dispute-likely\n✓ No open dispute case\n✓ Reminder count (0) < cap (3)\n✓ Days overdue (10) ≥ Tier-2 threshold (10)\n✓ No previous contact\n✓ Tier 2 not yet sent\n✓ No active promise-to-pay in effect\n✓ No banned phrases in drafted message\nResult: APPROVED",
+        "required_action": "send"
+      },
+      "diagnosis": "cash_constrained",
+      "draft_tone": "firm",
+      "invoice_number": "INV-3003"
+    },
+    {
+      "days_overdue": 21,
+      "decision": {
+        "approved": true,
+        "checks": [
+          {
+            "detail": "Invoice status is chasing",
+            "name": "not_already_resolved",
+            "passed": true
+          },
+          {
+            "detail": "Outstanding balance is 2750000 paise",
+            "name": "amount_still_outstanding",
+            "passed": true
+          },
+          {
+            "detail": "Customer not flagged dispute-likely",
+            "name": "not_dispute_likely",
+            "passed": true
+          },
+          {
+            "detail": "No open dispute case",
+            "name": "no_open_dispute",
+            "passed": true
+          },
+          {
+            "detail": "Reminder count (0) < cap (3)",
+            "name": "reminder_cap",
+            "passed": true
+          },
+          {
+            "detail": "Days overdue (21) ≥ Tier-3 threshold (21)",
+            "name": "cadence_due",
+            "passed": true
+          },
+          {
+            "detail": "No previous contact",
+            "name": "cooldown_respected",
+            "passed": true
+          },
+          {
+            "detail": "Tier 3 not yet sent",
+            "name": "tier_not_repeated",
+            "passed": true
+          },
+          {
+            "detail": "No active promise-to-pay in effect",
+            "name": "no_active_promise",
+            "passed": true
+          },
+          {
+            "detail": "No banned phrases in drafted message",
+            "name": "no_banned_language",
+            "passed": true
+          }
+        ],
+        "invoice_number": "INV-3004",
+        "proposed_tier": 3,
+        "reason": "All policy checks passed",
+        "rendered": "Invoice: INV-3004\nProposed action: Send Tier-3 reminder\n✓ Invoice status is chasing\n✓ Outstanding balance is 2750000 paise\n✓ Customer not flagged dispute-likely\n✓ No open dispute case\n✓ Reminder count (0) < cap (3)\n✓ Days overdue (21) ≥ Tier-3 threshold (21)\n✓ No previous contact\n✓ Tier 3 not yet sent\n✓ No active promise-to-pay in effect\n✓ No banned phrases in drafted message\nResult: APPROVED",
+        "required_action": "send"
+      },
+      "diagnosis": "unresponsive",
+      "draft_tone": "final",
+      "invoice_number": "INV-3004"
+    },
+    {
+      "days_overdue": 12,
+      "decision": {
+        "approved": false,
+        "checks": [
+          {
+            "detail": "Invoice status is chasing",
+            "name": "not_already_resolved",
+            "passed": true
+          },
+          {
+            "detail": "Outstanding balance is 4100000 paise",
+            "name": "amount_still_outstanding",
+            "passed": true
+          },
+          {
+            "detail": "Customer flagged dispute-likely — automated cadence does not apply",
+            "name": "not_dispute_likely",
+            "passed": false
+          },
+          {
+            "detail": "No open dispute case",
+            "name": "no_open_dispute",
+            "passed": true
+          },
+          {
+            "detail": "Reminder count (0) < cap (3)",
+            "name": "reminder_cap",
+            "passed": true
+          },
+          {
+            "detail": "Days overdue (12) ≥ Tier-2 threshold (10)",
+            "name": "cadence_due",
+            "passed": true
+          },
+          {
+            "detail": "No previous contact",
+            "name": "cooldown_respected",
+            "passed": true
+          },
+          {
+            "detail": "Tier 2 not yet sent",
+            "name": "tier_not_repeated",
+            "passed": true
+          },
+          {
+            "detail": "No active promise-to-pay in effect",
+            "name": "no_active_promise",
+            "passed": true
+          },
+          {
+            "detail": "No banned phrases in drafted message",
+            "name": "no_banned_language",
+            "passed": true
+          }
+        ],
+        "invoice_number": "INV-3005",
+        "proposed_tier": 2,
+        "reason": "Customer flagged dispute-likely — automated cadence does not apply",
+        "rendered": "Invoice: INV-3005\nProposed action: Send Tier-2 reminder\n✓ Invoice status is chasing\n✓ Outstanding balance is 4100000 paise\n✗ Customer flagged dispute-likely — automated cadence does not apply\n✓ No open dispute case\n✓ Reminder count (0) < cap (3)\n✓ Days overdue (12) ≥ Tier-2 threshold (10)\n✓ No previous contact\n✓ Tier 2 not yet sent\n✓ No active promise-to-pay in effect\n✓ No banned phrases in drafted message\nResult: ESCALATE_TO_HUMAN\nReason: Customer flagged dispute-likely — automated cadence does not apply",
+        "required_action": "escalate_to_human"
+      },
+      "diagnosis": "dispute_likely",
+      "draft_tone": "firm",
+      "invoice_number": "INV-3005"
+    },
+    {
+      "days_overdue": 15,
+      "decision": {
+        "approved": true,
+        "checks": [
+          {
+            "detail": "Invoice status is chasing",
+            "name": "not_already_resolved",
+            "passed": true
+          },
+          {
+            "detail": "Outstanding balance is 2200000 paise",
+            "name": "amount_still_outstanding",
+            "passed": true
+          },
+          {
+            "detail": "Customer not flagged dispute-likely",
+            "name": "not_dispute_likely",
+            "passed": true
+          },
+          {
+            "detail": "No open dispute case",
+            "name": "no_open_dispute",
+            "passed": true
+          },
+          {
+            "detail": "Reminder count (0) < cap (3)",
+            "name": "reminder_cap",
+            "passed": true
+          },
+          {
+            "detail": "Days overdue (15) ≥ Tier-2 threshold (10)",
+            "name": "cadence_due",
+            "passed": true
+          },
+          {
+            "detail": "No previous contact",
+            "name": "cooldown_respected",
+            "passed": true
+          },
+          {
+            "detail": "Tier 2 not yet sent",
+            "name": "tier_not_repeated",
+            "passed": true
+          },
+          {
+            "detail": "No active promise-to-pay in effect",
+            "name": "no_active_promise",
+            "passed": true
+          },
+          {
+            "detail": "No banned phrases in drafted message",
+            "name": "no_banned_language",
+            "passed": true
+          }
+        ],
+        "invoice_number": "INV-3006",
+        "proposed_tier": 2,
+        "reason": "All policy checks passed",
+        "rendered": "Invoice: INV-3006\nProposed action: Send Tier-2 reminder\n✓ Invoice status is chasing\n✓ Outstanding balance is 2200000 paise\n✓ Customer not flagged dispute-likely\n✓ No open dispute case\n✓ Reminder count (0) < cap (3)\n✓ Days overdue (15) ≥ Tier-2 threshold (10)\n✓ No previous contact\n✓ Tier 2 not yet sent\n✓ No active promise-to-pay in effect\n✓ No banned phrases in drafted message\nResult: APPROVED",
+        "required_action": "send"
+      },
+      "diagnosis": "cash_constrained",
+      "draft_tone": "firm",
+      "invoice_number": "INV-3006"
+    },
+    {
+      "days_overdue": 30,
+      "decision": {
+        "approved": true,
+        "checks": [
+          {
+            "detail": "Invoice status is chasing",
+            "name": "not_already_resolved",
+            "passed": true
+          },
+          {
+            "detail": "Outstanding balance is 1650000 paise",
+            "name": "amount_still_outstanding",
+            "passed": true
+          },
+          {
+            "detail": "Customer not flagged dispute-likely",
+            "name": "not_dispute_likely",
+            "passed": true
+          },
+          {
+            "detail": "No open dispute case",
+            "name": "no_open_dispute",
+            "passed": true
+          },
+          {
+            "detail": "Reminder count (0) < cap (3)",
+            "name": "reminder_cap",
+            "passed": true
+          },
+          {
+            "detail": "Days overdue (30) ≥ Tier-3 threshold (21)",
+            "name": "cadence_due",
+            "passed": true
+          },
+          {
+            "detail": "No previous contact",
+            "name": "cooldown_respected",
+            "passed": true
+          },
+          {
+            "detail": "Tier 3 not yet sent",
+            "name": "tier_not_repeated",
+            "passed": true
+          },
+          {
+            "detail": "No active promise-to-pay in effect",
+            "name": "no_active_promise",
+            "passed": true
+          },
+          {
+            "detail": "No banned phrases in drafted message",
+            "name": "no_banned_language",
+            "passed": true
+          }
+        ],
+        "invoice_number": "INV-3007",
+        "proposed_tier": 3,
+        "reason": "All policy checks passed",
+        "rendered": "Invoice: INV-3007\nProposed action: Send Tier-3 reminder\n✓ Invoice status is chasing\n✓ Outstanding balance is 1650000 paise\n✓ Customer not flagged dispute-likely\n✓ No open dispute case\n✓ Reminder count (0) < cap (3)\n✓ Days overdue (30) ≥ Tier-3 threshold (21)\n✓ No previous contact\n✓ Tier 3 not yet sent\n✓ No active promise-to-pay in effect\n✓ No banned phrases in drafted message\nResult: APPROVED",
+        "required_action": "send"
+      },
+      "diagnosis": "cash_constrained",
+      "draft_tone": "final",
+      "invoice_number": "INV-3007"
+    },
+    {
+      "days_overdue": 8,
+      "decision": {
+        "approved": true,
+        "checks": [
+          {
+            "detail": "Invoice status is chasing",
+            "name": "not_already_resolved",
+            "passed": true
+          },
+          {
+            "detail": "Outstanding balance is 950000 paise",
+            "name": "amount_still_outstanding",
+            "passed": true
+          },
+          {
+            "detail": "Customer not flagged dispute-likely",
+            "name": "not_dispute_likely",
+            "passed": true
+          },
+          {
+            "detail": "No open dispute case",
+            "name": "no_open_dispute",
+            "passed": true
+          },
+          {
+            "detail": "Reminder count (0) < cap (3)",
+            "name": "reminder_cap",
+            "passed": true
+          },
+          {
+            "detail": "Days overdue (8) ≥ Tier-1 threshold (3)",
+            "name": "cadence_due",
+            "passed": true
+          },
+          {
+            "detail": "No previous contact",
+            "name": "cooldown_respected",
+            "passed": true
+          },
+          {
+            "detail": "Tier 1 not yet sent",
+            "name": "tier_not_repeated",
+            "passed": true
+          },
+          {
+            "detail": "No active promise-to-pay in effect",
+            "name": "no_active_promise",
+            "passed": true
+          },
+          {
+            "detail": "No banned phrases in drafted message",
+            "name": "no_banned_language",
+            "passed": true
+          }
+        ],
+        "invoice_number": "INV-3008",
+        "proposed_tier": 1,
+        "reason": "All policy checks passed",
+        "rendered": "Invoice: INV-3008\nProposed action: Send Tier-1 reminder\n✓ Invoice status is chasing\n✓ Outstanding balance is 950000 paise\n✓ Customer not flagged dispute-likely\n✓ No open dispute case\n✓ Reminder count (0) < cap (3)\n✓ Days overdue (8) ≥ Tier-1 threshold (3)\n✓ No previous contact\n✓ Tier 1 not yet sent\n✓ No active promise-to-pay in effect\n✓ No banned phrases in drafted message\nResult: APPROVED",
+        "required_action": "send"
+      },
+      "diagnosis": "cash_constrained",
+      "draft_tone": "polite",
+      "invoice_number": "INV-3008"
+    }
+  ]
+}

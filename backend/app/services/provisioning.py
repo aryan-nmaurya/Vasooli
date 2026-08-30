@@ -34,6 +34,7 @@ from app.models import (
     AuditLog,
     Customer,
     Invoice,
+    Merchant,
     PaymentLink,
     PaymentLinkStatus,
 )
@@ -45,15 +46,13 @@ class ProvisioningError(Exception):
     """Provisioning failed for a reason worth reporting to a human."""
 
 
-def reference_id_for(invoice: Invoice) -> str:
+def reference_id_for(invoice: Invoice, *, is_demo: bool = True) -> str:
     """A stable, human-readable id echoed back by Razorpay.
 
-    Derived from the invoice number rather than random, so the same invoice always
-    produces the same reference — which means a retry after a timeout that Razorpay
-    actually processed is rejected as a duplicate rather than silently creating a
-    second link.
+    Live invoices use their globally unique UUID; demo invoices retain the frozen,
+    human-readable invoice-number reference.
     """
-    return f"vsl-{invoice.invoice_number}"
+    return f"vsl-{invoice.invoice_number}" if is_demo else f"vsl-{invoice.id.hex}"
 
 
 def get_existing_link(session: Session, invoice_id: uuid.UUID) -> PaymentLink | None:
@@ -128,7 +127,10 @@ def provision_for_invoice(
     if customer is None:
         raise ProvisioningError(f"invoice {invoice.invoice_number} has no customer")
 
-    reference_id = reference_id_for(invoice)
+    merchant = session.get(Merchant, invoice.merchant_id)
+    if merchant is None:
+        raise ProvisioningError(f"invoice {invoice.invoice_number} has no merchant")
+    reference_id = reference_id_for(invoice, is_demo=merchant.is_demo)
 
     try:
         result = _create_or_adopt(client, invoice, customer, reference_id)

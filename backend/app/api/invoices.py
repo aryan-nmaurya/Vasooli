@@ -8,7 +8,7 @@ from sqlmodel import select
 from app.api.deps import OperatorRequired
 from app.core.db import SessionDep
 from app.core.middleware import UPLOAD_BODY_BYTES
-from app.models import Customer, Invoice, PaymentLink
+from app.models import Customer, Invoice, Merchant, PaymentLink
 from app.schemas.invoice import BatchIngestRequest, BatchIngestResponse, InvoiceRead
 from app.services.csv_import import LedgerFileError, parse_ledger, template_csv
 from app.services.ingestion import ingest_batch
@@ -38,7 +38,8 @@ def ingest_invoices(payload: BatchIngestRequest, session: SessionDep) -> BatchIn
 @router.get("/{invoice_id}", response_model=InvoiceRead)
 def get_invoice(invoice_id: uuid.UUID, session: SessionDep) -> InvoiceRead:
     invoice = session.get(Invoice, invoice_id)
-    if invoice is None:
+    merchant = session.get(Merchant, invoice.merchant_id) if invoice else None
+    if invoice is None or merchant is None or not merchant.is_demo:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Invoice not found")
     customer = session.get(Customer, invoice.customer_id)
     link = session.exec(select(PaymentLink).where(PaymentLink.invoice_id == invoice.id)).first()
@@ -51,7 +52,12 @@ def get_invoice(invoice_id: uuid.UUID, session: SessionDep) -> InvoiceRead:
 def list_invoices(session: SessionDep, limit: int = 50, offset: int = 0) -> list[InvoiceRead]:
     """Minimal listing so Phase 2 is verifiable. Filtering lands in Phase 9."""
     invoices = session.exec(
-        select(Invoice).order_by(Invoice.due_at).offset(offset).limit(min(limit, 200))
+        select(Invoice)
+        .join(Merchant)
+        .where(Merchant.is_demo.is_(True))  # type: ignore[union-attr]
+        .order_by(Invoice.due_at)
+        .offset(offset)
+        .limit(min(limit, 200))
     ).all()
     names = {c.id: c.name for c in session.exec(select(Customer)).all()}
     links = {pl.invoice_id: pl for pl in session.exec(select(PaymentLink)).all()}
@@ -69,6 +75,10 @@ def provision_invoice(invoice_id: uuid.UUID, session: SessionDep) -> dict[str, s
 
     Idempotent, so the dashboard's retry button is safe to press twice.
     """
+    invoice = session.get(Invoice, invoice_id)
+    merchant = session.get(Merchant, invoice.merchant_id) if invoice else None
+    if invoice is None or merchant is None or not merchant.is_demo:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Invoice not found")
     try:
         link = provision_for_invoice(session, invoice_id)
     except ProvisioningError as exc:
@@ -163,7 +173,10 @@ async def import_ledger(
         existing = set(
             session.exec(
                 select(Invoice.invoice_number).where(
-                    Invoice.invoice_number.in_([r.invoice_number for r in parsed.rows])  # type: ignore[attr-defined]
+                    Invoice.invoice_number.in_([r.invoice_number for r in parsed.rows]),  # type: ignore[attr-defined]
+                    Invoice.merchant_id.in_(  # type: ignore[attr-defined]
+                        select(Merchant.id).where(Merchant.is_demo.is_(True))  # type: ignore[union-attr]
+                    ),
                 )
             ).all()
         )

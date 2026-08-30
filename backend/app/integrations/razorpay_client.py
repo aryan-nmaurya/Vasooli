@@ -260,6 +260,23 @@ class RazorpayClient:
         log.info("razorpay.payment_link_cancelled", link_id=link_id)
         return result
 
+    @retry(**_RETRY)
+    def create_subscription(
+        self, *, plan_id: str, total_count: int = 12, customer_notify: bool = True
+    ) -> dict[str, Any]:
+        """Create a Vasooli subscription against the platform Razorpay account."""
+        return self._call(
+            self._client.subscription.create,
+            {
+                "plan_id": plan_id,
+                "total_count": total_count,
+                "customer_notify": 1 if customer_notify else 0,
+            },
+        )
 
-def get_razorpay_client() -> RazorpayClient:
-    return RazorpayClient()
+
+def get_razorpay_client(
+    *, key_id: str | None = None, key_secret: str | None = None
+) -> RazorpayClient:
+    """Build a client for the platform account or a merchant's BYO credentials."""
+    return RazorpayClient(key_id=key_id, key_secret=key_secret)

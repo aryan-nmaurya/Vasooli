@@ -27,7 +27,7 @@ from app.core.logging import get_logger
 from app.core.runtime import effective_email_redirect
 from app.integrations.email.base import EmailProvider
 from app.integrations.email.resend_client import ResendProvider
-from app.models import AuditAction, AuditActor, AuditLog, Customer, Invoice, Reminder
+from app.models import AuditAction, AuditActor, AuditLog, Customer, Invoice, Merchant, Reminder
 from app.models.reminder import MAX_DELIVERY_ATTEMPTS
 from app.policy import PolicyDecision
 from app.services.disputes import has_open_dispute
@@ -73,8 +73,15 @@ def _subject_for(subject: str, intended_for: str | None) -> str:
     return f"[→ {intended_for}] {subject}" if intended_for else subject
 
 
-def reply_address_for(invoice_number: str) -> str:
-    """A stable, provider-routable address that binds replies to one invoice."""
+def reply_address_for(
+    invoice_number: str,
+    *,
+    reply_token: uuid.UUID | None = None,
+    is_demo: bool = True,
+) -> str:
+    """A stable address: legacy for demo, non-enumerable and tenant-safe for live."""
+    if not is_demo and reply_token is not None:
+        return f"reply-{reply_token.hex}@{settings.email_reply_to_domain}"
     local_invoice = re.sub(r"[^a-z0-9-]", "-", invoice_number.casefold()).strip("-")
     return f"invoice-{local_invoice}@{settings.email_reply_to_domain}"
 
@@ -106,6 +113,7 @@ def _send_email(
     invoice_number: str,
     idempotency_key: str,
     provider: EmailProvider | None = None,
+    reply_to: str | None = None,
 ) -> DeliveryResult:
     """Hand the message to a provider, or record it in dry-run."""
     recipient, intended_for = resolve_recipient(to)
@@ -129,7 +137,7 @@ def _send_email(
         html=render_html(body),
         text=body,
         headers={"X-Vasooli-Invoice": invoice_number},
-        reply_to=reply_address_for(invoice_number),
+        reply_to=reply_to or reply_address_for(invoice_number),
         idempotency_key=idempotency_key,
     )
     return DeliveryResult(
@@ -353,15 +361,29 @@ def _dispatch_reminder(
         )
         return claimed, None
 
+    merchant = session.get(Merchant, fresh.merchant_id)
     try:
-        result = _send_email(
-            to=customer.email,
-            subject=reminder.subject,
-            body=reminder.body,
-            invoice_number=invoice.invoice_number,
-            idempotency_key=f"vasooli-reminder-{reminder.id}",
-            provider=provider,
-        )
+        if merchant is None:
+            result = DeliveryResult(
+                sent=False,
+                provider=getattr(provider, "name", "unknown"),
+                error="invoice merchant missing",
+                retryable=False,
+            )
+        else:
+            result = _send_email(
+                to=customer.email,
+                subject=reminder.subject,
+                body=reminder.body,
+                invoice_number=fresh.invoice_number,
+                idempotency_key=f"vasooli-reminder-{reminder.id}",
+                provider=provider,
+                reply_to=reply_address_for(
+                    fresh.invoice_number,
+                    reply_token=fresh.reply_token,
+                    is_demo=merchant.is_demo,
+                ),
+            )
     except Exception as exc:  # provider adapters should return failures, but fail safe
         result = DeliveryResult(
             sent=False,

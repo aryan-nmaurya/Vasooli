@@ -9,13 +9,18 @@ from sqlmodel import Session
 from app.api import (
     admin,
     auth,
+    billing,
     dashboard,
     demo,
     exports,
     health,
     invoices,
+    live_auth,
+    live_invoices,
+    payment_connections,
     payments,
     replies,
+    team,
     webhooks,
 )
 from app.core.config import settings
@@ -101,6 +106,11 @@ def create_app() -> FastAPI:
 
     app.include_router(health.router)
     app.include_router(auth.router)
+    app.include_router(live_auth.router)
+    app.include_router(billing.router)
+    app.include_router(payment_connections.router)
+    app.include_router(team.router)
+    app.include_router(live_invoices.router)
     app.include_router(invoices.router)
     app.include_router(webhooks.router)
     app.include_router(admin.router)

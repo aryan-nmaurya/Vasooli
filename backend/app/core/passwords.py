@@ -10,10 +10,25 @@ import base64
 import hashlib
 import secrets
 
+from argon2 import PasswordHasher
+from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
+from argon2.low_level import Type
+
 SCRYPT_N = 2**14
 SCRYPT_R = 8
 SCRYPT_P = 1
 SCRYPT_DKLEN = 32
+
+# OWASP's Argon2id baseline: 19 MiB memory, two iterations, one lane. Kept separate
+# from demo scrypt hashes so the frozen operator credentials do not change format.
+_LIVE_HASHER = PasswordHasher(
+    time_cost=2,
+    memory_cost=19 * 1024,
+    parallelism=1,
+    hash_len=32,
+    salt_len=16,
+    type=Type.ID,
+)
 
 
 def _derive(password: str, salt: bytes, *, n: int, r: int, p: int) -> bytes:
@@ -70,3 +85,23 @@ def perform_dummy_password_check(password: str) -> None:
     though the HTTP status and body are deliberately identical.
     """
     _derive(password, b"vasooli-login-dummy", n=SCRYPT_N, r=SCRYPT_R, p=SCRYPT_P)
+
+
+def hash_live_password(password: str) -> str:
+    """Argon2id for live email identities."""
+
+    return _LIVE_HASHER.hash(password)
+
+
+def verify_live_password(password: str, encoded: str) -> bool:
+    try:
+        return _LIVE_HASHER.verify(encoded, password)
+    except (InvalidHashError, VerificationError, VerifyMismatchError):
+        return False
+
+
+def live_password_needs_rehash(encoded: str) -> bool:
+    try:
+        return _LIVE_HASHER.check_needs_rehash(encoded)
+    except InvalidHashError:
+        return True

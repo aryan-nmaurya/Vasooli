@@ -48,6 +48,7 @@ from app.models import (
 from app.policy import RequiredAction, evaluate_reminder, next_tier_for
 from app.policy.banned_language import find_banned_phrases
 from app.services.ai_audit import AITask, record_ai_outcome
+from app.services.billing import subscription_is_active
 from app.services.closure import retry_pending_closures
 from app.services.disputes import has_open_dispute
 from app.services.messaging import deliver_reminder, retry_failed_deliveries
@@ -403,6 +404,14 @@ def _process_invoice(
     use_llm: bool,
 ) -> None:
     """Decide and act on one invoice. Committed by the caller."""
+    merchant = session.get(Merchant, invoice.merchant_id)
+    if merchant is None:
+        report.held += 1
+        return
+    if merchant.mode == "live" and not subscription_is_active(session, merchant.id):
+        log.info("recovery.held_billing_inactive", merchant_id=str(merchant.id))
+        report.held += 1
+        return
     days_overdue = days_overdue_for(invoice.due_at)
     # Successfully DELIVERED tiers only. A reminder row whose send failed has
     # `sent_at` NULL and must not count: counting it made the cycle believe the tier

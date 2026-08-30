@@ -1,0 +1,1788 @@
+{
+  "endpoint_count": 45,
+  "endpoints": {
+    "GET /api/auth/modes": {
+      "body": {
+        "reviewer_access": false
+      },
+      "content_type": "application/json",
+      "status": 200
+    },
+    "GET /api/dashboard/audit?limit=200": {
+      "body": [
+        {
+          "action": "payment_link_created",
+          "actor": "razorpay",
+          "at": "<datetime>",
+          "detail": {
+            "amount_paise": 950000,
+            "invoice_number": "INV-3008",
+            "payment_link_id": "plink_BASELINE_INV_3008",
+            "reference_id": "vsl-INV-3008",
+            "short_url": "https://rzp.io/rzp/baseline-inv-3008"
+          },
+          "invoice_number": "INV-3008",
+          "provenance": "razorpay",
+          "summary": "Payment link created"
+        },
+        {
+          "action": "payment_link_created",
+          "actor": "razorpay",
+          "at": "<datetime>",
+          "detail": {
+            "amount_paise": 1650000,
+            "invoice_number": "INV-3007",
+            "payment_link_id": "plink_BASELINE_INV_3007",
+            "reference_id": "vsl-INV-3007",
+            "short_url": "https://rzp.io/rzp/baseline-inv-3007"
+          },
+          "invoice_number": "INV-3007",
+          "provenance": "razorpay",
+          "summary": "Payment link created"
+        },
+        {
+          "action": "payment_link_created",
+          "actor": "razorpay",
+          "at": "<datetime>",
+          "detail": {
+            "amount_paise": 2200000,
+            "invoice_number": "INV-3006",
+            "payment_link_id": "plink_BASELINE_INV_3006",
+            "reference_id": "vsl-INV-3006",
+            "short_url": "https://rzp.io/rzp/baseline-inv-3006"
+          },
+          "invoice_number": "INV-3006",
+          "provenance": "razorpay",
+          "summary": "Payment link created"
+        },
+        {
+          "action": "payment_link_created",
+          "actor": "razorpay",
+          "at": "<datetime>",
+          "detail": {
+            "amount_paise": 4100000,
+            "invoice_number": "INV-3005",
+            "payment_link_id": "plink_BASELINE_INV_3005",
+            "reference_id": "vsl-INV-3005",
+            "short_url": "https://rzp.io/rzp/baseline-inv-3005"
+          },
+          "invoice_number": "INV-3005",
+          "provenance": "razorpay",
+          "summary": "Payment link created"
+        },
+        {
+          "action": "payment_link_created",
+          "actor": "razorpay",
+          "at": "<datetime>",
+          "detail": {
+            "amount_paise": 2750000,
+            "invoice_number": "INV-3004",
+            "payment_link_id": "plink_BASELINE_INV_3004",
+            "reference_id": "vsl-INV-3004",
+            "short_url": "https://rzp.io/rzp/baseline-inv-3004"
+          },
+          "invoice_number": "INV-3004",
+          "provenance": "razorpay",
+          "summary": "Payment link created"
+        },
+        {
+          "action": "payment_link_created",
+          "actor": "razorpay",
+          "at": "<datetime>",
+          "detail": {
+            "amount_paise": 3400000,
+            "invoice_number": "INV-3003",
+            "payment_link_id": "plink_BASELINE_INV_3003",
+            "reference_id": "vsl-INV-3003",
+            "short_url": "https://rzp.io/rzp/baseline-inv-3003"
+          },
+          "invoice_number": "INV-3003",
+          "provenance": "razorpay",
+          "summary": "Payment link created"
+        },
+        {
+          "action": "payment_link_created",
+          "actor": "razorpay",
+          "at": "<datetime>",
+          "detail": {
+            "amount_paise": 1800000,
+            "invoice_number": "INV-3002",
+            "payment_link_id": "plink_BASELINE_INV_3002",
+            "reference_id": "vsl-INV-3002",
+            "short_url": "https://rzp.io/rzp/baseline-inv-3002"
+          },
+          "invoice_number": "INV-3002",
+          "provenance": "razorpay",
+          "summary": "Payment link created"
+        },
+        {
+          "action": "payment_link_created",
+          "actor": "razorpay",
+          "at": "<datetime>",
+          "detail": {
+            "amount_paise": 1250000,
+            "invoice_number": "INV-3001",
+            "payment_link_id": "plink_BASELINE_INV_3001",
+            "reference_id": "vsl-INV-3001",
+            "short_url": "https://rzp.io/rzp/baseline-inv-3001"
+          },
+          "invoice_number": "INV-3001",
+          "provenance": "razorpay",
+          "summary": "Payment link created"
+        },
+        {
+          "action": "invoice_ingested",
+          "actor": "system",
+          "at": "<datetime>",
+          "detail": {
+            "amount_paise": 950000,
+            "days_overdue": 8,
+            "invoice_number": "INV-3008",
+            "rebased": true,
+            "status": "chasing"
+          },
+          "invoice_number": "INV-3008",
+          "provenance": "system",
+          "summary": "Invoice ingested"
+        },
+        {
+          "action": "invoice_ingested",
+          "actor": "system",
+          "at": "<datetime>",
+          "detail": {
+            "amount_paise": 1650000,
+            "days_overdue": 30,
+            "invoice_number": "INV-3007",
+            "rebased": true,
+            "status": "chasing"
+          },
+          "invoice_number": "INV-3007",
+          "provenance": "system",
+          "summary": "Invoice ingested"
+        },
+        {
+          "action": "invoice_ingested",
+          "actor": "system",
+          "at": "<datetime>",
+          "detail": {
+            "amount_paise": 2200000,
+            "days_overdue": 15,
+            "invoice_number": "INV-3006",
+            "rebased": true,
+            "status": "chasing"
+          },
+          "invoice_number": "INV-3006",
+          "provenance": "system",
+          "summary": "Invoice ingested"
+        },
+        {
+          "action": "invoice_ingested",
+          "actor": "system",
+          "at": "<datetime>",
+          "detail": {
+            "amount_paise": 4100000,
+            "days_overdue": 12,
+            "invoice_number": "INV-3005",
+            "rebased": true,
+            "status": "chasing"
+          },
+          "invoice_number": "INV-3005",
+          "provenance": "system",
+          "summary": "Invoice ingested"
+        },
+        {
+          "action": "invoice_ingested",
+          "actor": "system",
+          "at": "<datetime>",
+          "detail": {
+            "amount_paise": 2750000,
+            "days_overdue": 21,
+            "invoice_number": "INV-3004",
+            "rebased": true,
+            "status": "chasing"
+          },
+          "invoice_number": "INV-3004",
+          "provenance": "system",
+          "summary": "Invoice ingested"
+        },
+        {
+          "action": "invoice_ingested",
+          "actor": "system",
+          "at": "<datetime>",
+          "detail": {
+            "amount_paise": 3400000,
+            "days_overdue": 10,
+            "invoice_number": "INV-3003",
+            "rebased": true,
+            "status": "chasing"
+          },
+          "invoice_number": "INV-3003",
+          "provenance": "system",
+          "summary": "Invoice ingested"
+        },
+        {
+          "action": "invoice_ingested",
+          "actor": "system",
+          "at": "<datetime>",
+          "detail": {
+            "amount_paise": 1800000,
+            "days_overdue": 3,
+            "invoice_number": "INV-3002",
+            "rebased": true,
+            "status": "chasing"
+          },
+          "invoice_number": "INV-3002",
+          "provenance": "system",
+          "summary": "Invoice ingested"
+        },
+        {
+          "action": "invoice_ingested",
+          "actor": "system",
+          "at": "<datetime>",
+          "detail": {
+            "amount_paise": 1250000,
+            "days_overdue": 2,
+            "invoice_number": "INV-3001",
+            "rebased": true,
+            "status": "chasing"
+          },
+          "invoice_number": "INV-3001",
+          "provenance": "system",
+          "summary": "Invoice ingested"
+        }
+      ],
+      "content_type": "application/json",
+      "status": 200
+    },
+    "GET /api/dashboard/automation": {
+      "body": {
+        "checked_at": "<datetime>",
+        "jobs": [
+          {
+            "explanation": "The scheduler is switched off in this deployment.",
+            "job_id": "recovery_cycle",
+            "label": "Daily recovery cycle",
+            "last_detail": {},
+            "last_duration_ms": null,
+            "last_error": null,
+            "last_run_at": null,
+            "last_run_status": null,
+            "last_success_at": null,
+            "next_run_at": null,
+            "state": "disabled"
+          },
+          {
+            "explanation": "The scheduler is switched off in this deployment.",
+            "job_id": "payment_link_sync",
+            "label": "Razorpay payment sync",
+            "last_detail": {},
+            "last_duration_ms": null,
+            "last_error": null,
+            "last_run_at": null,
+            "last_run_status": null,
+            "last_success_at": null,
+            "next_run_at": null,
+            "state": "disabled"
+          },
+          {
+            "explanation": "The scheduler is switched off in this deployment.",
+            "job_id": "retry_operations",
+            "label": "Retry sweep",
+            "last_detail": {},
+            "last_duration_ms": null,
+            "last_error": null,
+            "last_run_at": null,
+            "last_run_status": null,
+            "last_success_at": null,
+            "next_run_at": null,
+            "state": "disabled"
+          },
+          {
+            "explanation": "The scheduler is switched off in this deployment.",
+            "job_id": "service_heartbeat",
+            "label": "Service heartbeat",
+            "last_detail": {},
+            "last_duration_ms": null,
+            "last_error": null,
+            "last_run_at": null,
+            "last_run_status": null,
+            "last_success_at": null,
+            "next_run_at": null,
+            "state": "disabled"
+          }
+        ],
+        "overall": "disabled",
+        "scheduler_enabled": false,
+        "scheduler_running_here": false
+      },
+      "content_type": "application/json",
+      "status": 200
+    },
+    "GET /api/dashboard/disputes": {
+      "body": [],
+      "content_type": "application/json",
+      "status": 200
+    },
+    "GET /api/dashboard/exceptions": {
+      "body": {
+        "communication": [],
+        "inbound": [],
+        "reconciliation": [],
+        "total": 0,
+        "unclosed_links": []
+      },
+      "content_type": "application/json",
+      "status": 200
+    },
+    "GET /api/dashboard/overview?days=30": {
+      "body": {
+        "active_promises": 0,
+        "automation_rate": null,
+        "automation_rate_display": "—",
+        "avg_days_to_recovery": null,
+        "broken_promises": 0,
+        "counts_by_reason": {},
+        "counts_by_status": {
+          "chasing": 8
+        },
+        "invoices_in_human_review": 0,
+        "invoices_recovered": 0,
+        "invoices_total": 8,
+        "recovered_display": "₹0",
+        "recovered_paise": 0,
+        "recovery_rate": 0.0,
+        "recovery_rate_display": "0.0%",
+        "total_overdue_display": "₹1,81,000",
+        "total_overdue_paise": 18100000,
+        "window_days": 30
+      },
+      "content_type": "application/json",
+      "status": 200
+    },
+    "GET /api/dashboard/promises": {
+      "body": [],
+      "content_type": "application/json",
+      "status": 200
+    },
+    "GET /api/dashboard/queue?limit=200": {
+      "body": [
+        {
+          "amount_display": "₹41,000",
+          "customer_name": "Kiran & Co",
+          "days_overdue": 12,
+          "dispute_open": false,
+          "id": "<uuid>",
+          "invoice_number": "INV-3005",
+          "next_action": "Tier 1 when due",
+          "outstanding_paise": 4100000,
+          "payment_url": "https://rzp.io/rzp/baseline-inv-3005",
+          "reason_category": null,
+          "recovered_at": null,
+          "status": "chasing",
+          "tier_label": "—",
+          "why": "Tier 1 reminder due — 12 days overdue.",
+          "why_next": "Sent on the next cycle, in a polite tone.",
+          "why_state": "active"
+        },
+        {
+          "amount_display": "₹34,000",
+          "customer_name": "ABC Traders",
+          "days_overdue": 10,
+          "dispute_open": false,
+          "id": "<uuid>",
+          "invoice_number": "INV-3003",
+          "next_action": "Tier 1 when due",
+          "outstanding_paise": 3400000,
+          "payment_url": "https://rzp.io/rzp/baseline-inv-3003",
+          "reason_category": null,
+          "recovered_at": null,
+          "status": "chasing",
+          "tier_label": "—",
+          "why": "Tier 1 reminder due — 10 days overdue.",
+          "why_next": "Sent on the next cycle, in a polite tone.",
+          "why_state": "active"
+        },
+        {
+          "amount_display": "₹27,500",
+          "customer_name": "Deccan Logistics",
+          "days_overdue": 21,
+          "dispute_open": false,
+          "id": "<uuid>",
+          "invoice_number": "INV-3004",
+          "next_action": "Tier 1 when due",
+          "outstanding_paise": 2750000,
+          "payment_url": "https://rzp.io/rzp/baseline-inv-3004",
+          "reason_category": null,
+          "recovered_at": null,
+          "status": "chasing",
+          "tier_label": "—",
+          "why": "Tier 1 reminder due — 21 days overdue.",
+          "why_next": "Sent on the next cycle, in a polite tone.",
+          "why_state": "active"
+        },
+        {
+          "amount_display": "₹22,000",
+          "customer_name": "Meridian Packaging",
+          "days_overdue": 15,
+          "dispute_open": false,
+          "id": "<uuid>",
+          "invoice_number": "INV-3006",
+          "next_action": "Tier 1 when due",
+          "outstanding_paise": 2200000,
+          "payment_url": "https://rzp.io/rzp/baseline-inv-3006",
+          "reason_category": null,
+          "recovered_at": null,
+          "status": "chasing",
+          "tier_label": "—",
+          "why": "Tier 1 reminder due — 15 days overdue.",
+          "why_next": "Sent on the next cycle, in a polite tone.",
+          "why_state": "active"
+        },
+        {
+          "amount_display": "₹18,000",
+          "customer_name": "Sunrise Textiles",
+          "days_overdue": 3,
+          "dispute_open": false,
+          "id": "<uuid>",
+          "invoice_number": "INV-3002",
+          "next_action": "Tier 1 when due",
+          "outstanding_paise": 1800000,
+          "payment_url": "https://rzp.io/rzp/baseline-inv-3002",
+          "reason_category": null,
+          "recovered_at": null,
+          "status": "chasing",
+          "tier_label": "—",
+          "why": "Tier 1 reminder due — 3 days overdue.",
+          "why_next": "Sent on the next cycle, in a polite tone.",
+          "why_state": "active"
+        },
+        {
+          "amount_display": "₹16,500",
+          "customer_name": "Vega Industries",
+          "days_overdue": 30,
+          "dispute_open": false,
+          "id": "<uuid>",
+          "invoice_number": "INV-3007",
+          "next_action": "Tier 1 when due",
+          "outstanding_paise": 1650000,
+          "payment_url": "https://rzp.io/rzp/baseline-inv-3007",
+          "reason_category": null,
+          "recovered_at": null,
+          "status": "chasing",
+          "tier_label": "—",
+          "why": "Tier 1 reminder due — 30 days overdue.",
+          "why_next": "Sent on the next cycle, in a polite tone.",
+          "why_state": "active"
+        },
+        {
+          "amount_display": "₹12,500",
+          "customer_name": "Nova Retail",
+          "days_overdue": 2,
+          "dispute_open": false,
+          "id": "<uuid>",
+          "invoice_number": "INV-3001",
+          "next_action": "Tier 1 when due",
+          "outstanding_paise": 1250000,
+          "payment_url": "https://rzp.io/rzp/baseline-inv-3001",
+          "reason_category": null,
+          "recovered_at": null,
+          "status": "chasing",
+          "tier_label": "—",
+          "why": "2 days overdue — not yet due a reminder.",
+          "why_next": "Tier 1 is sent at 3 days overdue.",
+          "why_state": "waiting"
+        },
+        {
+          "amount_display": "₹9,500",
+          "customer_name": "Lotus Supplies",
+          "days_overdue": 8,
+          "dispute_open": false,
+          "id": "<uuid>",
+          "invoice_number": "INV-3008",
+          "next_action": "Tier 1 when due",
+          "outstanding_paise": 950000,
+          "payment_url": "https://rzp.io/rzp/baseline-inv-3008",
+          "reason_category": null,
+          "recovered_at": null,
+          "status": "chasing",
+          "tier_label": "—",
+          "why": "Tier 1 reminder due — 8 days overdue.",
+          "why_next": "Sent on the next cycle, in a polite tone.",
+          "why_state": "active"
+        }
+      ],
+      "content_type": "application/json",
+      "status": 200
+    },
+    "GET /api/dashboard/runtime": {
+      "body": {
+        "ai": "enabled",
+        "email": "dry_run",
+        "environment": "test",
+        "inbound_email": "native_resend",
+        "razorpay": "test",
+        "scheduler": "disabled"
+      },
+      "content_type": "application/json",
+      "status": 200
+    },
+    "GET /api/demo/clock": {
+      "body": {
+        "email_is_override": false,
+        "email_to": "tests@example.invalid",
+        "enabled": true,
+        "max_advance_days": 30,
+        "offset_days": 0,
+        "real_date": "<display-datetime>",
+        "simulated_date": "<display-datetime>",
+        "updated_by": null
+      },
+      "content_type": "application/json",
+      "status": 200
+    },
+    "GET /api/export/invoices?format=csv": {
+      "body": "﻿Invoice,Customer,Email,Amount (₹),Paid (₹),Outstanding (₹),Days overdue,Status,Reason,Reminders sent,Issued,Due,Payment link\r\nINV-3005,Kiran & Co,kiran@kiran-and-co.example.com,41000.0,0.0,41000.0,12,chasing,,0,<date>,<date>,https://rzp.io/rzp/baseline-inv-3005\r\nINV-3003,ABC Traders,rahul@abc-traders.example.com,34000.0,0.0,34000.0,10,chasing,,0,<date>,<date>,https://rzp.io/rzp/baseline-inv-3003\r\nINV-3004,Deccan Logistics,ap@deccan-logistics.example.com,27500.0,0.0,27500.0,21,chasing,,0,<date>,<date>,https://rzp.io/rzp/baseline-inv-3004\r\nINV-3006,Meridian Packaging,billing@meridian-pack.example.com,22000.0,0.0,22000.0,15,chasing,,0,<date>,<date>,https://rzp.io/rzp/baseline-inv-3006\r\nINV-3002,Sunrise Textiles,finance@sunrise-textiles.example.com,18000.0,0.0,18000.0,3,chasing,,0,<date>,<date>,https://rzp.io/rzp/baseline-inv-3002\r\nINV-3007,Vega Industries,accounts@vega-industries.example.com,16500.0,0.0,16500.0,30,chasing,,0,<date>,<date>,https://rzp.io/rzp/baseline-inv-3007\r\nINV-3001,Nova Retail,accounts@nova-retail.example.com,12500.0,0.0,12500.0,2,chasing,,0,<date>,<date>,https://rzp.io/rzp/baseline-inv-3001\r\nINV-3008,Lotus Supplies,ap@lotus-supplies.example.com,9500.0,0.0,9500.0,8,chasing,,0,<date>,<date>,https://rzp.io/rzp/baseline-inv-3008\r\n",
+      "content_type": "text/csv",
+      "status": 200
+    },
+    "GET /api/export/overview?format=csv": {
+      "body": "﻿Metric,Value\r\nTotal overdue,\"₹1,81,000\"\r\nRecovered,₹0\r\nRecovery rate (by value),0.0%\r\nAverage days to recovery,—\r\nAutomation rate,—\r\nInvoices total,8\r\nInvoices recovered,0\r\nNeeding a human,0\r\nActive promises,0\r\nBroken promises,0\r\nStatus · chasing,8\r\n",
+      "content_type": "text/csv",
+      "status": 200
+    },
+    "GET /api/export/recovered?format=csv": {
+      "body": "﻿Invoice,Customer,Email,Amount (₹),Paid (₹),Issued,Due,Recovered,Days to recovery,Reminders sent,Reason,Razorpay link\r\n",
+      "content_type": "text/csv",
+      "status": 200
+    },
+    "GET /api/invoices/import/template": {
+      "body": "﻿invoice_number,customer_name,customer_email,customer_phone,amount_inr,issued_at,due_at,terms_days,customer_total_invoices,customer_invoices_paid_late,customer_invoices_defaulted,customer_broken_promises,customer_avg_invoice_inr,has_prior_dispute_note,gen_days_overdue\r\nINV-1001,Acme Traders,accounts@acme.example.com,+919876543210,42000.00,<date>,<date>,30,12,2,0,0,38000.00,false,\r\n",
+      "content_type": "text/csv",
+      "status": 200
+    },
+    "GET /api/invoices?limit=50": {
+      "body": [
+        {
+          "amount_display": "₹16,500",
+          "amount_paid_paise": 0,
+          "amount_paise": 1650000,
+          "current_tier": 0,
+          "customer_name": "Vega Industries",
+          "days_overdue": 30,
+          "due_at": "<datetime>",
+          "escalated_to_human_at": null,
+          "id": "<uuid>",
+          "invoice_number": "INV-3007",
+          "issued_at": "<datetime>",
+          "last_reminder_at": null,
+          "outstanding_display": "₹16,500",
+          "outstanding_paise": 1650000,
+          "payment_link_status": "created",
+          "payment_url": "https://rzp.io/rzp/baseline-inv-3007",
+          "reason_category": null,
+          "reason_explanation": null,
+          "recovered_at": null,
+          "reminders_sent": 0,
+          "status": "chasing"
+        },
+        {
+          "amount_display": "₹27,500",
+          "amount_paid_paise": 0,
+          "amount_paise": 2750000,
+          "current_tier": 0,
+          "customer_name": "Deccan Logistics",
+          "days_overdue": 21,
+          "due_at": "<datetime>",
+          "escalated_to_human_at": null,
+          "id": "<uuid>",
+          "invoice_number": "INV-3004",
+          "issued_at": "<datetime>",
+          "last_reminder_at": null,
+          "outstanding_display": "₹27,500",
+          "outstanding_paise": 2750000,
+          "payment_link_status": "created",
+          "payment_url": "https://rzp.io/rzp/baseline-inv-3004",
+          "reason_category": null,
+          "reason_explanation": null,
+          "recovered_at": null,
+          "reminders_sent": 0,
+          "status": "chasing"
+        },
+        {
+          "amount_display": "₹22,000",
+          "amount_paid_paise": 0,
+          "amount_paise": 2200000,
+          "current_tier": 0,
+          "customer_name": "Meridian Packaging",
+          "days_overdue": 15,
+          "due_at": "<datetime>",
+          "escalated_to_human_at": null,
+          "id": "<uuid>",
+          "invoice_number": "INV-3006",
+          "issued_at": "<datetime>",
+          "last_reminder_at": null,
+          "outstanding_display": "₹22,000",
+          "outstanding_paise": 2200000,
+          "payment_link_status": "created",
+          "payment_url": "https://rzp.io/rzp/baseline-inv-3006",
+          "reason_category": null,
+          "reason_explanation": null,
+          "recovered_at": null,
+          "reminders_sent": 0,
+          "status": "chasing"
+        },
+        {
+          "amount_display": "₹41,000",
+          "amount_paid_paise": 0,
+          "amount_paise": 4100000,
+          "current_tier": 0,
+          "customer_name": "Kiran & Co",
+          "days_overdue": 12,
+          "due_at": "<datetime>",
+          "escalated_to_human_at": null,
+          "id": "<uuid>",
+          "invoice_number": "INV-3005",
+          "issued_at": "<datetime>",
+          "last_reminder_at": null,
+          "outstanding_display": "₹41,000",
+          "outstanding_paise": 4100000,
+          "payment_link_status": "created",
+          "payment_url": "https://rzp.io/rzp/baseline-inv-3005",
+          "reason_category": null,
+          "reason_explanation": null,
+          "recovered_at": null,
+          "reminders_sent": 0,
+          "status": "chasing"
+        },
+        {
+          "amount_display": "₹34,000",
+          "amount_paid_paise": 0,
+          "amount_paise": 3400000,
+          "current_tier": 0,
+          "customer_name": "ABC Traders",
+          "days_overdue": 10,
+          "due_at": "<datetime>",
+          "escalated_to_human_at": null,
+          "id": "<uuid>",
+          "invoice_number": "INV-3003",
+          "issued_at": "<datetime>",
+          "last_reminder_at": null,
+          "outstanding_display": "₹34,000",
+          "outstanding_paise": 3400000,
+          "payment_link_status": "created",
+          "payment_url": "https://rzp.io/rzp/baseline-inv-3003",
+          "reason_category": null,
+          "reason_explanation": null,
+          "recovered_at": null,
+          "reminders_sent": 0,
+          "status": "chasing"
+        },
+        {
+          "amount_display": "₹9,500",
+          "amount_paid_paise": 0,
+          "amount_paise": 950000,
+          "current_tier": 0,
+          "customer_name": "Lotus Supplies",
+          "days_overdue": 8,
+          "due_at": "<datetime>",
+          "escalated_to_human_at": null,
+          "id": "<uuid>",
+          "invoice_number": "INV-3008",
+          "issued_at": "<datetime>",
+          "last_reminder_at": null,
+          "outstanding_display": "₹9,500",
+          "outstanding_paise": 950000,
+          "payment_link_status": "created",
+          "payment_url": "https://rzp.io/rzp/baseline-inv-3008",
+          "reason_category": null,
+          "reason_explanation": null,
+          "recovered_at": null,
+          "reminders_sent": 0,
+          "status": "chasing"
+        },
+        {
+          "amount_display": "₹18,000",
+          "amount_paid_paise": 0,
+          "amount_paise": 1800000,
+          "current_tier": 0,
+          "customer_name": "Sunrise Textiles",
+          "days_overdue": 3,
+          "due_at": "<datetime>",
+          "escalated_to_human_at": null,
+          "id": "<uuid>",
+          "invoice_number": "INV-3002",
+          "issued_at": "<datetime>",
+          "last_reminder_at": null,
+          "outstanding_display": "₹18,000",
+          "outstanding_paise": 1800000,
+          "payment_link_status": "created",
+          "payment_url": "https://rzp.io/rzp/baseline-inv-3002",
+          "reason_category": null,
+          "reason_explanation": null,
+          "recovered_at": null,
+          "reminders_sent": 0,
+          "status": "chasing"
+        },
+        {
+          "amount_display": "₹12,500",
+          "amount_paid_paise": 0,
+          "amount_paise": 1250000,
+          "current_tier": 0,
+          "customer_name": "Nova Retail",
+          "days_overdue": 2,
+          "due_at": "<datetime>",
+          "escalated_to_human_at": null,
+          "id": "<uuid>",
+          "invoice_number": "INV-3001",
+          "issued_at": "<datetime>",
+          "last_reminder_at": null,
+          "outstanding_display": "₹12,500",
+          "outstanding_paise": 1250000,
+          "payment_link_status": "created",
+          "payment_url": "https://rzp.io/rzp/baseline-inv-3001",
+          "reason_category": null,
+          "reason_explanation": null,
+          "recovered_at": null,
+          "reminders_sent": 0,
+          "status": "chasing"
+        }
+      ],
+      "content_type": "application/json",
+      "status": 200
+    },
+    "GET /api/payments/methods": {
+      "body": [
+        {
+          "label": "Bank transfer (NEFT / RTGS / IMPS)",
+          "value": "bank_transfer"
+        },
+        {
+          "label": "UPI",
+          "value": "upi"
+        },
+        {
+          "label": "Cheque",
+          "value": "cheque"
+        },
+        {
+          "label": "Cash",
+          "value": "cash"
+        },
+        {
+          "label": "Razorpay payment outside this link",
+          "value": "razorpay_unlinked"
+        },
+        {
+          "label": "Credit note or agreed adjustment",
+          "value": "adjustment"
+        }
+      ],
+      "content_type": "application/json",
+      "status": 200
+    },
+    "GET /health": {
+      "body": {
+        "db": "ok",
+        "detail": null,
+        "environment": "test",
+        "status": "ok",
+        "version": "0.1.0"
+      },
+      "content_type": "application/json",
+      "status": 200
+    },
+    "GET detail INV-3001": {
+      "body": {
+        "amount_display": "₹12,500",
+        "conversation": [],
+        "current_tier": 0,
+        "customer_email": "accounts@nova-retail.example.com",
+        "customer_name": "Nova Retail",
+        "days_overdue": 2,
+        "dispute": null,
+        "dispute_history": [],
+        "due_at": "<datetime>",
+        "escalated_to_human_at": null,
+        "escalation_reason": null,
+        "external_paid_display": "₹0",
+        "external_payments": [],
+        "id": "<uuid>",
+        "invoice_number": "INV-3001",
+        "last_reply_at": null,
+        "last_reply_excerpt": null,
+        "link_paid_display": "₹0",
+        "outstanding_display": "₹12,500",
+        "paid_display": "₹0",
+        "payment_link_status": "created",
+        "payment_url": "https://rzp.io/rzp/baseline-inv-3001",
+        "promises": [],
+        "reason_category": null,
+        "reason_confidence": null,
+        "reason_explanation": null,
+        "reason_llm_disagreed": false,
+        "recovered_at": null,
+        "reminders": [],
+        "reminders_sent": 0,
+        "reply_count": 0,
+        "simulated_replies_enabled": false,
+        "status": "chasing",
+        "timeline": [
+          {
+            "action": "invoice_ingested",
+            "actor": "system",
+            "at": "<datetime>",
+            "detail": {
+              "amount_paise": 1250000,
+              "days_overdue": 2,
+              "invoice_number": "INV-3001",
+              "rebased": true,
+              "status": "chasing"
+            },
+            "provenance": "system",
+            "summary": "Invoice ingested"
+          },
+          {
+            "action": "payment_link_created",
+            "actor": "razorpay",
+            "at": "<datetime>",
+            "detail": {
+              "amount_paise": 1250000,
+              "invoice_number": "INV-3001",
+              "payment_link_id": "plink_BASELINE_INV_3001",
+              "reference_id": "vsl-INV-3001",
+              "short_url": "https://rzp.io/rzp/baseline-inv-3001"
+            },
+            "provenance": "razorpay",
+            "summary": "Payment link created"
+          }
+        ],
+        "why": "2 days overdue — not yet due a reminder.",
+        "why_next": "Tier 1 is sent at 3 days overdue.",
+        "why_state": "waiting"
+      },
+      "content_type": "application/json",
+      "status": 200
+    },
+    "GET detail INV-3002": {
+      "body": {
+        "amount_display": "₹18,000",
+        "conversation": [],
+        "current_tier": 0,
+        "customer_email": "finance@sunrise-textiles.example.com",
+        "customer_name": "Sunrise Textiles",
+        "days_overdue": 3,
+        "dispute": null,
+        "dispute_history": [],
+        "due_at": "<datetime>",
+        "escalated_to_human_at": null,
+        "escalation_reason": null,
+        "external_paid_display": "₹0",
+        "external_payments": [],
+        "id": "<uuid>",
+        "invoice_number": "INV-3002",
+        "last_reply_at": null,
+        "last_reply_excerpt": null,
+        "link_paid_display": "₹0",
+        "outstanding_display": "₹18,000",
+        "paid_display": "₹0",
+        "payment_link_status": "created",
+        "payment_url": "https://rzp.io/rzp/baseline-inv-3002",
+        "promises": [],
+        "reason_category": null,
+        "reason_confidence": null,
+        "reason_explanation": null,
+        "reason_llm_disagreed": false,
+        "recovered_at": null,
+        "reminders": [],
+        "reminders_sent": 0,
+        "reply_count": 0,
+        "simulated_replies_enabled": false,
+        "status": "chasing",
+        "timeline": [
+          {
+            "action": "invoice_ingested",
+            "actor": "system",
+            "at": "<datetime>",
+            "detail": {
+              "amount_paise": 1800000,
+              "days_overdue": 3,
+              "invoice_number": "INV-3002",
+              "rebased": true,
+              "status": "chasing"
+            },
+            "provenance": "system",
+            "summary": "Invoice ingested"
+          },
+          {
+            "action": "payment_link_created",
+            "actor": "razorpay",
+            "at": "<datetime>",
+            "detail": {
+              "amount_paise": 1800000,
+              "invoice_number": "INV-3002",
+              "payment_link_id": "plink_BASELINE_INV_3002",
+              "reference_id": "vsl-INV-3002",
+              "short_url": "https://rzp.io/rzp/baseline-inv-3002"
+            },
+            "provenance": "razorpay",
+            "summary": "Payment link created"
+          }
+        ],
+        "why": "Tier 1 reminder due — 3 days overdue.",
+        "why_next": "Sent on the next cycle, in a polite tone.",
+        "why_state": "active"
+      },
+      "content_type": "application/json",
+      "status": 200
+    },
+    "GET detail INV-3003": {
+      "body": {
+        "amount_display": "₹34,000",
+        "conversation": [],
+        "current_tier": 0,
+        "customer_email": "rahul@abc-traders.example.com",
+        "customer_name": "ABC Traders",
+        "days_overdue": 10,
+        "dispute": null,
+        "dispute_history": [],
+        "due_at": "<datetime>",
+        "escalated_to_human_at": null,
+        "escalation_reason": null,
+        "external_paid_display": "₹0",
+        "external_payments": [],
+        "id": "<uuid>",
+        "invoice_number": "INV-3003",
+        "last_reply_at": null,
+        "last_reply_excerpt": null,
+        "link_paid_display": "₹0",
+        "outstanding_display": "₹34,000",
+        "paid_display": "₹0",
+        "payment_link_status": "created",
+        "payment_url": "https://rzp.io/rzp/baseline-inv-3003",
+        "promises": [],
+        "reason_category": null,
+        "reason_confidence": null,
+        "reason_explanation": null,
+        "reason_llm_disagreed": false,
+        "recovered_at": null,
+        "reminders": [],
+        "reminders_sent": 0,
+        "reply_count": 0,
+        "simulated_replies_enabled": false,
+        "status": "chasing",
+        "timeline": [
+          {
+            "action": "invoice_ingested",
+            "actor": "system",
+            "at": "<datetime>",
+            "detail": {
+              "amount_paise": 3400000,
+              "days_overdue": 10,
+              "invoice_number": "INV-3003",
+              "rebased": true,
+              "status": "chasing"
+            },
+            "provenance": "system",
+            "summary": "Invoice ingested"
+          },
+          {
+            "action": "payment_link_created",
+            "actor": "razorpay",
+            "at": "<datetime>",
+            "detail": {
+              "amount_paise": 3400000,
+              "invoice_number": "INV-3003",
+              "payment_link_id": "plink_BASELINE_INV_3003",
+              "reference_id": "vsl-INV-3003",
+              "short_url": "https://rzp.io/rzp/baseline-inv-3003"
+            },
+            "provenance": "razorpay",
+            "summary": "Payment link created"
+          }
+        ],
+        "why": "Tier 1 reminder due — 10 days overdue.",
+        "why_next": "Sent on the next cycle, in a polite tone.",
+        "why_state": "active"
+      },
+      "content_type": "application/json",
+      "status": 200
+    },
+    "GET detail INV-3004": {
+      "body": {
+        "amount_display": "₹27,500",
+        "conversation": [],
+        "current_tier": 0,
+        "customer_email": "ap@deccan-logistics.example.com",
+        "customer_name": "Deccan Logistics",
+        "days_overdue": 21,
+        "dispute": null,
+        "dispute_history": [],
+        "due_at": "<datetime>",
+        "escalated_to_human_at": null,
+        "escalation_reason": null,
+        "external_paid_display": "₹0",
+        "external_payments": [],
+        "id": "<uuid>",
+        "invoice_number": "INV-3004",
+        "last_reply_at": null,
+        "last_reply_excerpt": null,
+        "link_paid_display": "₹0",
+        "outstanding_display": "₹27,500",
+        "paid_display": "₹0",
+        "payment_link_status": "created",
+        "payment_url": "https://rzp.io/rzp/baseline-inv-3004",
+        "promises": [],
+        "reason_category": null,
+        "reason_confidence": null,
+        "reason_explanation": null,
+        "reason_llm_disagreed": false,
+        "recovered_at": null,
+        "reminders": [],
+        "reminders_sent": 0,
+        "reply_count": 0,
+        "simulated_replies_enabled": false,
+        "status": "chasing",
+        "timeline": [
+          {
+            "action": "invoice_ingested",
+            "actor": "system",
+            "at": "<datetime>",
+            "detail": {
+              "amount_paise": 2750000,
+              "days_overdue": 21,
+              "invoice_number": "INV-3004",
+              "rebased": true,
+              "status": "chasing"
+            },
+            "provenance": "system",
+            "summary": "Invoice ingested"
+          },
+          {
+            "action": "payment_link_created",
+            "actor": "razorpay",
+            "at": "<datetime>",
+            "detail": {
+              "amount_paise": 2750000,
+              "invoice_number": "INV-3004",
+              "payment_link_id": "plink_BASELINE_INV_3004",
+              "reference_id": "vsl-INV-3004",
+              "short_url": "https://rzp.io/rzp/baseline-inv-3004"
+            },
+            "provenance": "razorpay",
+            "summary": "Payment link created"
+          }
+        ],
+        "why": "Tier 1 reminder due — 21 days overdue.",
+        "why_next": "Sent on the next cycle, in a polite tone.",
+        "why_state": "active"
+      },
+      "content_type": "application/json",
+      "status": 200
+    },
+    "GET detail INV-3005": {
+      "body": {
+        "amount_display": "₹41,000",
+        "conversation": [],
+        "current_tier": 0,
+        "customer_email": "kiran@kiran-and-co.example.com",
+        "customer_name": "Kiran & Co",
+        "days_overdue": 12,
+        "dispute": null,
+        "dispute_history": [],
+        "due_at": "<datetime>",
+        "escalated_to_human_at": null,
+        "escalation_reason": null,
+        "external_paid_display": "₹0",
+        "external_payments": [],
+        "id": "<uuid>",
+        "invoice_number": "INV-3005",
+        "last_reply_at": null,
+        "last_reply_excerpt": null,
+        "link_paid_display": "₹0",
+        "outstanding_display": "₹41,000",
+        "paid_display": "₹0",
+        "payment_link_status": "created",
+        "payment_url": "https://rzp.io/rzp/baseline-inv-3005",
+        "promises": [],
+        "reason_category": null,
+        "reason_confidence": null,
+        "reason_explanation": null,
+        "reason_llm_disagreed": false,
+        "recovered_at": null,
+        "reminders": [],
+        "reminders_sent": 0,
+        "reply_count": 0,
+        "simulated_replies_enabled": false,
+        "status": "chasing",
+        "timeline": [
+          {
+            "action": "invoice_ingested",
+            "actor": "system",
+            "at": "<datetime>",
+            "detail": {
+              "amount_paise": 4100000,
+              "days_overdue": 12,
+              "invoice_number": "INV-3005",
+              "rebased": true,
+              "status": "chasing"
+            },
+            "provenance": "system",
+            "summary": "Invoice ingested"
+          },
+          {
+            "action": "payment_link_created",
+            "actor": "razorpay",
+            "at": "<datetime>",
+            "detail": {
+              "amount_paise": 4100000,
+              "invoice_number": "INV-3005",
+              "payment_link_id": "plink_BASELINE_INV_3005",
+              "reference_id": "vsl-INV-3005",
+              "short_url": "https://rzp.io/rzp/baseline-inv-3005"
+            },
+            "provenance": "razorpay",
+            "summary": "Payment link created"
+          }
+        ],
+        "why": "Tier 1 reminder due — 12 days overdue.",
+        "why_next": "Sent on the next cycle, in a polite tone.",
+        "why_state": "active"
+      },
+      "content_type": "application/json",
+      "status": 200
+    },
+    "GET detail INV-3006": {
+      "body": {
+        "amount_display": "₹22,000",
+        "conversation": [],
+        "current_tier": 0,
+        "customer_email": "billing@meridian-pack.example.com",
+        "customer_name": "Meridian Packaging",
+        "days_overdue": 15,
+        "dispute": null,
+        "dispute_history": [],
+        "due_at": "<datetime>",
+        "escalated_to_human_at": null,
+        "escalation_reason": null,
+        "external_paid_display": "₹0",
+        "external_payments": [],
+        "id": "<uuid>",
+        "invoice_number": "INV-3006",
+        "last_reply_at": null,
+        "last_reply_excerpt": null,
+        "link_paid_display": "₹0",
+        "outstanding_display": "₹22,000",
+        "paid_display": "₹0",
+        "payment_link_status": "created",
+        "payment_url": "https://rzp.io/rzp/baseline-inv-3006",
+        "promises": [],
+        "reason_category": null,
+        "reason_confidence": null,
+        "reason_explanation": null,
+        "reason_llm_disagreed": false,
+        "recovered_at": null,
+        "reminders": [],
+        "reminders_sent": 0,
+        "reply_count": 0,
+        "simulated_replies_enabled": false,
+        "status": "chasing",
+        "timeline": [
+          {
+            "action": "invoice_ingested",
+            "actor": "system",
+            "at": "<datetime>",
+            "detail": {
+              "amount_paise": 2200000,
+              "days_overdue": 15,
+              "invoice_number": "INV-3006",
+              "rebased": true,
+              "status": "chasing"
+            },
+            "provenance": "system",
+            "summary": "Invoice ingested"
+          },
+          {
+            "action": "payment_link_created",
+            "actor": "razorpay",
+            "at": "<datetime>",
+            "detail": {
+              "amount_paise": 2200000,
+              "invoice_number": "INV-3006",
+              "payment_link_id": "plink_BASELINE_INV_3006",
+              "reference_id": "vsl-INV-3006",
+              "short_url": "https://rzp.io/rzp/baseline-inv-3006"
+            },
+            "provenance": "razorpay",
+            "summary": "Payment link created"
+          }
+        ],
+        "why": "Tier 1 reminder due — 15 days overdue.",
+        "why_next": "Sent on the next cycle, in a polite tone.",
+        "why_state": "active"
+      },
+      "content_type": "application/json",
+      "status": 200
+    },
+    "GET detail INV-3007": {
+      "body": {
+        "amount_display": "₹16,500",
+        "conversation": [],
+        "current_tier": 0,
+        "customer_email": "accounts@vega-industries.example.com",
+        "customer_name": "Vega Industries",
+        "days_overdue": 30,
+        "dispute": null,
+        "dispute_history": [],
+        "due_at": "<datetime>",
+        "escalated_to_human_at": null,
+        "escalation_reason": null,
+        "external_paid_display": "₹0",
+        "external_payments": [],
+        "id": "<uuid>",
+        "invoice_number": "INV-3007",
+        "last_reply_at": null,
+        "last_reply_excerpt": null,
+        "link_paid_display": "₹0",
+        "outstanding_display": "₹16,500",
+        "paid_display": "₹0",
+        "payment_link_status": "created",
+        "payment_url": "https://rzp.io/rzp/baseline-inv-3007",
+        "promises": [],
+        "reason_category": null,
+        "reason_confidence": null,
+        "reason_explanation": null,
+        "reason_llm_disagreed": false,
+        "recovered_at": null,
+        "reminders": [],
+        "reminders_sent": 0,
+        "reply_count": 0,
+        "simulated_replies_enabled": false,
+        "status": "chasing",
+        "timeline": [
+          {
+            "action": "invoice_ingested",
+            "actor": "system",
+            "at": "<datetime>",
+            "detail": {
+              "amount_paise": 1650000,
+              "days_overdue": 30,
+              "invoice_number": "INV-3007",
+              "rebased": true,
+              "status": "chasing"
+            },
+            "provenance": "system",
+            "summary": "Invoice ingested"
+          },
+          {
+            "action": "payment_link_created",
+            "actor": "razorpay",
+            "at": "<datetime>",
+            "detail": {
+              "amount_paise": 1650000,
+              "invoice_number": "INV-3007",
+              "payment_link_id": "plink_BASELINE_INV_3007",
+              "reference_id": "vsl-INV-3007",
+              "short_url": "https://rzp.io/rzp/baseline-inv-3007"
+            },
+            "provenance": "razorpay",
+            "summary": "Payment link created"
+          }
+        ],
+        "why": "Tier 1 reminder due — 30 days overdue.",
+        "why_next": "Sent on the next cycle, in a polite tone.",
+        "why_state": "active"
+      },
+      "content_type": "application/json",
+      "status": 200
+    },
+    "GET detail INV-3008": {
+      "body": {
+        "amount_display": "₹9,500",
+        "conversation": [],
+        "current_tier": 0,
+        "customer_email": "ap@lotus-supplies.example.com",
+        "customer_name": "Lotus Supplies",
+        "days_overdue": 8,
+        "dispute": null,
+        "dispute_history": [],
+        "due_at": "<datetime>",
+        "escalated_to_human_at": null,
+        "escalation_reason": null,
+        "external_paid_display": "₹0",
+        "external_payments": [],
+        "id": "<uuid>",
+        "invoice_number": "INV-3008",
+        "last_reply_at": null,
+        "last_reply_excerpt": null,
+        "link_paid_display": "₹0",
+        "outstanding_display": "₹9,500",
+        "paid_display": "₹0",
+        "payment_link_status": "created",
+        "payment_url": "https://rzp.io/rzp/baseline-inv-3008",
+        "promises": [],
+        "reason_category": null,
+        "reason_confidence": null,
+        "reason_explanation": null,
+        "reason_llm_disagreed": false,
+        "recovered_at": null,
+        "reminders": [],
+        "reminders_sent": 0,
+        "reply_count": 0,
+        "simulated_replies_enabled": false,
+        "status": "chasing",
+        "timeline": [
+          {
+            "action": "invoice_ingested",
+            "actor": "system",
+            "at": "<datetime>",
+            "detail": {
+              "amount_paise": 950000,
+              "days_overdue": 8,
+              "invoice_number": "INV-3008",
+              "rebased": true,
+              "status": "chasing"
+            },
+            "provenance": "system",
+            "summary": "Invoice ingested"
+          },
+          {
+            "action": "payment_link_created",
+            "actor": "razorpay",
+            "at": "<datetime>",
+            "detail": {
+              "amount_paise": 950000,
+              "invoice_number": "INV-3008",
+              "payment_link_id": "plink_BASELINE_INV_3008",
+              "reference_id": "vsl-INV-3008",
+              "short_url": "https://rzp.io/rzp/baseline-inv-3008"
+            },
+            "provenance": "razorpay",
+            "summary": "Payment link created"
+          }
+        ],
+        "why": "Tier 1 reminder due — 8 days overdue.",
+        "why_next": "Sent on the next cycle, in a polite tone.",
+        "why_state": "active"
+      },
+      "content_type": "application/json",
+      "status": 200
+    },
+    "GET invoice INV-3001": {
+      "body": {
+        "amount_display": "₹12,500",
+        "amount_paid_paise": 0,
+        "amount_paise": 1250000,
+        "current_tier": 0,
+        "customer_name": "Nova Retail",
+        "days_overdue": 2,
+        "due_at": "<datetime>",
+        "escalated_to_human_at": null,
+        "id": "<uuid>",
+        "invoice_number": "INV-3001",
+        "issued_at": "<datetime>",
+        "last_reminder_at": null,
+        "outstanding_display": "₹12,500",
+        "outstanding_paise": 1250000,
+        "payment_link_status": "created",
+        "payment_url": "https://rzp.io/rzp/baseline-inv-3001",
+        "reason_category": null,
+        "reason_explanation": null,
+        "recovered_at": null,
+        "reminders_sent": 0,
+        "status": "chasing"
+      },
+      "content_type": "application/json",
+      "status": 200
+    },
+    "GET invoice INV-3002": {
+      "body": {
+        "amount_display": "₹18,000",
+        "amount_paid_paise": 0,
+        "amount_paise": 1800000,
+        "current_tier": 0,
+        "customer_name": "Sunrise Textiles",
+        "days_overdue": 3,
+        "due_at": "<datetime>",
+        "escalated_to_human_at": null,
+        "id": "<uuid>",
+        "invoice_number": "INV-3002",
+        "issued_at": "<datetime>",
+        "last_reminder_at": null,
+        "outstanding_display": "₹18,000",
+        "outstanding_paise": 1800000,
+        "payment_link_status": "created",
+        "payment_url": "https://rzp.io/rzp/baseline-inv-3002",
+        "reason_category": null,
+        "reason_explanation": null,
+        "recovered_at": null,
+        "reminders_sent": 0,
+        "status": "chasing"
+      },
+      "content_type": "application/json",
+      "status": 200
+    },
+    "GET invoice INV-3003": {
+      "body": {
+        "amount_display": "₹34,000",
+        "amount_paid_paise": 0,
+        "amount_paise": 3400000,
+        "current_tier": 0,
+        "customer_name": "ABC Traders",
+        "days_overdue": 10,
+        "due_at": "<datetime>",
+        "escalated_to_human_at": null,
+        "id": "<uuid>",
+        "invoice_number": "INV-3003",
+        "issued_at": "<datetime>",
+        "last_reminder_at": null,
+        "outstanding_display": "₹34,000",
+        "outstanding_paise": 3400000,
+        "payment_link_status": "created",
+        "payment_url": "https://rzp.io/rzp/baseline-inv-3003",
+        "reason_category": null,
+        "reason_explanation": null,
+        "recovered_at": null,
+        "reminders_sent": 0,
+        "status": "chasing"
+      },
+      "content_type": "application/json",
+      "status": 200
+    },
+    "GET invoice INV-3004": {
+      "body": {
+        "amount_display": "₹27,500",
+        "amount_paid_paise": 0,
+        "amount_paise": 2750000,
+        "current_tier": 0,
+        "customer_name": "Deccan Logistics",
+        "days_overdue": 21,
+        "due_at": "<datetime>",
+        "escalated_to_human_at": null,
+        "id": "<uuid>",
+        "invoice_number": "INV-3004",
+        "issued_at": "<datetime>",
+        "last_reminder_at": null,
+        "outstanding_display": "₹27,500",
+        "outstanding_paise": 2750000,
+        "payment_link_status": "created",
+        "payment_url": "https://rzp.io/rzp/baseline-inv-3004",
+        "reason_category": null,
+        "reason_explanation": null,
+        "recovered_at": null,
+        "reminders_sent": 0,
+        "status": "chasing"
+      },
+      "content_type": "application/json",
+      "status": 200
+    },
+    "GET invoice INV-3005": {
+      "body": {
+        "amount_display": "₹41,000",
+        "amount_paid_paise": 0,
+        "amount_paise": 4100000,
+        "current_tier": 0,
+        "customer_name": "Kiran & Co",
+        "days_overdue": 12,
+        "due_at": "<datetime>",
+        "escalated_to_human_at": null,
+        "id": "<uuid>",
+        "invoice_number": "INV-3005",
+        "issued_at": "<datetime>",
+        "last_reminder_at": null,
+        "outstanding_display": "₹41,000",
+        "outstanding_paise": 4100000,
+        "payment_link_status": "created",
+        "payment_url": "https://rzp.io/rzp/baseline-inv-3005",
+        "reason_category": null,
+        "reason_explanation": null,
+        "recovered_at": null,
+        "reminders_sent": 0,
+        "status": "chasing"
+      },
+      "content_type": "application/json",
+      "status": 200
+    },
+    "GET invoice INV-3006": {
+      "body": {
+        "amount_display": "₹22,000",
+        "amount_paid_paise": 0,
+        "amount_paise": 2200000,
+        "current_tier": 0,
+        "customer_name": "Meridian Packaging",
+        "days_overdue": 15,
+        "due_at": "<datetime>",
+        "escalated_to_human_at": null,
+        "id": "<uuid>",
+        "invoice_number": "INV-3006",
+        "issued_at": "<datetime>",
+        "last_reminder_at": null,
+        "outstanding_display": "₹22,000",
+        "outstanding_paise": 2200000,
+        "payment_link_status": "created",
+        "payment_url": "https://rzp.io/rzp/baseline-inv-3006",
+        "reason_category": null,
+        "reason_explanation": null,
+        "recovered_at": null,
+        "reminders_sent": 0,
+        "status": "chasing"
+      },
+      "content_type": "application/json",
+      "status": 200
+    },
+    "GET invoice INV-3007": {
+      "body": {
+        "amount_display": "₹16,500",
+        "amount_paid_paise": 0,
+        "amount_paise": 1650000,
+        "current_tier": 0,
+        "customer_name": "Vega Industries",
+        "days_overdue": 30,
+        "due_at": "<datetime>",
+        "escalated_to_human_at": null,
+        "id": "<uuid>",
+        "invoice_number": "INV-3007",
+        "issued_at": "<datetime>",
+        "last_reminder_at": null,
+        "outstanding_display": "₹16,500",
+        "outstanding_paise": 1650000,
+        "payment_link_status": "created",
+        "payment_url": "https://rzp.io/rzp/baseline-inv-3007",
+        "reason_category": null,
+        "reason_explanation": null,
+        "recovered_at": null,
+        "reminders_sent": 0,
+        "status": "chasing"
+      },
+      "content_type": "application/json",
+      "status": 200
+    },
+    "GET invoice INV-3008": {
+      "body": {
+        "amount_display": "₹9,500",
+        "amount_paid_paise": 0,
+        "amount_paise": 950000,
+        "current_tier": 0,
+        "customer_name": "Lotus Supplies",
+        "days_overdue": 8,
+        "due_at": "<datetime>",
+        "escalated_to_human_at": null,
+        "id": "<uuid>",
+        "invoice_number": "INV-3008",
+        "issued_at": "<datetime>",
+        "last_reminder_at": null,
+        "outstanding_display": "₹9,500",
+        "outstanding_paise": 950000,
+        "payment_link_status": "created",
+        "payment_url": "https://rzp.io/rzp/baseline-inv-3008",
+        "reason_category": null,
+        "reason_explanation": null,
+        "recovered_at": null,
+        "reminders_sent": 0,
+        "status": "chasing"
+      },
+      "content_type": "application/json",
+      "status": 200
+    },
+    "GET payments INV-3001": {
+      "body": {
+        "balance": {
+          "amount_display": "₹12,500",
+          "external_paid_display": "₹0",
+          "fully_paid": false,
+          "invoice_number": "INV-3001",
+          "link_paid_display": "₹0",
+          "outstanding_display": "₹12,500",
+          "paid_display": "₹0",
+          "status": "chasing"
+        },
+        "payments": []
+      },
+      "content_type": "application/json",
+      "status": 200
+    },
+    "GET payments INV-3002": {
+      "body": {
+        "balance": {
+          "amount_display": "₹18,000",
+          "external_paid_display": "₹0",
+          "fully_paid": false,
+          "invoice_number": "INV-3002",
+          "link_paid_display": "₹0",
+          "outstanding_display": "₹18,000",
+          "paid_display": "₹0",
+          "status": "chasing"
+        },
+        "payments": []
+      },
+      "content_type": "application/json",
+      "status": 200
+    },
+    "GET payments INV-3003": {
+      "body": {
+        "balance": {
+          "amount_display": "₹34,000",
+          "external_paid_display": "₹0",
+          "fully_paid": false,
+          "invoice_number": "INV-3003",
+          "link_paid_display": "₹0",
+          "outstanding_display": "₹34,000",
+          "paid_display": "₹0",
+          "status": "chasing"
+        },
+        "payments": []
+      },
+      "content_type": "application/json",
+      "status": 200
+    },
+    "GET payments INV-3004": {
+      "body": {
+        "balance": {
+          "amount_display": "₹27,500",
+          "external_paid_display": "₹0",
+          "fully_paid": false,
+          "invoice_number": "INV-3004",
+          "link_paid_display": "₹0",
+          "outstanding_display": "₹27,500",
+          "paid_display": "₹0",
+          "status": "chasing"
+        },
+        "payments": []
+      },
+      "content_type": "application/json",
+      "status": 200
+    },
+    "GET payments INV-3005": {
+      "body": {
+        "balance": {
+          "amount_display": "₹41,000",
+          "external_paid_display": "₹0",
+          "fully_paid": false,
+          "invoice_number": "INV-3005",
+          "link_paid_display": "₹0",
+          "outstanding_display": "₹41,000",
+          "paid_display": "₹0",
+          "status": "chasing"
+        },
+        "payments": []
+      },
+      "content_type": "application/json",
+      "status": 200
+    },
+    "GET payments INV-3006": {
+      "body": {
+        "balance": {
+          "amount_display": "₹22,000",
+          "external_paid_display": "₹0",
+          "fully_paid": false,
+          "invoice_number": "INV-3006",
+          "link_paid_display": "₹0",
+          "outstanding_display": "₹22,000",
+          "paid_display": "₹0",
+          "status": "chasing"
+        },
+        "payments": []
+      },
+      "content_type": "application/json",
+      "status": 200
+    },
+    "GET payments INV-3007": {
+      "body": {
+        "balance": {
+          "amount_display": "₹16,500",
+          "external_paid_display": "₹0",
+          "fully_paid": false,
+          "invoice_number": "INV-3007",
+          "link_paid_display": "₹0",
+          "outstanding_display": "₹16,500",
+          "paid_display": "₹0",
+          "status": "chasing"
+        },
+        "payments": []
+      },
+      "content_type": "application/json",
+      "status": 200
+    },
+    "GET payments INV-3008": {
+      "body": {
+        "balance": {
+          "amount_display": "₹9,500",
+          "external_paid_display": "₹0",
+          "fully_paid": false,
+          "invoice_number": "INV-3008",
+          "link_paid_display": "₹0",
+          "outstanding_display": "₹9,500",
+          "paid_display": "₹0",
+          "status": "chasing"
+        },
+        "payments": []
+      },
+      "content_type": "application/json",
+      "status": 200
+    },
+    "POST /api/demo/advance": {
+      "body": {
+        "clock": {
+          "email_is_override": true,
+          "email_to": "baseline-reviewer@example.com",
+          "enabled": true,
+          "max_advance_days": 30,
+          "offset_days": 1,
+          "real_date": "<display-datetime>",
+          "simulated_date": "<display-datetime>",
+          "updated_by": "human:service"
+        },
+        "cycle": null
+      },
+      "content_type": "application/json",
+      "status": 200
+    },
+    "POST /api/demo/email-redirect clear": {
+      "body": {
+        "clock": {
+          "email_is_override": false,
+          "email_to": "tests@example.invalid",
+          "enabled": true,
+          "max_advance_days": 30,
+          "offset_days": 0,
+          "real_date": "<display-datetime>",
+          "simulated_date": "<display-datetime>",
+          "updated_by": "human:service"
+        }
+      },
+      "content_type": "application/json",
+      "status": 200
+    },
+    "POST /api/demo/email-redirect set": {
+      "body": {
+        "clock": {
+          "email_is_override": true,
+          "email_to": "baseline-reviewer@example.com",
+          "enabled": true,
+          "max_advance_days": 30,
+          "offset_days": 0,
+          "real_date": "<display-datetime>",
+          "simulated_date": "<display-datetime>",
+          "updated_by": "human:service"
+        }
+      },
+      "content_type": "application/json",
+      "status": 200
+    },
+    "POST /api/demo/reset": {
+      "body": {
+        "clock": {
+          "email_is_override": true,
+          "email_to": "baseline-reviewer@example.com",
+          "enabled": true,
+          "max_advance_days": 30,
+          "offset_days": 0,
+          "real_date": "<display-datetime>",
+          "simulated_date": "<display-datetime>",
+          "updated_by": "human:service"
+        }
+      },
+      "content_type": "application/json",
+      "status": 200
+    }
+  }
+}

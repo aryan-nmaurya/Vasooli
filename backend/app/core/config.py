@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     razorpay_key_id: str
     razorpay_key_secret: str
     razorpay_webhook_secret: str
+    razorpay_plan_id_starter: str | None = None
+    razorpay_plan_id_growth: str | None = None
+    razorpay_plan_id_scale: str | None = None
+    razorpay_subscriptions_enabled: bool = False
     #: Minimum gap between Razorpay API calls. Test mode rate-limits aggressively —
     #: a 60-invoice batch fired flat out trips it within a few requests.
     razorpay_min_request_interval_seconds: float = 1.5
@@ -92,6 +96,9 @@ class Settings(BaseSettings):
     #: HMAC key for session tokens. Rotating it invalidates every live session, which
     #: is the intended way to force everyone out.
     session_secret: str = ""
+    #: Optional Fernet key for connector credentials. Production should source this
+    #: from KMS/secret-manager material rather than reusing the session signing key.
+    credential_encryption_key: str | None = None
     # NoDecode: without it the dotenv source tries to JSON-parse this field before
     # our validator runs, so a comma-separated CORS_ORIGINS would be a hard error.
     cors_origins: Annotated[list[str], NoDecode] = Field(
@@ -128,6 +135,10 @@ class Settings(BaseSettings):
     reviewer_access_enabled: bool = False
     #: Which account the reviewer button signs into. Must exist and must be an auditor.
     reviewer_username: str = "reviewer"
+
+    # Phase 1 live identity is deployed dark until staging evidence and launch
+    # ownership are complete. Demo authentication is independent of this flag.
+    live_registration_enabled: bool = False
 
     @field_validator("database_url")
     @classmethod
@@ -173,6 +184,16 @@ class Settings(BaseSettings):
             )
         if self.razorpay_key_id.startswith("rzp_live_") and not self.allow_live_razorpay:
             raise RuntimeError("Live Razorpay credentials require ALLOW_LIVE_RAZORPAY=true")
+        # Merchant Razorpay credentials are encrypted with this key. Without it the
+        # code used to derive one from SESSION_SECRET, which meant rotating that
+        # secret — the ordinary way to revoke every session — silently made every
+        # stored credential undecryptable. Refuse to start rather than inherit it.
+        if not self.credential_encryption_key:
+            raise RuntimeError(
+                "CREDENTIAL_ENCRYPTION_KEY must be set in production. Generate one with:\n"
+                "  python -c 'from cryptography.fernet import Fernet; "
+                "print(Fernet.generate_key().decode())'"
+            )
 
     def assert_safe_to_send(self) -> None:
         """Refuse to send live mail without a redirect target.

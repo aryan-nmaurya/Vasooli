@@ -43,11 +43,33 @@ PUBLIC_BY_DESIGN = {
         "app.api.deps rejecting every non-GET — so this hands out no write access. "
         "404s entirely unless REVIEWER_ACCESS_ENABLED is set"
     ),
+    "/api/live/auth/register": "public live account enrollment; feature-flagged",
+    "/api/live/auth/verify-email": "public email verification token exchange",
+    "/api/live/auth/login": "public live credential exchange",
+    "/api/live/auth/refresh": "public live refresh-token exchange",
+    "/api/live/auth/logout": "public live cookie clearing",
+    "/api/live/billing/plans": (
+        "the published price list — slug, name, amount, and included caps, and nothing "
+        "merchant- or customer-owned. The pricing page is unauthenticated by "
+        "definition, and prices a prospect cannot read are not prices"
+    ),
+    "/api/live/auth/forgot-password": "public non-enumerating reset request",
+    "/api/live/auth/reset-password": "public password-reset token exchange",
+    "/api/live/auth/accept-invite": "public invitation enrollment token exchange",
 }
 
 #: Razorpay cannot log in. Proven by an HMAC over the raw body instead, so these
 #: reject with 400 (bad signature) rather than 401 (no session).
-SIGNATURE_GATED_PREFIX = "/api/webhooks/"
+#: Routes authenticated by a provider signature over the raw body rather than by a
+#: session. A provider cannot log in, so 401 would be wrong; these must answer 400
+#: to an unsigned payload. Billing lives outside /api/webhooks/ because it is the
+#: platform's own Razorpay account rather than a merchant's, and the two use
+#: different secrets — but it is verified the same way.
+SIGNATURE_GATED_PREFIX = ("/api/webhooks/", "/api/live/billing/webhook")
+
+#: The multi-tenant surface. These require a live session and an explicit
+#: X-Merchant-ID; the tenancy-free admin key is refused by design.
+LIVE_PREFIX = "/api/live/"
 
 
 def _discover(app_client, *, methods: tuple[str, ...]) -> list[tuple[str, str]]:
@@ -121,11 +143,17 @@ def test_no_customer_data_leaks_in_the_401_body(api, merchant, customer, invoice
 # ===========================================================================
 
 
-def test_the_admin_key_grants_access_to_every_read(api):
-    """The gate must not merely reject — the right credential has to get through."""
+def test_the_admin_key_grants_access_to_every_legacy_read(api):
+    """The gate must not merely reject — the right credential has to get through.
+
+    Scoped to the demo/legacy surface. `/api/live/**` is deliberately excluded and is
+    covered by the test below, which asserts the opposite for those routes.
+    """
     refused = []
     for _, path in _discover(api, methods=("GET",)):
         if path in PUBLIC_BY_DESIGN or path.startswith(SIGNATURE_GATED_PREFIX):
+            continue
+        if path.startswith(LIVE_PREFIX):
             continue
         if path in ("/openapi.json", "/docs", "/redoc", "/docs/oauth2-redirect"):
             continue
@@ -135,6 +163,32 @@ def test_the_admin_key_grants_access_to_every_read(api):
         if resp.status_code == 401:
             refused.append(f"GET {path}")
     assert not refused, "admin key refused on:\n  " + "\n  ".join(refused)
+
+
+def test_the_admin_key_does_not_reach_live_tenant_data(api):
+    """A global service key must not open a tenant's data.
+
+    `X-Admin-Key` predates tenancy and carries no merchant context, so there is no
+    answer to "whose rows?". Accepting it on a live route would mean either serving
+    an arbitrary tenant's data or picking one — both worse than refusing. Live routes
+    require a session plus an explicit X-Merchant-ID, and a membership backs it.
+
+    The inverse of the test above, and the reason that one had to be narrowed: this
+    behaviour is the point, not a regression to be allowlisted away.
+    """
+    accepted = []
+    for _, path in _discover(api, methods=("GET",)):
+        if not path.startswith(LIVE_PREFIX):
+            continue
+        if path in PUBLIC_BY_DESIGN or path.startswith(SIGNATURE_GATED_PREFIX):
+            continue
+        resp = api.get(_concrete(path), headers={"X-Admin-Key": settings.admin_api_key})
+        if resp.status_code != 401:
+            accepted.append(f"GET {path} -> {resp.status_code}")
+    assert not accepted, (
+        "the global admin key reached live tenant routes, which carry no merchant "
+        "context:\n  " + "\n  ".join(accepted)
+    )
 
 
 def test_a_wrong_admin_key_is_refused(api):
@@ -380,7 +434,7 @@ def test_every_endpoint_is_gated_or_deliberately_public(api):
         "/api/auth/logout": "clears a cookie",
     }
     #: Razorpay cannot log in. Proven by HMAC over the raw body instead.
-    signature_gated = "/api/webhooks/"
+    signature_gated = SIGNATURE_GATED_PREFIX
 
     spec = api.get("/openapi.json").json()
     unprotected = []
