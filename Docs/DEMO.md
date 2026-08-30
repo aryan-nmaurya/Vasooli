@@ -46,8 +46,15 @@ test mode allows about six link creations per minute.
 Use the deployed TLS endpoint for the production demo:
 
 ```bash
-curl https://api-13-204-55-131.sslip.io/health
+curl https://api.vasooli.space/health
 ```
+
+The bare Elastic IP and its `sslip.io` alias no longer answer HTTPS at all — Caddy
+holds a certificate only for `api.vasooli.space` now (see `deploy/Caddyfile`), and a
+request presenting any other hostname fails the TLS handshake before it ever reaches
+the app. If a check against the old address ever gets pasted into a review again,
+that failure is the certificate, not the server — verify against the domain above
+before concluding anything is down.
 
 For a fully local rehearsal only, a public tunnel is still required. Never leave a
 temporary tunnel URL configured in Razorpay after the rehearsal.
@@ -58,7 +65,7 @@ Dashboard → **Test Mode** → Account & Settings → Webhooks → **Add New We
 
 | Field | Value |
 |---|---|
-| Webhook URL | `https://api-13-204-55-131.sslip.io/api/webhooks/razorpay` |
+| Webhook URL | `https://api.vasooli.space/api/webhooks/razorpay` |
 | Secret | the same value as `RAZORPAY_WEBHOOK_SECRET` |
 | Active Events | search `payment_link` → tick **`payment_link.paid`** and **`payment_link.partially_paid`** only |
 
