@@ -14,6 +14,7 @@ from app.api import (
     exports,
     health,
     invoices,
+    payments,
     replies,
     webhooks,
 )
@@ -105,6 +106,7 @@ def create_app() -> FastAPI:
     app.include_router(admin.router)
     app.include_router(replies.router)
     app.include_router(dashboard.router)
+    app.include_router(payments.router)
     app.include_router(demo.router)
     app.include_router(exports.router)
     return app

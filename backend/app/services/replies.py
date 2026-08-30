@@ -12,6 +12,7 @@ verified Razorpay payment does that.
 """
 
 from dataclasses import dataclass, replace
+from datetime import timedelta
 
 from sqlmodel import Session, select
 
@@ -25,9 +26,11 @@ from app.models import (
     AuditActor,
     AuditLog,
     Customer,
+    InboundMessage,
     Invoice,
     Promise,
 )
+from app.models.inbound_message import MAX_INBOUND_ATTEMPTS
 from app.services.ai_audit import AITask, record_ai_outcome
 from app.services.disputes import record_dispute
 
@@ -85,8 +88,16 @@ def handle_reply(
     *,
     use_llm: bool = True,
     inbound_message_id: str | None = None,
+    count_as_new_reply: bool = True,
 ) -> ReplyOutcome:
-    """Record a reply and act on what it says."""
+    """Record a reply and act on what it says.
+
+    `count_as_new_reply` is False only on a reprocess where the reply history was
+    already written by an earlier attempt that failed further down. Without it, a
+    message that failed after its mid-way commit would add a second reply to the
+    invoice's history every time it was retried, and `reply_count` drives whether a
+    customer is classified "unresponsive".
+    """
     body = strip_quoted_text(raw_body)
 
     # Record the reply on the invoice BEFORE deciding what it means.
@@ -95,10 +106,11 @@ def handle_reply(
     # after Tier 2, so a customer who answered — even vaguely — must never be
     # classified that way. Before this existed, `has_reply` was hardcoded False and
     # every replying customer eventually became "unresponsive".
-    invoice.reply_count += 1
-    invoice.last_reply_at = utcnow()
-    invoice.last_reply_excerpt = body[:400]
-    session.add(invoice)
+    if count_as_new_reply:
+        invoice.reply_count += 1
+        invoice.last_reply_at = utcnow()
+        invoice.last_reply_excerpt = body[:400]
+        session.add(invoice)
 
     session.add(
         AuditLog(
@@ -296,3 +308,157 @@ def find_invoice_for_reply(session: Session, *, invoice_number: str) -> Invoice 
 
 def find_customer(session: Session, invoice: Invoice) -> Customer | None:
     return session.get(Customer, invoice.customer_id)
+
+
+# ---------------------------------------------------------------------------
+# Reprocessing failed inbound messages.
+#
+# The webhook answers 200 the moment a message is stored — that is deliberate and it
+# is what stops the provider redelivering. The consequence is that if `handle_reply`
+# raises afterwards, the provider considers the message delivered and nothing on their
+# side will ever send it again. Before this, that was the end of the road: the failure
+# existed only as a string in a column nobody queried, and a customer's "we paid this
+# on the 14th" was silently dropped while the reminders carried on.
+#
+# So the retry has to be ours. Same shape as the delivery, closure, and webhook
+# retries, swept by the same job, with the same bounded backoff and the same escape
+# hatch of an operator button once the automatic attempts are spent.
+# ---------------------------------------------------------------------------
+
+
+def _inbound_backoff(attempt: int) -> timedelta:
+    """Bounded: 1m, 2m, 4m, 8m, capped at 15m."""
+    return timedelta(seconds=min(60 * (2 ** max(0, attempt - 1)), 900))
+
+
+def mark_inbound_failed(session: Session, message: InboundMessage, error: str) -> None:
+    """Record a processing failure and schedule the next attempt."""
+    message.processing_attempts += 1
+    message.last_attempt_at = utcnow()
+    message.processing_error = f"{error}"[:500]
+    message.next_retry_at = (
+        utcnow() + _inbound_backoff(message.processing_attempts)
+        if message.processing_attempts < MAX_INBOUND_ATTEMPTS
+        else None  # exhausted: an operator has to read it
+    )
+    session.add(message)
+    session.add(
+        AuditLog(
+            invoice_id=message.invoice_id,
+            actor=AuditActor.SYSTEM,
+            action=AuditAction.INBOUND_PROCESSING_FAILED,
+            detail={
+                "inbound_message_id": str(message.id),
+                "sender": message.sender,
+                "error": message.processing_error,
+                "attempts": message.processing_attempts,
+                "next_retry_at": (
+                    message.next_retry_at.isoformat() if message.next_retry_at else None
+                ),
+                "exhausted": message.processing_attempts >= MAX_INBOUND_ATTEMPTS,
+            },
+        )
+    )
+    session.commit()
+    log.warning(
+        "replies.processing_failed",
+        inbound_message_id=str(message.id),
+        attempts=message.processing_attempts,
+        error=message.processing_error,
+    )
+
+
+def reprocess_inbound(session: Session, message: InboundMessage) -> bool:
+    """Re-run reply handling for one stored message. Returns True on success.
+
+    Safe to call repeatedly. `handle_reply` is idempotent on the paths that matter: a
+    dispute already open is recorded as a replay rather than opened twice, and a
+    promise is written against the invoice's current state rather than accumulated.
+    """
+    if message.processed_at is not None:
+        return True
+
+    invoice = session.get(Invoice, message.invoice_id)
+    if invoice is None:
+        # Nothing to reprocess against. Terminal rather than retried forever.
+        message.processing_attempts = MAX_INBOUND_ATTEMPTS
+        message.processing_error = "invoice missing"
+        message.next_retry_at = None
+        session.add(message)
+        session.commit()
+        return False
+
+    # An earlier attempt may have committed the reply history before failing further
+    # down — handle_reply commits mid-way on the dispute branch. Counting it again
+    # would inflate reply_count, which decides whether a customer is "unresponsive".
+    already_recorded = bool(
+        session.exec(
+            select(AuditLog).where(
+                AuditLog.invoice_id == invoice.id,
+                AuditLog.action == AuditAction.REPLY_RECEIVED,
+                AuditLog.detail["inbound_message_id"].astext == str(message.id),  # type: ignore[index]
+            )
+        ).first()
+    )
+
+    try:
+        handle_reply(
+            session,
+            invoice,
+            message.body_text[:20_000],
+            inbound_message_id=str(message.id),
+            count_as_new_reply=not already_recorded,
+        )
+    except Exception as exc:  # noqa: BLE001
+        session.rollback()
+        session.refresh(message)
+        mark_inbound_failed(session, message, f"{type(exc).__name__}: {exc}")
+        return False
+
+    message.processed_at = utcnow()
+    message.processing_error = None
+    message.next_retry_at = None
+    message.last_attempt_at = utcnow()
+    message.processing_attempts += 1
+    session.add(message)
+    session.commit()
+    log.info("replies.reprocessed", inbound_message_id=str(message.id))
+    return True
+
+
+def retry_failed_inbound(
+    session: Session, *, limit: int = 50, force_ids: list[str] | None = None
+) -> dict[str, int]:
+    """Reprocess inbound messages whose backoff has elapsed.
+
+    `force_ids` bypasses the backoff for an operator pressing "reprocess" on a specific
+    message — including exhausted ones, which is the entire point of a manual retry.
+    """
+    if force_ids:
+        due = list(
+            session.exec(
+                select(InboundMessage).where(
+                    InboundMessage.id.in_(force_ids),  # type: ignore[attr-defined]
+                    InboundMessage.processed_at.is_(None),  # type: ignore[union-attr]
+                )
+            ).all()
+        )
+    else:
+        now = utcnow()
+        due = list(
+            session.exec(
+                select(InboundMessage)
+                .where(
+                    InboundMessage.processed_at.is_(None),  # type: ignore[union-attr]
+                    InboundMessage.processing_attempts < MAX_INBOUND_ATTEMPTS,
+                    InboundMessage.next_retry_at.is_not(None),  # type: ignore[union-attr]
+                    InboundMessage.next_retry_at <= now,  # type: ignore[operator]
+                )
+                .limit(limit)
+            ).all()
+        )
+
+    recovered = sum(1 for message in due if reprocess_inbound(session, message))
+    if due:
+        log.info("replies.retry_complete", attempted=len(due), recovered=recovered)
+    return {"attempted": len(due), "recovered": recovered}

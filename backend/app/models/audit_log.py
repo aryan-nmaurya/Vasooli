@@ -53,11 +53,25 @@ class AuditAction:
     POLICY_REJECTED = "policy_rejected"
     REMINDER_SENT = "reminder_sent"
     REMINDER_FAILED = "reminder_failed"
+    #: What the mail provider reported AFTER accepting the message: delivered,
+    #: bounced, deferred, or marked as spam. Separate from REMINDER_SENT, which only
+    #: ever meant the provider took custody of it.
+    REMINDER_DELIVERY_UPDATED = "reminder_delivery_updated"
+    #: Automated email stopped for an invoice because the address permanently refused
+    #: it or the recipient marked it as spam.
+    CONTACT_SUPPRESSED = "contact_suppressed"
     REPLY_RECEIVED = "reply_received"
+    #: A stored inbound message that could not be interpreted. Retryable, and visible
+    #: in the exceptions queue rather than only in a column nobody queries.
+    INBOUND_PROCESSING_FAILED = "inbound_processing_failed"
+    INBOUND_REPROCESSED = "inbound_reprocessed"
     PROMISE_LOGGED = "promise_logged"
     PROMISE_KEPT = "promise_kept"
     PROMISE_BROKEN = "promise_broken"
     ESCALATED_TO_HUMAN = "escalated_to_human"
+    #: An operator gave up on an invoice. Kept as a constant rather than a literal at
+    #: the call site so the dashboard filter and the summary map cannot drift from it.
+    INVOICE_WRITTEN_OFF = "written_off"
     # --- Customer conversation safety ---------------------------------------
     #: The AI read a dispute in a customer's reply. An observation, not a decision.
     DISPUTE_DETECTED = "dispute_detected"
@@ -80,6 +94,15 @@ class AuditAction:
     #: system's one side effect on the outside world; where it went is recorded.
     DEMO_EMAIL_REDIRECTED = "demo_email_redirected"
     PAYMENT_RECONCILED = "payment_reconciled"
+    # --- Money recorded by a person, not by a provider -----------------------
+    #: A bank transfer, UPI, cheque, or agreed adjustment entered by an operator. The
+    #: detail carries "verification": "operator_asserted" so the trail never lets this
+    #: be mistaken for a signed Razorpay event.
+    EXTERNAL_PAYMENT_RECORDED = "external_payment_recorded"
+    #: A recorded payment retracted. The row survives; the balance is recomputed.
+    EXTERNAL_PAYMENT_REVERSED = "external_payment_reversed"
+    #: An unmatched Razorpay settlement an operator tied to an invoice by hand.
+    RECONCILIATION_MANUALLY_MATCHED = "reconciliation_manually_matched"
     PAYMENT_LINK_CLOSED = "payment_link_closed"
     PAYMENT_LINK_CLOSE_FAILED = "payment_link_close_failed"
     PAYMENT_LINK_CLOSE_RETRIED = "payment_link_close_retried"

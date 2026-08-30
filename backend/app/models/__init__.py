@@ -10,8 +10,11 @@ from app.models.audit_log import AuditAction, AuditActor, AuditLog
 from app.models.customer import Customer
 from app.models.demo_settings import DemoSettings
 from app.models.dispute_case import DisputeCase
+from app.models.email_event import DeliveryState, EmailEvent
+from app.models.external_payment import ExternalPayment, PaymentMethod
 from app.models.inbound_message import InboundMessage
 from app.models.invoice import Invoice
+from app.models.job_run import JobRun, JobStatus
 from app.models.merchant import Merchant
 from app.models.operator_account import OperatorAccount
 from app.models.payment_link import PaymentLink, PaymentLinkStatus
@@ -25,12 +28,18 @@ __all__ = [
     "AuditLog",
     "Customer",
     "DemoSettings",
+    "DeliveryState",
     "DisputeCase",
+    "EmailEvent",
+    "ExternalPayment",
     "Invoice",
     "InboundMessage",
+    "JobRun",
+    "JobStatus",
     "Merchant",
     "OperatorAccount",
     "PaymentLink",
+    "PaymentMethod",
     "PaymentLinkStatus",
     "Promise",
     "ReconciliationEvent",

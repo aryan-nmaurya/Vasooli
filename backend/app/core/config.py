@@ -105,6 +105,24 @@ class Settings(BaseSettings):
     #: wound back without a redeploy. A real multi-merchant deployment leaves it off.
     demo_controls_enabled: bool = False
 
+    # --- Reviewer access -----------------------------------------------------
+    #: Lets anyone reaching the login page open a READ-ONLY session without a
+    #: credential being sent to them separately.
+    #:
+    #: The audit's complaint was practical rather than architectural: the public
+    #: "Open the live demo" button led to a login wall with no way through, so a
+    #: reviewer's first experience of a working system was a dead end. Handing out a
+    #: shared password by email is worse — it is a real credential in a mailbox, and it
+    #: is the same one for everyone.
+    #:
+    #: This grants a session on an existing account instead, and `auth.reviewer_login`
+    #: refuses to issue one unless that account's role is `auditor`. The read-only
+    #: guarantee is the role check that already exists in app.api.deps, not a promise
+    #: made here — a misconfigured account name cannot quietly hand out write access.
+    reviewer_access_enabled: bool = False
+    #: Which account the reviewer button signs into. Must exist and must be an auditor.
+    reviewer_username: str = "reviewer"
+
     @field_validator("database_url")
     @classmethod
     def _require_psycopg_driver(cls, v: str) -> str:

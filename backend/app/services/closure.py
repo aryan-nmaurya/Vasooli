@@ -186,7 +186,7 @@ def retry_pending_closures(
     closed = 0
     for link in due:
         invoice = session.get(Invoice, link.invoice_id)
-        if invoice is None or not invoice.is_fully_paid:
+        if invoice is None or not invoice.link_should_be_closed:
             # No longer eligible — the invoice was adjusted, or this row is stale.
             link.next_closure_retry_at = None
             session.add(link)

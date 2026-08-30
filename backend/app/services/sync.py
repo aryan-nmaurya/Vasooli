@@ -91,7 +91,11 @@ def sync_payment_links(
             )
             continue
 
-        if remote.amount_paid_paise <= invoice.amount_paid_paise:
+        # Compared against the LINK total, not the invoice's combined balance. An
+        # invoice partly settled by a hand-recorded bank transfer has a larger combined
+        # balance than the link will ever report, and comparing against that would make
+        # the sync skip a genuine link payment forever.
+        if remote.amount_paid_paise <= invoice.link_paid_paise:
             continue  # nothing new
 
         event_id = _event_id_for(link.razorpay_payment_link_id, remote.amount_paid_paise)

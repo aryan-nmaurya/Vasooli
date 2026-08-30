@@ -55,7 +55,29 @@ class Invoice(SQLModel, table=True):
 
     invoice_number: str = Field(index=True, unique=True)  # "INV-2291"
     amount_paise: int = Field(sa_column=money_column())
+
+    #: Total settled, from every source. Derived — always the sum of the two columns
+    #: below — and kept on the row because the policy engine and every dashboard query
+    #: read it, and neither should have to add up a ledger to find out whether an
+    #: invoice is paid.
     amount_paid_paise: int = Field(default=0, sa_column=money_column(default=0))
+
+    #: The running total Razorpay reports for this invoice's payment link.
+    #:
+    #: Its own column, and this is load-bearing. Reconciliation applies the provider's
+    #: figure with `max()`, which is what makes a duplicate or out-of-order webhook
+    #: harmless. If operator-entered payments shared that column, a ₹50,000 bank
+    #: transfer recorded by hand would make every subsequent link payment look like a
+    #: stale, smaller total — `max()` would discard it, and real money would silently
+    #: vanish from the balance. Separating the sources keeps `max()` correct for the
+    #: one source it describes.
+    link_paid_paise: int = Field(default=0, sa_column=money_column(default=0))
+
+    #: The sum of every non-reversed ExternalPayment: bank transfers, UPI outside the
+    #: link, cheques, cash, agreed adjustments. Additive, because each entry is a
+    #: distinct transaction rather than a restatement of one running total.
+    external_paid_paise: int = Field(default=0, sa_column=money_column(default=0))
+
     currency: str = "INR"
 
     issued_at: datetime = Field(sa_column=timestamp_column())
@@ -144,6 +166,19 @@ class Invoice(SQLModel, table=True):
     def has_replied(self) -> bool:
         """Has this customer ever answered a reminder?"""
         return self.reply_count > 0
+
+    @property
+    def link_should_be_closed(self) -> bool:
+        """No further money should be accepted against this invoice.
+
+        Full payment and a write-off are different decisions with the same consequence
+        for the payment route. A settled invoice must not take a second payment; an
+        invoice the merchant has given up on must not quietly collect money into a
+        balance nobody is reconciling any more. Closure eligibility keys on this rather
+        than on `is_fully_paid` alone, which previously left every written-off
+        invoice's Razorpay link live indefinitely.
+        """
+        return self.is_fully_paid or self.status == InvoiceStatus.WRITTEN_OFF
 
     @property
     def is_in_automation(self) -> bool:

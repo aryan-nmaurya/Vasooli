@@ -7,6 +7,7 @@ import { DisputeCard } from "@/components/DisputeCard";
 import { PolicyCard } from "@/components/PolicyCard";
 import { WhyCard } from "@/components/WhyCard";
 import { ProvisionButton } from "@/components/ProvisionButton";
+import { RecordPayment } from "@/components/RecordPayment";
 import { SimulateReply } from "@/components/SimulateReply";
 import { getInvoice } from "@/lib/api";
 
@@ -107,6 +108,14 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
           </div>
         </section>
       ) : null}
+
+      <RecordPayment
+        invoiceId={invoice.id}
+        outstandingDisplay={invoice.outstanding_display}
+        linkPaidDisplay={invoice.link_paid_display}
+        externalPaidDisplay={invoice.external_paid_display}
+        payments={invoice.external_payments}
+      />
 
       {invoice.payment_url ? (
         <section className="rounded-xl border border-line bg-panel px-5 py-4">

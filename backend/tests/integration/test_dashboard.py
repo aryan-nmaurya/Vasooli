@@ -327,3 +327,20 @@ def test_write_off_removes_the_invoice_from_the_outstanding_total(api, session, 
     # pre-write-off copy of the row.
     session.expire_all()
     assert compute_metrics(session).total_overdue_paise == 0
+
+
+def test_a_human_action_is_badged_as_human_not_as_the_system(api, session, merchant, customer):
+    """An audit trail that attributes a person's decision to the machine is worse than
+    no attribution at all — it is a confident wrong answer to "who did this?"."""
+    inv = add_invoice(
+        session, merchant, customer, number="ATTRIB-1", amount=100_000, status=InvoiceStatus.CHASING
+    )
+    api.post(f"/api/dashboard/invoices/{inv.id}/escalate")
+
+    entry = next(
+        row
+        for row in api.get("/api/dashboard/audit").json()
+        if row["action"] == "escalated_to_human"
+    )
+    assert entry["actor"].startswith("human:")
+    assert entry["provenance"] == "human"

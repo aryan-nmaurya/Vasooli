@@ -139,6 +139,14 @@ class InvoiceDetail(BaseModel):
     amount_display: str
     paid_display: str
     outstanding_display: str
+    #: The balance split by source. Never collapsed into one number on this screen:
+    #: an operator deciding whether to chase has to see which part Razorpay verified
+    #: and which part a colleague typed in.
+    link_paid_display: str = "₹0"
+    external_paid_display: str = "₹0"
+    #: Payments recorded by hand, reversed entries included. A balance that once said
+    #: "paid" and now says "owed" is exactly the history a customer will ask about.
+    external_payments: list[dict] = []
     status: str
     days_overdue: int
     due_at: datetime

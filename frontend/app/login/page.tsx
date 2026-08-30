@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 
 function LoginForm() {
   const router = useRouter();
@@ -11,6 +11,44 @@ function LoginForm() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  //: Whether this deployment offers a read-only reviewer session. Asked rather than
+  //: assumed: rendering a button that can only 404 is worse than rendering none.
+  const [reviewerAccess, setReviewerAccess] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/auth")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (alive && data) setReviewerAccess(Boolean(data.reviewer_access));
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  async function continueAsReviewer() {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/auth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reviewer: true }),
+      });
+      if (!res.ok) {
+        setError("Reviewer access is not available on this deployment right now.");
+        return;
+      }
+      router.replace(params.get("next") || "/");
+      router.refresh();
+    } catch {
+      setError("Could not reach the server.");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -81,6 +119,29 @@ function LoginForm() {
           <p className="text-xs text-rose-700 dark:text-rose-300">{error}</p>
         ) : null}
       </form>
+
+      {/* A reviewer arriving from the public site previously hit this wall with no way
+          through, which made a working system look like a dead demo. The alternative —
+          mailing a shared password around — puts a real credential in an inbox and
+          gives everyone the same one. This opens a session on the read-only auditor
+          role instead; the backend refuses every write for it. */}
+      {reviewerAccess ? (
+        <div className="mt-5 border-t border-line pt-4">
+          <button
+            onClick={continueAsReviewer}
+            disabled={busy}
+            className="w-full rounded-md border border-line px-3 py-2 text-sm font-medium text-ink transition hover:bg-panel-2 disabled:opacity-50"
+          >
+            Continue as reviewer (read-only)
+          </button>
+          <p className="mt-2 text-[11px] leading-relaxed text-ink-3">
+            Opens the real dashboard over the seeded demo ledger — synthetic customers
+            on invented domains, Razorpay test mode, no real money. Every write —
+            sending, importing, recording a payment, resolving a dispute — is refused
+            for this session.
+          </p>
+        </div>
+      ) : null}
 
       {/* A reviewer who arrives here without credentials must not be stuck. Both
           destinations are public and carry no data. */}

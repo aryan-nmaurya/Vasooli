@@ -25,10 +25,32 @@ from app.core.logging import get_logger
 
 log = get_logger("security")
 
-#: Reject anything larger before reading it. The largest legitimate request is a batch
-#: ingest of a few hundred invoices; 2 MB is far above that and far below anything that
-#: would trouble the process.
+#: Reject anything larger before reading it. The largest legitimate JSON request is a
+#: batch ingest of a few hundred invoices; 2 MB is far above that and far below
+#: anything that would trouble the process.
 MAX_BODY_BYTES = 2 * 1024 * 1024
+
+#: The ledger CSV upload is the one route that legitimately carries more, and its own
+#: documented ceiling is 5 MB of file. A multipart body wraps that file in boundaries
+#: and part headers, so the transport cap has to sit above the file cap or a
+#: 5 MB upload is refused by the middleware before the endpoint can apply its own
+#: limit — the endpoint's error message would never be reachable, and the documented
+#: 5 MB would be a lie by about a megabyte.
+#:
+#: Kept as an explicit exception rather than raising the global cap: every other
+#: endpoint on this API takes small JSON, and there is no reason for them to accept
+#: three times more than they can use.
+UPLOAD_BODY_BYTES = 6 * 1024 * 1024
+
+#: Paths allowed the larger body. Prefix match, so the versioned/trailing-slash
+#: variants of the same route are covered.
+UPLOAD_PATHS = ("/api/invoices/import",)
+
+
+def body_limit_for(path: str) -> int:
+    """The largest body this path may carry."""
+    return UPLOAD_BODY_BYTES if path.startswith(UPLOAD_PATHS) else MAX_BODY_BYTES
+
 
 #: Per-path-group limits, as (requests, seconds).
 #:
@@ -64,9 +86,10 @@ class BodySizeLimitMiddleware:
             await self.app(scope, receive, send)
             return
 
+        limit = body_limit_for(scope.get("path") or "")
         headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope["headers"]}
         declared = headers.get("content-length")
-        if declared and declared.isdigit() and int(declared) > MAX_BODY_BYTES:
+        if declared and declared.isdigit() and int(declared) > limit:
             await _send_413(send, scope, size=int(declared), reason="declared")
             return
 
@@ -76,7 +99,7 @@ class BodySizeLimitMiddleware:
             message = await receive()
             if message["type"] == "http.request":
                 state["received"] += len(message.get("body", b""))
-                if state["received"] > MAX_BODY_BYTES:
+                if state["received"] > limit:
                     state["too_large"] = True
                     # Cut the body off here. The handler sees the stream end; the
                     # guarded send below turns the outcome into a clean 413.

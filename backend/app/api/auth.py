@@ -85,6 +85,76 @@ def login(payload: LoginRequest, response: Response, session: SessionDep) -> dic
     }
 
 
+@router.get("/modes")
+def auth_modes() -> dict[str, bool]:
+    """What sign-in routes exist. Public, and deliberately carries no secret.
+
+    The login page is unauthenticated by definition, so it cannot ask a gated endpoint
+    whether the reviewer button should be rendered. Showing a button that can only
+    return 404 is worse than showing none.
+    """
+    return {"reviewer_access": settings.reviewer_access_enabled}
+
+
+@router.post("/reviewer")
+def reviewer_login(response: Response, session: SessionDep) -> dict[str, str]:
+    """Open a read-only session without a credential having to be sent to anyone.
+
+    The public "Open the live demo" call to action previously ended at a login wall
+    with no way through, which made a working system look like a dead demo. The
+    alternative — mailing a shared password around — puts a real credential in
+    somebody's inbox and gives every reviewer the same one.
+
+    The read-only guarantee is NOT made here. It is the auditor role check in
+    `app.api.deps.require_operator`, which refuses every non-GET request. This endpoint
+    only refuses to issue a session for an account that is not an auditor, so a
+    mistyped REVIEWER_USERNAME pointing at an admin account fails closed instead of
+    handing a stranger write access to a receivables ledger.
+    """
+    if not settings.reviewer_access_enabled:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
+
+    username = settings.reviewer_username.casefold()
+    account = session.exec(
+        select(OperatorAccount).where(OperatorAccount.username == username)
+    ).first()
+
+    if account is None or not account.is_active:
+        log.error("auth.reviewer_account_missing", username=username)
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Reviewer access is enabled but the reviewer account is not set up",
+        )
+
+    if account.role != "auditor":
+        # Fail closed. Enabling a convenience must never be the thing that grants
+        # write access to customer data.
+        log.error("auth.reviewer_account_not_auditor", username=username, role=account.role)
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "The reviewer account must have the read-only auditor role",
+        )
+
+    now = utcnow()
+    account.last_login_at = now
+    account.updated_at = now
+    session.add(account)
+    session.commit()
+
+    token = create_session_token(f"{account.username}~{account.session_version}")
+    response.set_cookie(
+        SESSION_COOKIE,
+        token,
+        max_age=DEFAULT_TTL_SECONDS,
+        httponly=True,
+        samesite="lax",
+        secure=settings.is_production,
+        path="/",
+    )
+    log.info("auth.reviewer_session_issued", operator=account.username)
+    return {"status": "ok", "username": account.username, "role": account.role}
+
+
 @router.post("/logout")
 def logout(response: Response) -> dict[str, str]:
     response.delete_cookie(SESSION_COOKIE, path="/")

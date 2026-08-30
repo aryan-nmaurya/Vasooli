@@ -8,8 +8,12 @@ import Link from "next/link";
  * what the product does, not that it is a hackathon build, not that the interesting
  * behaviour is two clicks away behind a login they do not have.
  *
- * It carries no credentials. Those are handed over separately, per reviewer, so a
- * public URL never becomes a way in.
+ * It carries no credentials, and it no longer needs to. Where the deployment enables
+ * it, the login page offers a read-only reviewer session on the `auditor` role, which
+ * cannot write anything — so a reviewer with nobody to ask can still see the real
+ * dashboard over the seeded demo ledger. A shared password handed out per reviewer was
+ * the previous
+ * answer, and it is a worse one: it is a real credential sitting in somebody's inbox.
  */
 
 export const metadata = {
@@ -264,9 +268,16 @@ export default function GuidePage() {
             href="/login"
             className="rounded-md px-3 py-1.5 text-sm text-ink-2 ring-1 ring-inset ring-line transition hover:bg-panel-2 hover:text-ink"
           >
-            Sign in
+            Open the dashboard
           </Link>
         </div>
+        <p className="mt-3 text-xs text-ink-3">
+          If this deployment has reviewer access enabled, the login page offers
+          &ldquo;Continue as reviewer&rdquo; — a read-only session over the seeded demo
+          ledger. The workflows are real; the customers are synthetic and the money is
+          Razorpay test mode. Every write is refused for that session, so nothing you
+          click can send anyone an email or change what the system believes it is owed.
+        </p>
       </Section>
     </div>
   );

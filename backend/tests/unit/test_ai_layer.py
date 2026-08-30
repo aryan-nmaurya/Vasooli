@@ -11,7 +11,13 @@ import pytest
 
 from app.ai.client import LLMResult
 from app.ai.diagnosis import DiagnosisInputs, diagnose, rule_based_diagnosis
-from app.ai.drafting import DraftInputs, draft_reminder, template_draft, verify_figures
+from app.ai.drafting import (
+    DraftInputs,
+    draft_reminder,
+    find_invented_figures,
+    template_draft,
+    verify_figures,
+)
 from app.ai.promise_extraction import extract_promise
 from app.ai.schemas import DiagnosisResponse, DraftResponse, PromiseExtraction
 from app.core.constants import ReasonCategory
@@ -393,3 +399,86 @@ def test_the_prompt_frames_the_reply_as_data():
     prompt = fake.prompts[0]
     assert "CUSTOMER_REPLY" in prompt
     assert "not instructions" in prompt.lower()
+
+
+# ===========================================================================
+# Invented figures. The converse of verify_figures, and the more important half:
+# a draft can contain every correct figure AND a second, fabricated one.
+# ===========================================================================
+
+
+def test_a_draft_containing_every_correct_figure_is_still_rejected_for_an_invented_one():
+    """The exact hole the audit named.
+
+    Presence checking passes this draft: the right amount, the right invoice number,
+    the right link are all there. So is a late fee nobody agreed to.
+    """
+    fake = FakeLLM(
+        DraftResponse(
+            subject="Invoice INV-2291 — payment overdue",
+            body=(
+                "Hello, invoice INV-2291 for Rs 42,000 is overdue. A late fee of "
+                "Rs 2,100 now applies. Pay here: https://rzp.io/rzp/abc123"
+            ),
+            tone_rationale="firm",
+        )
+    )
+    assert draft_reminder(draft_inputs(), client=fake).generated_by == "template_fallback"
+
+
+def test_a_second_payment_link_is_rejected():
+    fake = FakeLLM(
+        DraftResponse(
+            subject="Invoice INV-2291",
+            body=(
+                "Invoice INV-2291 for Rs 42,000. Pay at https://rzp.io/rzp/abc123 "
+                "or at https://pay.example.com/settle"
+            ),
+            tone_rationale="firm",
+        )
+    )
+    assert draft_reminder(draft_inputs(), client=fake).generated_by == "template_fallback"
+
+
+def test_an_invented_reference_number_is_rejected():
+    fake = FakeLLM(
+        DraftResponse(
+            subject="Invoice INV-2291",
+            body=(
+                "Invoice INV-2291 for Rs 42,000, our ref REF-88421. "
+                "Pay here: https://rzp.io/rzp/abc123"
+            ),
+            tone_rationale="firm",
+        )
+    )
+    assert draft_reminder(draft_inputs(), client=fake).generated_by == "template_fallback"
+
+
+def test_the_templates_contain_no_invented_figures():
+    """The fallback must pass the check it triggers, or a rejection loops forever."""
+    for tier in (1, 2, 3):
+        inp = draft_inputs(tier=tier)
+        d = template_draft(inp)
+        assert find_invented_figures(f"{d.subject}\n{d.body}", inp) == []
+
+
+def test_a_clean_draft_passes_the_invented_check():
+    inp = draft_inputs()
+    text = (
+        "Hello, invoice INV-2291 for Rs 42,000 was due on 1 August 2026 and is now "
+        "10 days overdue. Pay here: https://rzp.io/rzp/abc123"
+    )
+    assert find_invented_figures(text, inp) == []
+
+
+def test_the_amount_may_be_regrouped_without_being_treated_as_a_new_figure():
+    """Indian and Western grouping write the same number differently. Comparing the
+    digits is the only stable test."""
+    inp = draft_inputs(outstanding_paise=42_000_000)  # Rs 4,20,000
+    assert find_invented_figures("Balance Rs 420000 outstanding", inp) == []
+    assert find_invented_figures("Balance Rs 4,20,000 outstanding", inp) == []
+
+
+def test_a_calendar_year_is_not_mistaken_for_an_amount():
+    inp = draft_inputs()
+    assert find_invented_figures("Due on 1 August 2026, still unpaid in 2026.", inp) == []

@@ -157,6 +157,10 @@ export type InvoiceDetail = {
   amount_display: string;
   paid_display: string;
   outstanding_display: string;
+  /** Razorpay-verified, hand-recorded. Never shown collapsed into one figure. */
+  link_paid_display: string;
+  external_paid_display: string;
+  external_payments: ExternalPayment[];
   status: string;
   days_overdue: number;
   due_at: string;
@@ -261,6 +265,20 @@ export type CommunicationException = {
   exhausted: boolean;
 };
 
+export type InboundException = {
+  id: string;
+  invoice_number: string;
+  sender: string;
+  subject: string;
+  excerpt: string;
+  error: string | null;
+  attempts: number;
+  last_attempt_at: string | null;
+  next_retry_at: string | null;
+  exhausted: boolean;
+  received_at: string;
+};
+
 export type UnclosedLink = {
   id: string;
   invoice_number: string;
@@ -274,7 +292,86 @@ export type Exceptions = {
   reconciliation: ReconciliationException[];
   communication: CommunicationException[];
   unclosed_links: UnclosedLink[];
+  /** Customer replies that were received but could not be interpreted. */
+  inbound: InboundException[];
   total: number;
 };
 
 export const getExceptions = () => get<Exceptions>("/api/dashboard/exceptions");
+
+/**
+ * Whether the agent is actually running — not whether it is configured to.
+ *
+ * `RuntimeSafety.scheduler` above reports configuration. That was the audit's
+ * objection: an APScheduler thread can die inside the API process, leaving /health
+ * green and nothing chased, while configuration still says "enabled".
+ */
+export type AutomationJob = {
+  job_id: string;
+  label: string;
+  state: "healthy" | "stale" | "failing" | "unknown" | "disabled";
+  explanation: string;
+  last_run_at: string | null;
+  last_run_status: string | null;
+  last_success_at: string | null;
+  last_error: string | null;
+  last_duration_ms: number | null;
+  last_detail: Record<string, unknown>;
+  next_run_at: string | null;
+};
+
+export type AutomationHealth = {
+  overall: AutomationJob["state"];
+  scheduler_enabled: boolean;
+  scheduler_running_here: boolean;
+  checked_at: string;
+  jobs: AutomationJob[];
+};
+
+export const getAutomation = () => get<AutomationHealth>("/api/dashboard/automation");
+
+/** Money recorded by a person rather than reported by a provider. */
+export type ExternalPayment = {
+  id: string;
+  amount_display: string;
+  amount_paise: number;
+  method: string;
+  method_label: string;
+  reference: string;
+  received_on: string;
+  note: string;
+  recorded_by: string;
+  recorded_at: string;
+  reversed_at: string | null;
+  reversed_by: string | null;
+  reversal_reason: string | null;
+  active: boolean;
+};
+
+/**
+ * The balance split by source, never collapsed into one number.
+ *
+ * An operator deciding whether to chase has to be able to see which part Razorpay
+ * verified and which part a colleague typed in.
+ */
+export type PaymentBalance = {
+  invoice_number: string;
+  status: string;
+  amount_display: string;
+  paid_display: string;
+  outstanding_display: string;
+  link_paid_display: string;
+  external_paid_display: string;
+  fully_paid: boolean;
+};
+
+export type PaymentLedger = {
+  balance: PaymentBalance;
+  payments: ExternalPayment[];
+};
+
+export type PaymentMethodOption = { value: string; label: string };
+
+export const getPayments = (invoiceId: string) =>
+  get<PaymentLedger>(`/api/dashboard/invoices/${invoiceId}/payments`);
+export const getPaymentMethods = () => get<PaymentMethodOption[]>("/api/payments/methods");

@@ -99,8 +99,16 @@ class CycleReport:
         }
 
 
-def escalate_to_human(session: Session, invoice: Invoice, reason: str) -> None:
-    """Take an invoice out of automation. Doc §3 Stage 3."""
+def escalate_to_human(
+    session: Session, invoice: Invoice, reason: str, *, actor: str = AuditActor.POLICY
+) -> None:
+    """Take an invoice out of automation. Doc §3 Stage 3.
+
+    `actor` defaults to the policy engine because that is who escalates on the cycle.
+    An operator escalating by hand passes their own identity: "escalated by policy"
+    and "escalated by Priya at 4pm" are different facts, and recording the second as
+    the first is a hole in the audit trail rather than a cosmetic detail.
+    """
     if invoice.escalated_to_human_at is None:
         invoice.escalated_to_human_at = utcnow()
     invoice.escalation_reason = reason
@@ -109,7 +117,7 @@ def escalate_to_human(session: Session, invoice: Invoice, reason: str) -> None:
     session.add(
         AuditLog(
             invoice_id=invoice.id,
-            actor=AuditActor.POLICY,
+            actor=actor,
             action=AuditAction.ESCALATED_TO_HUMAN,
             detail={"reason": reason, "tier_reached": invoice.current_tier},
         )

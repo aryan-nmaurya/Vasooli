@@ -32,6 +32,17 @@ PUBLIC_BY_DESIGN = {
     "/ready": "deployment probe",
     "/api/auth/login": "how a credential is obtained; rate limited",
     "/api/auth/logout": "clears a cookie",
+    "/api/auth/modes": (
+        "says which sign-in routes exist and nothing else. The login page is "
+        "unauthenticated by definition, so it cannot ask a gated endpoint whether to "
+        "render the reviewer button — and a button that can only 404 is worse than none"
+    ),
+    "/api/auth/reviewer": (
+        "the second way a credential is obtained, alongside login. Issues a session "
+        "only for an account whose role is auditor, and read-only is then enforced by "
+        "app.api.deps rejecting every non-GET — so this hands out no write access. "
+        "404s entirely unless REVIEWER_ACCESS_ENABLED is set"
+    ),
 }
 
 #: Razorpay cannot log in. Proven by an HMAC over the raw body instead, so these

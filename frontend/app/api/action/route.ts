@@ -32,6 +32,13 @@ const ALLOWED = [
   /^\/api\/dashboard\/exceptions\/events\/[A-Za-z0-9_.:-]{1,128}\/retry$/,
   /^\/api\/dashboard\/exceptions\/reminders\/[0-9a-f-]{36}\/retry$/,
   /^\/api\/dashboard\/exceptions\/links\/[0-9a-f-]{36}\/retry-closure$/,
+  /^\/api\/dashboard\/exceptions\/inbound\/[0-9a-f-]{36}\/retry$/,
+  // Money recorded or matched by hand. These change what the system believes it is
+  // owed, so the backend attributes each one to the named operator and refuses them
+  // for the read-only auditor role.
+  /^\/api\/dashboard\/invoices\/[0-9a-f-]{36}\/payments$/,
+  /^\/api\/dashboard\/payments\/[0-9a-f-]{36}\/reverse$/,
+  /^\/api\/dashboard\/exceptions\/events\/[A-Za-z0-9_.:-]{1,128}\/match$/,
 ];
 
 export async function POST(request: Request) {

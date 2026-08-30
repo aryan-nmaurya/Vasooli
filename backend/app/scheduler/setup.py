@@ -19,6 +19,17 @@ log = get_logger("scheduler")
 _scheduler: BackgroundScheduler | None = None
 
 
+def get_scheduler() -> BackgroundScheduler | None:
+    """The scheduler running in THIS process, if any.
+
+    Read by the automation-health endpoint. Returns None when the scheduler is disabled
+    or lives in another worker — which the caller reports as "not running here" rather
+    than as a fault, because the job history in the database is the cross-process
+    source of truth.
+    """
+    return _scheduler
+
+
 def start_scheduler() -> BackgroundScheduler | None:
     """Start the background scheduler, unless disabled.
 

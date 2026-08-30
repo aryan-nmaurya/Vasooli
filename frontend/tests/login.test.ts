@@ -284,3 +284,113 @@ describe("logout", () => {
     expect(res.headers.get("set-cookie") ?? "").toContain("vasooli_dash=");
   });
 });
+
+/**
+ * The read-only reviewer session.
+ *
+ * The public "open the demo" call to action used to end at a login wall with no way
+ * through, which made a working system look like a dead one. The alternative — mailing
+ * a shared password around — puts a real credential in an inbox and gives everyone the
+ * same one.
+ *
+ * The safety property is that this can only ever open an auditor session. It is
+ * checked in three places (backend role check, this route, and the deps layer that
+ * refuses every non-GET) and these tests pin the middle one, because a bug here would
+ * silently hand a stranger write access to a receivables ledger.
+ */
+describe("POST /api/auth with reviewer: true", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    _resetRateLimits();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function reviewerRequest(ip = "203.0.113.9"): Request {
+    return new Request(POST_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-forwarded-for": ip },
+      body: JSON.stringify({ reviewer: true }),
+    });
+  }
+
+  function mockReviewerBackend(status: number, role = "auditor", username = "reviewer") {
+    return vi.fn(
+      async () =>
+        new Response(JSON.stringify(status < 300 ? { username, role } : {}), {
+          status,
+          headers:
+            status < 300
+              ? { "Set-Cookie": `vasooli_session=${createToken(username)}; HttpOnly; Path=/` }
+              : {},
+        }),
+    );
+  }
+
+  it("issues a session for an auditor account", async () => {
+    vi.stubGlobal("fetch", mockReviewerBackend(200));
+    const { POST } = await import("@/app/api/auth/route");
+    const res = await POST(reviewerRequest());
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).role).toBe("auditor");
+    expect(res.headers.get("set-cookie")).toContain("vasooli_dash=");
+  });
+
+  it("refuses a session for any role that is not auditor", async () => {
+    // The whole safety property. A misconfigured REVIEWER_USERNAME pointing at an
+    // admin account must fail closed rather than open the ledger to anyone.
+    vi.stubGlobal("fetch", mockReviewerBackend(200, "admin"));
+    const { POST } = await import("@/app/api/auth/route");
+    const res = await POST(reviewerRequest());
+
+    expect(res.status).toBe(502);
+    expect(res.headers.get("set-cookie")).toBeNull();
+  });
+
+  it("reports reviewer access as unavailable when the backend refuses", async () => {
+    vi.stubGlobal("fetch", mockReviewerBackend(404));
+    const { POST } = await import("@/app/api/auth/route");
+    expect((await POST(reviewerRequest())).status).toBe(403);
+  });
+
+  it("is rate limited like a password login", async () => {
+    vi.stubGlobal("fetch", mockReviewerBackend(200));
+    const { POST } = await import("@/app/api/auth/route");
+    let last: Response | undefined;
+    for (let i = 0; i < 12; i += 1) {
+      last = await POST(reviewerRequest("198.51.100.4"));
+    }
+    expect(last?.status).toBe(429);
+  });
+});
+
+describe("GET /api/auth", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.resetModules();
+  });
+
+  it("reports whether the reviewer button should render", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ reviewer_access: true }), { status: 200 })),
+    );
+    const { GET } = await import("@/app/api/auth/route");
+    expect((await (await GET()).json()).reviewer_access).toBe(true);
+  });
+
+  it("fails closed when the backend cannot be reached", async () => {
+    // Rendering a button that can only fail is worse than rendering none.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("unreachable");
+      }),
+    );
+    const { GET } = await import("@/app/api/auth/route");
+    expect((await (await GET()).json()).reviewer_access).toBe(false);
+  });
+});

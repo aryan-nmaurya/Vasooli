@@ -49,8 +49,13 @@ kept intentionally smaller so it cannot pretend to be exhaustive while going sta
 | `/api/invoices/{id}/simulate-reply` | — | admin/operator session or service key | explicitly labelled demo control |
 | `/api/export/**` | named session or service key; auditors included, since exporting evidence is the auditor's job | — | whole-router dependency; the frontend proxy allowlists the path and forwards only `format`, `status`, `reason` |
 | `/api/invoices/import` | named session or service key (template download) | admin/operator session or service key; auditor rejected | `dry_run` defaults to true, so only an explicit `dry_run=false` writes; 5 MB and 5,000-row ceilings |
+| `/api/dashboard/invoices/{id}/payments`, `/api/dashboard/payments/{id}/reverse` | named session or service key | admin/operator session or service key; auditor rejected | records money on an operator's word rather than a provider's signature, so every row carries `recorded_by` and the audit detail says `"verification": "operator_asserted"` |
+| `/api/dashboard/exceptions/events/{id}/match` | — | admin/operator session or service key; auditor rejected | the operator chooses the invoice; the amount is read from the stored webhook payload, never from the request |
+| `/api/payments/methods` | named session or service key | — | the method list the form may offer, served from the service that would reject anything else |
 | `/api/webhooks/**` | — | provider signature only | raw-body verification plus provider event deduplication and correlation |
 | `/api/auth/login`, `/api/auth/logout` | public | public | generic failures, rate limits, account lockout, httpOnly session cookie |
+| `/api/auth/modes` | public | — | says only whether the reviewer button should render; the login page is unauthenticated by definition and cannot ask a gated endpoint |
+| `/api/auth/reviewer` | — | public, and 404s unless `REVIEWER_ACCESS_ENABLED` | issues a session **only** for an account whose role is `auditor`, so a mistyped `REVIEWER_USERNAME` fails closed; read-only is then the same `require_operator` check that refuses every non-GET |
 | `/health`, `/live` | public | — | operational status only; no customer records |
 
 `backend/tests/integration/test_auth.py` discovers the live OpenAPI schema on every

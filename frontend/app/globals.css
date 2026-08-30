@@ -842,6 +842,30 @@ body:has(.login-panel) footer > div {
   line-height: 1.7;
 }
 
+/* The simulated result, set apart from the verified metrics above it rather than
+   sitting in the same row. Visual separation is doing real work here: a number nobody
+   has observed in the world should not look identical to one a reviewer can reproduce
+   by running the test suite. */
+.landing-simulated {
+  grid-column: 8 / 14;
+  margin: 3rem 0 0;
+  padding: 1.75rem 0 0;
+  border-top: 1px dashed rgba(158, 160, 151, 0.35);
+}
+
+.landing-simulated .landing-eyebrow {
+  margin: 0 0 0.75rem;
+}
+
+.landing-simulated .landing-explainer + .landing-explainer {
+  margin-top: 1rem;
+}
+
+.landing-simulated strong {
+  color: inherit;
+  font-weight: 600;
+}
+
 .landing-text-link {
   display: inline-flex;
   align-items: center;
@@ -975,6 +999,7 @@ body:has(.login-panel) footer > div {
   .landing-trace,
   .landing-metrics,
   .landing-proof-note,
+  .landing-simulated,
   .landing-statement-copy,
   .landing-scope > div {
     grid-column: 2 / 8;

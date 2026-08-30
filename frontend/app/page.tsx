@@ -1,6 +1,8 @@
+import { AutomationHealth } from "@/components/AutomationHealth";
 import { Landing } from "@/components/Landing";
 import { OverviewClient } from "@/components/Overview";
 import {
+  getAutomation,
   getExceptions,
   getOverview,
   getQueue,
@@ -28,14 +30,20 @@ export default async function Page() {
     return <BackendUnreachable />;
   }
 
-  const [overview, queue, exceptions, runtime] = data;
+  const [overview, queue, exceptions, runtime, automation] = data;
   return (
-    <OverviewClient
-      initialOverview={overview}
-      initialQueue={queue}
-      initialExceptions={exceptions}
-      emailMode={runtime.email}
-    />
+    <div className="space-y-6">
+      {/* Above the numbers on purpose. Every figure below is only as current as the
+          last cycle that actually ran, so whether the agent is alive is the first
+          thing an operator needs to know — not a detail in a settings panel. */}
+      <AutomationHealth health={automation} />
+      <OverviewClient
+        initialOverview={overview}
+        initialQueue={queue}
+        initialExceptions={exceptions}
+        emailMode={runtime.email}
+      />
+    </div>
   );
 }
 
@@ -45,6 +53,7 @@ function loadAll() {
     getQueue(),
     getExceptions(),
     getRuntimeSafety(),
+    getAutomation(),
   ]);
 }
 

@@ -68,11 +68,25 @@ class Reminder(SQLModel, table=True):
     generated_by: str = "template_fallback"
     llm_degraded: bool = Field(default=False, sa_column=bool_column())
 
-    #: Set only when a provider accepted the message. This — not the row's existence —
-    #: is what makes a tier "sent". A row with sent_at NULL is an attempt that failed
-    #: and is still owed to the customer.
+    #: Set only when a provider ACCEPTED the message — which is custody, not delivery.
+    #: This is what makes a tier "sent". A row with sent_at NULL is an attempt that
+    #: failed and is still owed to the customer.
     sent_at: datetime | None = Field(sa_column=timestamp_column(nullable=True))
     send_error: str | None = None
+
+    # --- What the provider said happened afterwards --------------------------
+    #: Delivery is asynchronous and the provider reports it on a webhook, seconds to
+    #: minutes after the API call returned. Without these, "sent" was the last thing
+    #: this system ever knew about a message, and an invoice whose every reminder hard
+    #: bounced still advanced through the tiers and was escalated as an unresponsive
+    #: customer who had in fact never received a word.
+    delivery_status: str | None = Field(default=None, index=True)
+    delivered_at: datetime | None = Field(sa_column=timestamp_column(nullable=True))
+    bounced_at: datetime | None = Field(sa_column=timestamp_column(nullable=True))
+    #: The provider's own reason string, kept verbatim. "Mailbox does not exist" and
+    #: "message refused as spam" need different responses from a person.
+    delivery_detail: str | None = None
+    last_delivery_event_at: datetime | None = Field(sa_column=timestamp_column(nullable=True))
 
     # --- Delivery attempts ---------------------------------------------------
     #: Every attempt, successful or not. A row can be retried in place, so this is the
@@ -93,7 +107,29 @@ class Reminder(SQLModel, table=True):
 
     @property
     def was_sent(self) -> bool:
+        """The provider accepted it. Deliberately NOT named `was_delivered`."""
         return self.sent_at is not None
+
+    @property
+    def reached_the_customer(self) -> bool:
+        """The provider confirmed delivery, and nothing later took it back.
+
+        The strongest statement this system can honestly make about a reminder. Still
+        not "the customer read it" — nothing here tracks opens, and an open pixel would
+        not be evidence anyway.
+
+        The bounce condition is not redundant. A message can be accepted by a receiving
+        mail server and bounce minutes later, which is an ordinary asynchronous bounce
+        and leaves both timestamps set. Reading only `delivered_at` would then report
+        that a reminder reached a customer who never saw it — the precise false
+        reassurance this whole delivery-tracking change exists to remove.
+        """
+        return self.delivered_at is not None and self.bounced_at is None
+
+    @property
+    def hard_failed(self) -> bool:
+        """Accepted by the provider, then permanently refused by the recipient."""
+        return self.bounced_at is not None
 
     @property
     def needs_retry(self) -> bool:

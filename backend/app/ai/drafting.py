@@ -1,17 +1,26 @@
 """Reminder copy. Doc §3 Stage 3.
 
-Three layers of protection sit between the model and a customer's inbox:
+Four layers of protection sit between the model and a customer's inbox:
 
 1. The prompt states the compliance rules and the exact figures to use.
-2. `verify_figures` checks that the amount, invoice number, and link in the draft are
-   the ones we supplied. A model that invents a digit in a payment amount is a money
-   bug, not a style problem.
-3. app.policy runs the banned-language check on the finished text, independently of
+2. `verify_figures` checks that the amount, invoice number, and link we supplied are
+   all PRESENT in the draft. A model that paraphrases the amount away has produced a
+   reminder the customer cannot act on.
+3. `find_invented_figures` checks that nothing else financial is present. This is the
+   converse test and it is the one that matters more: a draft can contain every correct
+   figure and *also* a second, invented one — "Rs 42,000 (Rs 4,20,000 including late
+   fees)", a payment URL the model made up, a reference number that belongs to nobody.
+   Presence checking passes that draft. The audit named this exact hole, and closing it
+   is why every money-shaped token in the text is now matched against an allowlist
+   rather than merely searched for.
+4. app.policy runs the banned-language check on the finished text, independently of
    anything the prompt asked for.
 
-Only the third is trusted. The first two reduce how often it has to fire.
+Only the fourth is trusted for compliance. Layers 2 and 3 are what make the figures
+safe, and they are deterministic — no model is asked to check another model's work.
 """
 
+import re
 from dataclasses import dataclass
 
 from app.ai.client import LLMClient, get_llm_client
@@ -73,6 +82,96 @@ def verify_figures(text: str, inputs: DraftInputs) -> list[str]:
         problems.append("invoice_number")
     if inputs.payment_url and inputs.payment_url not in text:
         problems.append("payment_url")
+    return problems
+
+
+# ---------------------------------------------------------------------------
+# The converse check: nothing financial in the draft that we did not supply.
+# ---------------------------------------------------------------------------
+
+#: An amount, however the model chose to write it. Both the currency-prefixed form and
+#: the bare grouped/decimal form, because "the balance of 4,20,000 is now due" is just
+#: as wrong as "Rs 4,20,000" and neither is caught by looking for a rupee sign.
+_MONEY = re.compile(
+    r"(?:(?:₹|\bRs\.?|\bINR)\s*([\d][\d,]*(?:\.\d+)?)|\b(\d{1,3}(?:,\d{2,3})+(?:\.\d+)?)\b)",
+    re.IGNORECASE,
+)
+
+#: Any link. A reminder has exactly one legitimate URL and it is the one we minted.
+_URL = re.compile(r"(?:https?://|www\.)\S+", re.IGNORECASE)
+
+#: An invoice-number-shaped token: letters then digits, optionally hyphenated.
+_REFERENCE = re.compile(r"\b[A-Z]{2,6}[-/]?\d{3,}\b")
+
+#: A bare run of four or more digits — an unformatted amount, an account number, a
+#: reference. Years are excluded below rather than here, because "2026" in a due date is
+#: ordinary and rejecting it would discard every correct draft.
+_LONG_NUMBER = re.compile(r"\b\d{4,}\b")
+
+
+def _normalise_amount(raw: str) -> str:
+    """Strip grouping so "4,20,000" and "420000" compare equal.
+
+    Indian grouping (lakh/crore) and Western grouping produce different strings for the
+    same number, and the model may reformat ours. Comparing the digits is the only
+    stable test.
+    """
+    return raw.replace(",", "").rstrip("0").rstrip(".") if "." in raw else raw.replace(",", "")
+
+
+def find_invented_figures(text: str, inputs: DraftInputs) -> list[str]:
+    """Financial values in the draft that we did not supply.
+
+    Deliberately an allowlist, not a blocklist. Enumerating the ways a model can be
+    wrong about money is a losing game; enumerating the handful of values that are
+    correct is finite and checkable.
+
+    Returns short labels rather than the offending text, so the reason can be logged and
+    audited without copying a possibly-fabricated amount into the trail as though it
+    were real.
+    """
+    allowed_amounts = {
+        _normalise_amount(_amount_text(inputs.outstanding_paise)),
+        # The paise-exact form, in case the model writes "42000.00".
+        _normalise_amount(f"{inputs.outstanding_paise / 100:.2f}"),
+    }
+    problems: list[str] = []
+
+    for match in _MONEY.finditer(text):
+        value = match.group(1) or match.group(2) or ""
+        if _normalise_amount(value) not in allowed_amounts:
+            problems.append("extra_amount")
+            break
+
+    for url in _URL.finditer(text):
+        # Trailing punctuation is the model's, not part of the link.
+        found = url.group(0).rstrip(".,);:")
+        if found != inputs.payment_url:
+            problems.append("extra_url")
+            break
+
+    for reference in _REFERENCE.finditer(text):
+        if reference.group(0) != inputs.invoice_number:
+            problems.append("extra_reference")
+            break
+
+    allowed_numbers = {
+        _normalise_amount(_amount_text(inputs.outstanding_paise)),
+        str(inputs.days_overdue),
+    } | {token for token in re.findall(r"\d+", inputs.due_date)}
+    for number in _LONG_NUMBER.finditer(text):
+        token = number.group(0)
+        if token in allowed_numbers:
+            continue
+        # A plausible calendar year is ordinary prose in a due-date sentence.
+        if 1900 <= int(token) <= 2100 and len(token) == 4:
+            continue
+        # Part of the payment URL or the invoice number, both already checked above.
+        if token in inputs.payment_url or token in inputs.invoice_number:
+            continue
+        problems.append("extra_number")
+        break
+
     return problems
 
 
@@ -193,12 +292,27 @@ def draft_reminder(
         return template_draft(inputs)
 
     value = result.value
-    missing = verify_figures(f"{value.subject}\n{value.body}", inputs)
+    text = f"{value.subject}\n{value.body}"
+
+    missing = verify_figures(text, inputs)
     if missing:
         log.warning(
             "drafting.figures_missing",
             invoice_number=inputs.invoice_number,
             missing=missing,
+            model=result.model,
+        )
+        return template_draft(inputs)
+
+    invented = find_invented_figures(text, inputs)
+    if invented:
+        # Every required figure was present AND something else financial was too. This
+        # is the draft that looks correct on a skim: the right amount, the right link,
+        # plus a late fee nobody agreed to. The template is used instead.
+        log.warning(
+            "drafting.figures_invented",
+            invoice_number=inputs.invoice_number,
+            problems=invented,
             model=result.model,
         )
         return template_draft(inputs)

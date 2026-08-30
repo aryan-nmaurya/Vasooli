@@ -7,6 +7,7 @@ from sqlmodel import select
 
 from app.api.deps import OperatorRequired
 from app.core.db import SessionDep
+from app.core.middleware import UPLOAD_BODY_BYTES
 from app.models import Customer, Invoice, PaymentLink
 from app.schemas.invoice import BatchIngestRequest, BatchIngestResponse, InvoiceRead
 from app.services.csv_import import LedgerFileError, parse_ledger, template_csv
@@ -88,7 +89,13 @@ def provision_all(session: SessionDep, limit: int | None = None) -> dict:
 
 #: Enough for a large receivables book, small enough that a mis-uploaded video is
 #: refused before it is read into memory.
+#:
+#: The transport cap in app.core.middleware has to be strictly larger, or a file at
+#: exactly this size is rejected by the middleware and the message below — the one
+#: that tells the operator what the limit actually is — is never reachable. The
+#: assertion keeps the two numbers from drifting apart silently.
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
+assert MAX_UPLOAD_BYTES < UPLOAD_BODY_BYTES, "transport cap must exceed the file cap"
 
 
 @router.get("/import/template")

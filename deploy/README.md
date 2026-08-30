@@ -198,8 +198,8 @@ docker compose -f docker-compose.rds.yml exec -T api alembic current
 
 docker compose -f docker-compose.rds.yml ps
 docker compose -f docker-compose.rds.yml logs --since=10m api
-curl --fail --silent --show-error https://api-13-204-55-131.sslip.io/live
-curl --fail --silent --show-error https://api-13-204-55-131.sslip.io/health
+curl --fail --silent --show-error https://api.vasooli.space/live
+curl --fail --silent --show-error https://api.vasooli.space/health
 ```
 
 If the API fails to become healthy, inspect the API logs and keep the existing database
@@ -210,7 +210,7 @@ volume intact. Do not run `docker compose down -v`—that deletes PostgreSQL dat
 Verify the production variables before deploying:
 
 ```text
-NEXT_PUBLIC_API_URL=https://api-13-204-55-131.sslip.io
+NEXT_PUBLIC_API_URL=https://api.vasooli.space
 SESSION_SECRET=<exactly the same session secret as the backend>
 ```
 
@@ -238,7 +238,7 @@ curl --fail --silent --show-error \
 file /tmp/payment-webhook-fallback.gif
 
 curl --fail --silent --show-error \
-  https://api-13-204-55-131.sslip.io/api/dashboard/runtime \
+  https://api.vasooli.space/api/dashboard/runtime \
   -H "X-Admin-Key: $ADMIN_API_KEY"
 ```
 

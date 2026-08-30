@@ -487,3 +487,67 @@ def test_the_closure_retry_is_audited(session, invoice, link):
     assert session.exec(
         select(AuditLog).where(AuditLog.action == AuditAction.PAYMENT_LINK_CLOSE_RETRIED)
     ).first()
+
+
+# ===========================================================================
+# Writing off must also shut the route money could still arrive by.
+#
+# The audit's finding: the write-off endpoint changed the invoice status and audited
+# it, and nothing else. The Razorpay link stayed live, so a customer opening an old
+# reminder could pay an invoice the merchant had already removed from the books.
+# ===========================================================================
+
+
+def test_writing_off_closes_the_payment_link(session, invoice, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from app.core.config import settings as app_settings
+    from app.main import create_app
+
+    link = PaymentLink(
+        invoice_id=invoice.id,
+        razorpay_payment_link_id="plink_WRITEOFF",
+        reference_id="vsl-writeoff",
+        short_url="https://rzp.io/rzp/writeoff",
+        amount_expected_paise=invoice.amount_paise,
+    )
+    session.add(link)
+    session.commit()
+
+    cancelled: list[str] = []
+
+    class FakeClient:
+        def cancel_payment_link(self, link_id):
+            cancelled.append(link_id)
+            return PaymentLinkResult(
+                id=link_id,
+                short_url="https://rzp.io/rzp/writeoff",
+                reference_id="vsl-writeoff",
+                status=PaymentLinkStatus.CANCELLED,
+                amount_paise=0,
+                amount_paid_paise=0,
+                raw={},
+            )
+
+    monkeypatch.setattr("app.services.closure.get_razorpay_client", lambda: FakeClient())
+
+    with TestClient(create_app()) as client:
+        client.headers.update({"X-Admin-Key": app_settings.admin_api_key})
+        response = client.post(f"/api/dashboard/invoices/{invoice.id}/write-off")
+
+    assert response.status_code == 200
+    assert response.json()["payment_link_closed"] is True
+    assert cancelled == ["plink_WRITEOFF"]
+
+    session.refresh(link)
+    assert link.cancelled_at is not None
+
+
+def test_a_written_off_invoice_stays_eligible_for_closure_retry(session, invoice):
+    """The retry sweep previously only ever considered fully paid invoices, so a
+    closure that failed during a write-off could never be retried."""
+    invoice.status = InvoiceStatus.WRITTEN_OFF
+    session.add(invoice)
+    session.commit()
+    assert invoice.link_should_be_closed is True
+    assert invoice.is_fully_paid is False

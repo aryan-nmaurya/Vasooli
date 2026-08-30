@@ -396,7 +396,7 @@ export function OverviewClient({
         </div>
       </section>
 
-      <ExceptionsPanel data={exceptions} />
+      <ExceptionsPanel data={exceptions} invoices={queue} />
     </div>
   );
 }

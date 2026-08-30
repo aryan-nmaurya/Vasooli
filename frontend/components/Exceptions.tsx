@@ -3,17 +3,23 @@
 /**
  * Operational exceptions — things that failed and need a person.
  *
- * Two separate queues because they mean different things to a finance operator:
- * money that arrived but could not be matched, and messages that never reached a
- * customer. Both were previously invisible outside application logs.
+ * Four separate queues, because they mean different things to a finance operator:
+ * money that arrived but could not be matched, reminders that never reached a
+ * customer, payment links still open on invoices that are settled, and customer
+ * replies that were received but could not be interpreted.
  *
- * Deliberately small. This is a queue with a retry button, not an admin panel.
+ * A retry button is not enough for all of them, and pretending otherwise was the
+ * audit's complaint. Retrying an unmatched payment cannot conjure a payment link that
+ * was never in our database — that one needs a person to say which invoice it belongs
+ * to, which is what the match control below does.
+ *
+ * Deliberately small. This is a work queue, not an admin panel.
  */
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
-import type { Exceptions } from "@/lib/api";
+import type { Exceptions, QueueRow } from "@/lib/api";
 
 function timeAgo(iso: string | null): string {
   if (!iso) return "—";
@@ -72,18 +78,106 @@ function RetryButton({ path, label = "Retry" }: { path: string; label?: string }
   );
 }
 
+/**
+ * Assign an unmatched Razorpay settlement to an invoice.
+ *
+ * The backend deliberately does not let the operator type the amount: they decide
+ * WHICH invoice the money belongs to, and the figure comes from the stored payload.
+ */
+function MatchControl({ eventId, invoices }: { eventId: string; invoices: QueueRow[] }) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [invoiceId, setInvoiceId] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function match() {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          path: `/api/dashboard/exceptions/events/${eventId}/match`,
+          body: { invoice_id: invoiceId },
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.detail ?? "Could not match this payment.");
+        return;
+      }
+      setOpen(false);
+      router.refresh();
+    } catch {
+      setError("Could not reach the server.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!open) {
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        className="rounded-md px-2.5 py-1 text-xs text-ink-2 ring-1 ring-inset ring-line transition hover:bg-panel-2 hover:text-ink"
+      >
+        Match to invoice
+      </button>
+    );
+  }
+
+  return (
+    <span className="flex flex-wrap items-center gap-2">
+      <select
+        autoFocus
+        value={invoiceId}
+        onChange={(e) => setInvoiceId(e.target.value)}
+        className="rounded-md border border-line bg-panel px-2 py-1 text-xs text-ink outline-none focus:border-ink-4"
+      >
+        <option value="">Choose an invoice…</option>
+        {invoices.map((row) => (
+          <option key={row.id} value={row.id}>
+            {row.invoice_number} · {row.customer_name} · {row.amount_display}
+          </option>
+        ))}
+      </select>
+      <button
+        onClick={match}
+        disabled={busy || !invoiceId}
+        className="rounded-md bg-invert px-2.5 py-1 text-xs font-medium text-invert-ink transition hover:opacity-90 disabled:opacity-50"
+      >
+        {busy ? "Matching…" : "Confirm"}
+      </button>
+      <button onClick={() => setOpen(false)} className="text-xs text-ink-3 hover:text-ink-2">
+        Cancel
+      </button>
+      {error ? <span className="text-xs text-rose-700 dark:text-rose-300">{error}</span> : null}
+    </span>
+  );
+}
+
 function Empty({ children }: { children: React.ReactNode }) {
   return (
     <p className="px-4 py-6 text-center text-sm text-ink-3">{children}</p>
   );
 }
 
-export function ExceptionsPanel({ data }: { data: Exceptions }) {
+export function ExceptionsPanel({
+  data,
+  invoices = [],
+}: {
+  data: Exceptions;
+  /** Candidates for manual matching. Empty simply hides the match control. */
+  invoices?: QueueRow[];
+}) {
   //: Items automatic retry has given up on. These will sit there silently forever
   //: unless someone is told, which is the whole point of surfacing them.
   const exhausted =
     data.reconciliation.filter((r) => r.exhausted).length +
-    data.communication.filter((r) => r.exhausted).length;
+    data.communication.filter((r) => r.exhausted).length +
+    (data.inbound ?? []).filter((r) => r.exhausted).length;
 
   if (data.total === 0) {
     return (
@@ -161,9 +255,16 @@ export function ExceptionsPanel({ data }: { data: Exceptions }) {
                       {timeAgo(row.last_attempt_at)}
                     </td>
                     <td className="px-4 py-2">
-                      <RetryButton
-                        path={`/api/dashboard/exceptions/events/${row.event_id}/retry`}
-                      />
+                      <span className="flex flex-wrap items-center gap-2">
+                        <RetryButton
+                          path={`/api/dashboard/exceptions/events/${row.event_id}/retry`}
+                        />
+                        {/* Retrying an unmatched payment cannot find an invoice that
+                            was never in our database. This one needs a person. */}
+                        {row.invoice_number === null && invoices.length > 0 ? (
+                          <MatchControl eventId={row.event_id} invoices={invoices} />
+                        ) : null}
+                      </span>
                     </td>
                   </tr>
                 ))}
@@ -227,6 +328,48 @@ export function ExceptionsPanel({ data }: { data: Exceptions }) {
           <p className="border-t border-line px-4 py-2 text-xs text-ink-3">
             A failed delivery does <strong className="text-ink-2">not</strong> count as a sent
             reminder. These tiers are still owed to the customer.
+          </p>
+        </div>
+      ) : null}
+
+      {(data.inbound ?? []).length > 0 ? (
+        <div className="rounded-xl border border-line">
+          <div className="border-b border-line px-4 py-2.5">
+            <span className="text-xs font-medium uppercase tracking-wider text-ink-3">
+              Customer replies received but not understood
+            </span>
+          </div>
+          <ul className="divide-y divide-line-2">
+            {data.inbound.map((row) => (
+              <li key={row.id} className="px-4 py-3 text-sm">
+                <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                  <span className="font-mono text-[12px] text-accent">
+                    {row.invoice_number}
+                  </span>
+                  <span className="text-ink-2">{row.sender}</span>
+                  <span className="text-xs text-ink-3">{timeAgo(row.received_at)}</span>
+                  <span className="ml-auto flex items-center gap-2 text-xs text-ink-3">
+                    {row.attempts} attempt{row.attempts === 1 ? "" : "s"}
+                    {row.exhausted ? (
+                      <span className="text-[10px] text-rose-700 dark:text-rose-300">
+                        exhausted
+                      </span>
+                    ) : null}
+                    <RetryButton
+                      path={`/api/dashboard/exceptions/inbound/${row.id}/retry`}
+                      label="Reprocess"
+                    />
+                  </span>
+                </div>
+                <p className="mt-1 line-clamp-2 text-xs text-ink-2">“{row.excerpt}”</p>
+                <p className="mt-1 text-xs text-rose-700 dark:text-rose-300">{row.error}</p>
+              </li>
+            ))}
+          </ul>
+          <p className="border-t border-line px-4 py-2 text-xs text-ink-3">
+            The message itself is stored and is evidence. What failed is reading it — so
+            a promise or a dispute in one of these has{" "}
+            <strong className="text-ink-2">not</strong> been acted on yet.
           </p>
         </div>
       ) : null}

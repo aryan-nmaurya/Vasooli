@@ -3,11 +3,14 @@ import Link from "next/link";
 
 const REPO = "https://github.com/aryan-nmaurya/Vasooli";
 
+// Wording here is held to what the code actually does. The temptation on a landing
+// page is to describe the product you intend; the cost is a reviewer opening the
+// repository and finding a CSV importer behind the word "finds".
 const STEPS = [
-  ["01", "Find what needs attention.", "Vasooli finds overdue Razorpay invoices and reads the complete history before it acts. No spreadsheet triage. No invoice forgotten in a tab.", "Invoice age · contact history · promises · disputes · payment state"],
-  ["02", "Choose the next safe move.", "Deterministic policy decides whether to wait, follow up, pause, or escalate. AI understands context and drafts language; it cannot override the rules.", "10 policy checks · 7-day cooldown · 3-contact limit"],
-  ["03", "Listen before chasing again.", "A promise to pay pauses recovery until the promised date. A dispute stops automation and opens a case for a person. Silence follows a bounded schedule.", "Promise tracking · dispute handoff · inbound reply classification"],
-  ["04", "Stop when the money lands.", "Only verified Razorpay state can mark an invoice paid. The workflow closes immediately, the audit trail remains, and the customer is not contacted again.", "Signed webhooks · authenticated reconciliation · immediate stop"],
+  ["01", "Bring the ledger in.", "You import your overdue invoices — a CSV, or the API. Vasooli creates a Razorpay payment link for each one and reads the history that came with it. It does not browse your Razorpay account or discover invoices on its own.", "CSV or API import · one payment link per invoice · history from the import"],
+  ["02", "Choose the next safe move.", "Deterministic policy decides whether to wait, follow up, pause, or escalate. AI understands context and drafts language; it cannot override the rules or move money.", "10 policy checks · 7-day cooldown · 3-contact limit"],
+  ["03", "Listen before chasing again.", "A promise to pay pauses recovery until the promised date. A dispute stops automation and opens a case for a person. A reminder that hard bounces stops the cadence instead of advancing it.", "Promise tracking · dispute handoff · delivery and bounce events"],
+  ["04", "Stop when the money lands — however it lands.", "A signed Razorpay webhook settles an invoice automatically. A bank transfer, UPI, or cheque is recorded by an operator and settles it the same way. Either closes the payment link and ends the chase.", "Signed webhooks · hourly Razorpay sync · hand-recorded bank payments"],
 ];
 
 // Bare times with no date read as same-day and in order — which the original data
@@ -22,6 +25,7 @@ const TRACE = [
   ["Mon 14:42", "Reply understood", "Promise to pay · Friday"],
   ["Mon 14:42", "Recovery paused", "No contact before 28 Aug"],
   ["Fri 11:18", "Payment verified", "Razorpay webhook · ₹84,000"],
+  ["Fri 11:18", "Payment link closed", "No second payment possible"],
 ];
 
 function Arrow() {
@@ -45,12 +49,13 @@ export function Landing() {
         </h1>
         <div className="landing-hero-copy landing-reveal" data-reveal>
           <p>
-            Vasooli follows up on overdue invoices, understands replies, tracks
-            promises, and stops the instant Razorpay confirms payment.
+            Import your overdue ledger. Vasooli follows up, understands the replies,
+            tracks what customers promise, and stops as soon as the payment is
+            confirmed — by Razorpay, or by a bank transfer you record.
           </p>
           <div className="landing-actions">
             <Link href="/login" className="landing-button landing-button-primary">
-              Open the live demo <Arrow />
+              Open the read-only demo <Arrow />
             </Link>
             <a href="#how" className="landing-button landing-button-quiet">
               See how it works ↓
@@ -58,10 +63,10 @@ export function Landing() {
           </div>
         </div>
         <div className="landing-proof-strip landing-reveal" data-reveal>
-          <span>Built on Razorpay test mode</span>
+          <span>Razorpay test mode · no real money</span>
+          <span>Single merchant</span>
           <span>Every action audited</span>
           <span>Bounded by policy</span>
-          <span>Human escalation included</span>
         </div>
         <div className="landing-scroll-cue" aria-hidden>
           <span>Scroll to follow the recovery loop</span>
@@ -141,8 +146,12 @@ export function Landing() {
           </div>
           <div className="landing-boundary-row landing-boundary-final">
             <span>Payment layer</span>
-            <strong>Provides the only source of payment truth</strong>
-            <small>Signed webhooks and authenticated Razorpay reads</small>
+            <strong>Decides what has actually been paid</strong>
+            <small>
+              Signed webhooks and authenticated Razorpay reads. A payment made outside a
+              Vasooli link is recorded by a named operator and marked as their
+              assertion, never as verified provider truth.
+            </small>
           </div>
           <p className="landing-boundary-note">
             The separation is enforced in code and tested against the import graph—not
@@ -197,22 +206,37 @@ export function Landing() {
             </h2>
           </div>
         </div>
+        {/* Verified facts first, simulated ones second and labelled as such.
+            The recovery figure comes from a simulator in this repository, not from a
+            merchant — leading with it invites a reviewer to treat every other number
+            as equally soft, which none of them are. */}
         <div className="landing-metrics">
           <div className="landing-metric landing-reveal" data-reveal>
-            <strong>65.1%</strong><span>invoice value recovered</span><small>Across a 150-invoice, 45-day simulation</small>
+            <strong>940</strong><span>tests passing</span><small>833 backend, 107 frontend. Run them yourself.</small>
           </div>
           <div className="landing-metric landing-reveal" data-reveal>
-            <strong>1.10</strong><span>contacts per invoice</span><small>Compared with 5.17 for a naive chaser</small>
+            <strong>10</strong><span>policy checks before any send</span><small>Pure functions, no model involved</small>
           </div>
           <div className="landing-metric landing-reveal" data-reveal>
-            <strong>0</strong><span>policy breaches</span><small>Compared with 92 for a naive chaser</small>
+            <strong>0</strong><span>ways for AI to settle an invoice</span><small>Enforced in code, tested against the import graph</small>
           </div>
         </div>
-        <p className="landing-proof-note landing-reveal" data-reveal>
-          A naive chaser recovered more by contacting everyone repeatedly and never
-          stopping. Vasooli recovered most of that value with one-fifth of the contact
-          and none of the behaviour a business would be embarrassed to defend.
-        </p>
+
+        <div className="landing-simulated landing-reveal" data-reveal>
+          <p className="landing-eyebrow">Simulated, not observed</p>
+          <p className="landing-explainer">
+            Against a 150-invoice, 45-day scenario generated by the simulator in this
+            repository, Vasooli recovered <strong>65.1%</strong> of invoice value with{" "}
+            <strong>1.10</strong> contacts per invoice and no policy breach, where a
+            naive chaser needed 5.17 contacts and broke policy 92 times. It also handed{" "}
+            <strong>83 of the 150</strong> invoices to a human.
+          </p>
+          <p className="landing-explainer">
+            No merchant has run on this. These are the numbers a deterministic model
+            produced about itself, and they belong in the same sentence as that
+            caveat — not on a slide on their own.
+          </p>
+        </div>
       </section>
 
       <section className="landing-scope landing-grid" aria-labelledby="scope-title">
@@ -226,8 +250,16 @@ export function Landing() {
           </h2>
           <p className="landing-explainer landing-reveal" data-reveal>
             Vasooli is a single-merchant system using Razorpay test keys. The payment
-            links, outbound email, inbound replies, AI calls, stopping rules, and audit
-            trail are implemented. No real customer money has moved through it.
+            links, outbound email, delivery and bounce events, inbound replies, AI
+            calls, stopping rules, and audit trail are implemented and tested. No real
+            customer money has moved through it.
+          </p>
+          <p className="landing-explainer landing-reveal" data-reveal>
+            What it is not: it has no connector to your accounting system, so invoices
+            are imported rather than discovered and a change in your books does not
+            reach it. It does not ingest Razorpay refunds or chargebacks. One merchant,
+            one currency. Calling this production-grade would be a stretch; it is a
+            production-shaped prototype with the money paths built properly.
           </p>
           <a className="landing-text-link landing-reveal" data-reveal href={REPO} target="_blank" rel="noreferrer">
             Inspect the source and tests <Arrow />

@@ -42,9 +42,10 @@ from app.models import (
     Invoice,
     ReconciliationEvent,
 )
+from app.services.delivery_events import record_delivery_event
 from app.services.messaging import reply_address_for
 from app.services.reconciliation import begin_attempt, mark_event_failed, process_event
-from app.services.replies import handle_reply
+from app.services.replies import handle_reply, mark_inbound_failed
 
 router = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
 log = get_logger("webhooks")
@@ -186,16 +187,22 @@ def _record_inbound(
         # The complete body remains evidence; AI/policy gets a bounded working copy.
         handle_reply(session, invoice, body[:20_000], inbound_message_id=str(message.id))
         message.processed_at = utcnow()
+        message.processing_attempts += 1
+        message.last_attempt_at = utcnow()
+        message.processing_error = None
+        message.next_retry_at = None
         session.add(message)
         session.commit()
     except Exception as exc:
         session.rollback()
         session.refresh(message)
-        message.processing_error = f"{type(exc).__name__}: {exc}"[:500]
-        session.add(message)
-        session.commit()
+        # Schedules a retry rather than only writing the error into a column. This
+        # endpoint answers 200 either way — a 5xx would make the provider redeliver
+        # into the same bug — so the retry has to be ours, and without one the
+        # customer's message was previously a dead end.
+        mark_inbound_failed(session, message, f"{type(exc).__name__}: {exc}")
         log.exception("inbound_email.processing_failed", event_id=event_id)
-        return {"status": "recorded_for_review", "event_id": event_id}
+        return {"status": "recorded_for_retry", "event_id": event_id}
     return {"status": "processed", "event_id": event_id}
 
 
@@ -264,6 +271,47 @@ async def resend_inbound_webhook(request: Request, session: SessionDep) -> dict[
         in_reply_to=lowered_headers.get("in-reply-to"),
         raw_payload={"event": event, "message": retained_message},
         received_at=received_at,
+    )
+
+
+@router.post("/resend/delivery")
+async def resend_delivery_webhook(request: Request, session: SessionDep) -> dict[str, str]:
+    """Record what Resend says happened to a reminder after it accepted it.
+
+    Same endpoint family and the same signing secret as inbound mail — Resend signs all
+    of its webhooks with one Svix secret — but a different concern entirely. Inbound is
+    a customer talking to us; this is the provider telling us whether we ever reached
+    them.
+
+    Answering 200 to an unverifiable payload is not an option, so the signature is
+    checked first and a bad one is a 400, exactly as for Razorpay.
+    """
+    raw_body = await request.body()
+    event_id = request.headers.get("svix-id")
+    try:
+        event = verify_webhook(
+            raw_body,
+            svix_id=event_id,
+            svix_timestamp=request.headers.get("svix-timestamp"),
+            svix_signature=request.headers.get("svix-signature"),
+        )
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid webhook signature") from exc
+
+    if not event_id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "missing svix-id")
+
+    event_type = str(event.get("type") or "")
+    if event_type == "email.received":
+        # Wrong endpoint for this one; the inbound handler fetches the body and
+        # correlates the sender. Ignoring it here is better than half-processing it.
+        return {"status": "event_ignored", "event_id": event_id}
+
+    return record_delivery_event(
+        session,
+        provider_event_id=event_id,
+        event_type=event_type,
+        payload=event,
     )
 
 

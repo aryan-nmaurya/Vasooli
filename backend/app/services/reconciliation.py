@@ -170,9 +170,19 @@ def process_event(session: Session, event: ReconciliationEvent) -> None:
     reported_paid = int(entity.get("amount_paid") or 0)
 
     locked = session.exec(select(Invoice).where(Invoice.id == invoice.id).with_for_update()).one()
+    # `max()` applies to the LINK total only. It is what makes a redelivered or
+    # out-of-order webhook harmless — a stale event carrying a smaller total cannot walk
+    # the balance backwards — but it is only correct about a figure that is genuinely a
+    # restatement of one running total. Operator-entered payments are separate,
+    # additive transactions, so they live in their own column and are added afterwards.
+    # Sharing one column would make a hand-recorded bank transfer look like a newer,
+    # larger provider total, and every subsequent real link payment would be discarded
+    # by this `max()` as stale.
+    previous_link_paid = locked.link_paid_paise
+    locked.link_paid_paise = max(previous_link_paid, reported_paid)
+    applied_paise = locked.link_paid_paise - previous_link_paid
     previous_paid = locked.amount_paid_paise
-    locked.amount_paid_paise = max(previous_paid, reported_paid)
-    applied_paise = max(0, reported_paid - previous_paid)
+    locked.amount_paid_paise = locked.link_paid_paise + locked.external_paid_paise
 
     # A payment can land while a dispute is being worked, and when it does Razorpay
     # wins. The customer's objection does not stop the money being recorded, the

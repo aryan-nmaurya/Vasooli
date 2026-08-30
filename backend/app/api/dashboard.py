@@ -11,13 +11,14 @@ from datetime import timedelta
 
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, Field, model_validator
-from sqlmodel import select
+from sqlmodel import Session, select
 
 from app.api.deps import Operator, OperatorRequired
 from app.core.clock import utcnow
 from app.core.config import settings
 from app.core.constants import DisputeStatus, InvoiceStatus, PromiseStatus
 from app.core.db import SessionDep
+from app.core.logging import get_logger
 from app.core.money import format_inr
 from app.models import (
     AuditAction,
@@ -42,18 +43,22 @@ from app.schemas.dashboard import (
     ReminderView,
     TimelineEntry,
 )
-from app.services.closure import close_payment_link
+from app.services.automation import automation_health
+from app.services.closure import close_link_for_invoice, close_payment_link
 from app.services.disputes import cases_for, resolve_dispute
 from app.services.explain import Explanation, explain
+from app.services.manual_payments import payment_view, payments_for
 from app.services.messaging import retry_failed_deliveries
 from app.services.metrics import compute_metrics
 from app.services.reconciliation import reprocess_event
 from app.services.recovery import escalate_to_human
+from app.services.replies import retry_failed_inbound
 
 # Every endpoint here is gated. These reads expose customer names, email
 # addresses, amounts owed and the audit trail — that is a breach if it is
 # public, whether or not the caller can also change anything.
 router = APIRouter(prefix="/api", tags=["dashboard"], dependencies=[OperatorRequired])
+log = get_logger("dashboard")
 
 
 class RuntimeSafety(BaseModel):
@@ -88,6 +93,21 @@ def runtime_safety() -> RuntimeSafety:
     )
 
 
+@router.get("/dashboard/automation")
+def automation(session: SessionDep) -> dict:
+    """Proof the agent is running, not a statement that it is configured to.
+
+    `/dashboard/runtime` above reports configuration — "scheduler: enabled" — which is
+    what the audit correctly refused to accept as evidence. APScheduler runs inside the
+    API process; if its thread dies, this API stays healthy, /health stays green, and
+    no invoice is ever chased again. Configuration would still say "enabled".
+
+    This reads the `job_runs` table instead: when each job last started, last succeeded,
+    how long it took, what it did, and when it is due next.
+    """
+    return automation_health(session)
+
+
 #: Maps an audit actor to the badge shown on the timeline.
 _PROVENANCE = {
     "ai": "ai",
@@ -95,6 +115,12 @@ _PROVENANCE = {
     "razorpay": "razorpay",
     "system": "system",
     "scheduler": "system",
+    # Human actions are stored as "human:<username>", so the prefix split below yields
+    # "human". Without this entry it fell through to the default and every write-off,
+    # dispute resolution, and hand-recorded payment was badged SYSTEM on the timeline —
+    # the audit trail attributing a person's decision to the machine, which is the one
+    # thing an audit trail exists not to do.
+    "human": "human",
 }
 
 _SUMMARIES = {
@@ -118,6 +144,7 @@ _SUMMARIES = {
     AuditAction.REPLY_RECEIVED: "Customer replied",
     AuditAction.PROMISE_LOGGED: "Promise logged",
     AuditAction.PROMISE_KEPT: "Promise kept",
+    AuditAction.INVOICE_WRITTEN_OFF: "Written off",
     AuditAction.PROMISE_BROKEN: "Promise broken",
     AuditAction.ESCALATED_TO_HUMAN: "Escalated to human",
     AuditAction.DISPUTE_DETECTED: "Dispute detected in customer reply",
@@ -476,6 +503,9 @@ def invoice_detail(invoice_id: uuid.UUID, session: SessionDep) -> InvoiceDetail:
         amount_display=format_inr(invoice.amount_paise),
         paid_display=format_inr(invoice.amount_paid_paise),
         outstanding_display=format_inr(invoice.outstanding_paise),
+        link_paid_display=format_inr(invoice.link_paid_paise),
+        external_paid_display=format_inr(invoice.external_paid_paise),
+        external_payments=[payment_view(p) for p in payments_for(session, invoice.id)],
         status=str(invoice.status),
         days_overdue=invoice.days_overdue,
         due_at=invoice.due_at,
@@ -616,34 +646,85 @@ def audit_log(
 
 
 @router.post("/dashboard/invoices/{invoice_id}/escalate")
-def manual_escalate(invoice_id: uuid.UUID, session: SessionDep) -> dict:
+def manual_escalate(invoice_id: uuid.UUID, session: SessionDep, operator: Operator) -> dict:
     """Hand an invoice to a human by hand."""
     invoice = session.get(Invoice, invoice_id)
     if invoice is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Invoice not found")
-    escalate_to_human(session, invoice, "manual")
+    escalate_to_human(session, invoice, "manual", actor=AuditActor.human(operator))
     session.commit()
     return {"invoice_number": invoice.invoice_number, "status": str(invoice.status)}
 
 
 @router.post("/dashboard/invoices/{invoice_id}/write-off")
-def write_off(invoice_id: uuid.UUID, session: SessionDep) -> dict:
-    """Close an invoice as unrecoverable."""
+def write_off(invoice_id: uuid.UUID, session: SessionDep, operator: Operator) -> dict:
+    """Close an invoice as unrecoverable, and shut the route money could still arrive by.
+
+    Writing off is a decision to stop collecting. Leaving the Razorpay link live after
+    it contradicts that decision in the one way that costs money: the customer opens
+    the link from an old reminder, pays an invoice the merchant has already removed
+    from the books, and the payment lands against a balance nobody is reconciling any
+    more. Closure was previously reached only from reconciliation, so this state was
+    permanent — the audit's "writing off leaves a payable link open".
+
+    Ordering matches reconciliation, and for the same reason: the write-off commits
+    first and is durable, and only then is Razorpay called. A closure failure is
+    recorded on the link and retried by the sweep; it never rolls back the decision.
+    """
     invoice = session.get(Invoice, invoice_id)
     if invoice is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Invoice not found")
+
+    if invoice.status == InvoiceStatus.WRITTEN_OFF:
+        # Two operators pressing the same button is ordinary. Re-attempt the closure
+        # rather than the write-off, since an earlier failure is exactly why someone
+        # would press it again.
+        closed = _close_link_quietly(session, invoice)
+        return {
+            "invoice_number": invoice.invoice_number,
+            "status": str(invoice.status),
+            "payment_link_closed": closed,
+            "note": "This invoice was already written off.",
+        }
+
+    if invoice.status == InvoiceStatus.RECOVERED:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "This invoice has been paid — it cannot be written off",
+        )
+
     invoice.status = InvoiceStatus.WRITTEN_OFF
     session.add(invoice)
     session.add(
         AuditLog(
             invoice_id=invoice.id,
-            actor="human",
-            action="written_off",
+            actor=AuditActor.human(operator),
+            action=AuditAction.INVOICE_WRITTEN_OFF,
             detail={"outstanding_paise": invoice.outstanding_paise},
         )
     )
     session.commit()
-    return {"invoice_number": invoice.invoice_number, "status": str(invoice.status)}
+
+    closed = _close_link_quietly(session, invoice)
+    return {
+        "invoice_number": invoice.invoice_number,
+        "status": str(invoice.status),
+        "payment_link_closed": closed,
+    }
+
+
+def _close_link_quietly(session: Session, invoice: Invoice) -> bool:
+    """Close this invoice's payment link without letting Razorpay break the write-off.
+
+    A failure here is already recorded on the link and surfaces in the exceptions
+    queue with a retry button, so raising would only turn a retryable operational task
+    into a failed request against a decision that is already committed.
+    """
+    try:
+        return close_link_for_invoice(session, invoice.id)
+    except Exception:  # noqa: BLE001
+        log.exception("write_off.closure_failed", invoice_number=invoice.invoice_number)
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -739,16 +820,89 @@ def exceptions(session: SessionDep) -> dict:
         if link.cancelled_at is None
     ]
 
+    #: Customer replies that were received and stored but could not be interpreted.
+    #:
+    #: Previously a dead end and invisible: the webhook answered 200 (which is correct —
+    #: a 5xx would make the provider redeliver into the same bug), so nothing retried
+    #: them and no screen showed them. A customer writing "we paid this on the 14th"
+    #: could land in a column nobody queries while the reminders carried on.
+    stuck_inbound = session.exec(
+        select(InboundMessage)
+        .where(
+            InboundMessage.processed_at.is_(None),  # type: ignore[union-attr]
+            InboundMessage.processing_error.is_not(None),  # type: ignore[union-attr]
+        )
+        .order_by(InboundMessage.received_at.desc())  # type: ignore[attr-defined]
+    ).all()
+
+    inbound = [
+        {
+            "id": str(message.id),
+            "invoice_number": numbers.get(message.invoice_id, "—"),
+            "sender": message.sender,
+            "subject": message.subject,
+            "excerpt": message.body_text[:200],
+            "error": message.processing_error,
+            "attempts": message.processing_attempts,
+            "last_attempt_at": (
+                message.last_attempt_at.isoformat() if message.last_attempt_at else None
+            ),
+            "next_retry_at": (message.next_retry_at.isoformat() if message.next_retry_at else None),
+            "exhausted": message.is_exhausted,
+            "received_at": message.received_at.isoformat(),
+        }
+        for message in stuck_inbound
+    ]
+
     return {
         "reconciliation": reconciliation,
         "communication": communication,
         "unclosed_links": open_links,
-        "total": len(reconciliation) + len(communication) + len(open_links),
+        "inbound": inbound,
+        "total": len(reconciliation) + len(communication) + len(open_links) + len(inbound),
+    }
+
+
+@router.post("/dashboard/exceptions/inbound/{message_id}/retry")
+def retry_inbound(message_id: uuid.UUID, session: SessionDep, operator: Operator) -> dict:
+    """Reprocess one stored customer reply now, ignoring its backoff.
+
+    Works on exhausted messages too — that is the entire point of a manual retry. The
+    message body is already durable evidence; this only re-runs the interpretation of
+    it, and cannot mark an invoice paid.
+    """
+    message = session.get(InboundMessage, message_id)
+    if message is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Inbound message not found")
+    if message.processed_at is not None:
+        return {"message_id": str(message_id), "recovered": True, "note": "already processed"}
+
+    session.add(
+        AuditLog(
+            invoice_id=message.invoice_id,
+            actor=AuditActor.human(operator),
+            action=AuditAction.INBOUND_REPROCESSED,
+            detail={
+                "inbound_message_id": str(message_id),
+                "attempts_before": message.processing_attempts,
+            },
+        )
+    )
+    session.commit()
+
+    report = retry_failed_inbound(session, force_ids=[str(message_id)])
+    session.refresh(message)
+    return {
+        "message_id": str(message_id),
+        "recovered": message.processed_at is not None,
+        "attempts": message.processing_attempts,
+        "error": message.processing_error,
+        "swept": report["attempted"],
     }
 
 
 @router.post("/dashboard/exceptions/events/{provider_event_id}/retry")
-def retry_event(provider_event_id: str, session: SessionDep) -> dict:
+def retry_event(provider_event_id: str, session: SessionDep, operator: Operator) -> dict:
     """Reprocess one failed webhook now, ignoring its backoff.
 
     Idempotent: reconciliation applies the running total Razorpay reports with max(),
@@ -765,7 +919,7 @@ def retry_event(provider_event_id: str, session: SessionDep) -> dict:
     session.add(
         AuditLog(
             invoice_id=event.matched_invoice_id,
-            actor="human",
+            actor=AuditActor.human(operator),
             action=AuditAction.RECONCILIATION_RETRIED,
             detail={"event_id": provider_event_id, "attempts_before": event.attempts},
         )
@@ -809,7 +963,7 @@ def retry_reminder(reminder_id: uuid.UUID, session: SessionDep) -> dict:
 
 
 @router.post("/dashboard/exceptions/links/{link_id}/retry-closure")
-def retry_closure(link_id: uuid.UUID, session: SessionDep) -> dict:
+def retry_closure(link_id: uuid.UUID, session: SessionDep, operator: Operator) -> dict:
     """Re-attempt closing one payment link, ignoring its backoff.
 
     Deliberately narrow. This closes a link and nothing else — it cannot change an
@@ -833,17 +987,19 @@ def retry_closure(link_id: uuid.UUID, session: SessionDep) -> dict:
         }
 
     invoice = session.get(Invoice, link.invoice_id)
-    if invoice is None or not invoice.is_fully_paid:
-        # Closing a link on an unpaid invoice would remove the customer's way to pay.
+    if invoice is None or not invoice.link_should_be_closed:
+        # Closing a link on an invoice still being collected would remove the
+        # customer's way to pay. Settled and written-off invoices both qualify:
+        # neither should accept another rupee.
         raise HTTPException(
             status.HTTP_409_CONFLICT,
-            "Invoice is not fully paid — closing its link would remove the way to pay it",
+            "Invoice is still being collected — closing its link would remove the way to pay it",
         )
 
     session.add(
         AuditLog(
             invoice_id=invoice.id,
-            actor="human",
+            actor=AuditActor.human(operator),
             action=AuditAction.PAYMENT_LINK_CLOSE_RETRIED,
             detail={
                 "payment_link_id": link.razorpay_payment_link_id,

@@ -39,6 +39,10 @@ date, invoice number, or link.
 - Write the amount exactly as "Rs {outstanding_inr}".
 - Write the invoice number exactly as "{invoice_number}".
 - Include the payment link exactly as given.
+- Mention NO other number that could be read as money, and no second link or \
+reference. No late fee, no interest, no penalty, no partial figure, no running total, \
+no alternative payment address. The draft is checked against an allowlist of the \
+figures above and is discarded whole if it contains any other one.
 - Indian business English. No emoji. No placeholder text like [Name].
 - Body under 120 words.
 

@@ -49,8 +49,14 @@ Stated up front, because a judge should not have to work it out.
 | Direct Razorpay sync | Recovered a Razorpay test-mode ₹9,500 payment whose webhook never arrived |
 | Delivery retry, closure retry, webhook reprocessing | Bounded backoff, all tested |
 | Policy engine | Pure functions, 89 tests |
+| AI cannot invent a figure | Required figures must be present *and* nothing else money-shaped may be — every amount, link, and reference in a draft is matched against an allowlist, and a draft with an extra one is discarded for the template |
 | Authentication | Named DB accounts, roles, lockout/revocation, every endpoint verified unauthenticated |
 | Outbound email | Durable leased outbox; the Resend key authenticates and `vasooli.space` is verified for sending. Mail is redirected to an operator inbox and cannot be pointed at a customer |
+| Delivery and bounce outcomes | `sent` means the provider accepted the message and is named that way throughout. Delivery, bounce, deferral, and spam complaints arrive on a signed webhook and are applied separately; a hard bounce ends the cadence for that invoice rather than advancing it |
+| Payments outside a Vasooli link | Bank transfer, UPI, cheque, and agreed adjustments are recorded against their own invoice column, never mixed with the running total Razorpay reports. Recorded under a named operator, reversible, and marked `operator_asserted` in the trail |
+| Manual matching of an unmatched payment | An operator picks the invoice; the amount is read from the stored webhook payload, not from the request |
+| Inbound reprocessing | A reply that failed to parse is retried with bounded backoff and can be reprocessed by hand after the attempts run out |
+| Scheduler evidence | Every job run is recorded before and after, so the dashboard reports the last successful cycle rather than the fact that the scheduler is configured |
 | Inbound email | `vasooli.space` is receiving-enabled with MX records in place, and the Svix-signed webhook stores, deduplicates and correlates a reply before acting on it |
 | Audit trail | Append-only, enforced by a database trigger |
 
@@ -116,7 +122,7 @@ If you have ten minutes and want to check the central claim rather than the inte
 | `backend/eval/` + `backend/eval/out/results.csv` | The three-arm evaluation, including the arm where a naive chaser beats us |
 
 ```bash
-cd backend && uv run pytest -q          # 765 tests
+cd backend && uv run pytest -q          # 833 tests
 uv run python -m scripts.preflight      # every integration, live
 ```
 
@@ -240,7 +246,7 @@ OVERDUE INVOICE
       ↓
   DIAGNOSIS ................ AI explains, deterministic rules decide
       ↓
-  POLICY ENGINE ............ pure Python, 9 checks, no model involved
+  POLICY ENGINE ............ pure Python, 10 checks, no model involved
       ↓
   REMINDER ................. AI drafts, policy approves, then it sends
       ↓
@@ -276,7 +282,7 @@ convention — a test fails the build if it ever does.
 |---|---|---|
 | Whether money arrived | **Deterministic** | Razorpay only — a signature-verified webhook, or an authenticated response to a call *we* made to Razorpay (the hourly sync). Both are recorded with their provenance; neither is a model's output |
 | How much was paid | **Deterministic** | Integer paise, running total, `max()` |
-| Whether to send a reminder | **Deterministic** | `app/policy` — 9 checks, pure functions |
+| Whether to send a reminder | **Deterministic** | `app/policy` — 10 checks, pure functions |
 | Which tier / tone | **Deterministic** | Locked schedule: day 3, 10, 21 |
 | Whether to stop | **Deterministic** | Cap, cooldown, promise, dispute, payment |
 | Reason category | **Deterministic** | The four categories are rules over history |
@@ -474,6 +480,19 @@ Stated plainly, because a smaller honest demo beats a fake impressive one.
   delivery still requires the provider to honor the stable idempotency key
 - **The evaluation's customers are simulated**, driven by a stated behaviour model. It
   measures the policy, not real human behaviour
+- **Invoices are imported, not discovered.** There is no connector to an accounting
+  system, ERP, or Razorpay's own invoice objects. A CSV or an API call is how the
+  ledger gets in, and re-importing an existing invoice number is skipped rather than
+  synchronised — so a change in the merchant's books does not reach Vasooli
+- **Payments made outside a Vasooli payment link are recorded by a person, not
+  detected.** There is no bank feed. The record-a-payment flow is what stops a customer
+  who paid by NEFT from being chased, and it depends on somebody entering it
+- **Refunds, chargebacks, and credit notes are not ingested.** A recorded payment can be
+  reversed by hand, which is enough to put an invoice back into the queue, but Razorpay
+  refund and dispute events are not consumed and there is no chargeback lifecycle
+- **A reversed payment does not reprovision a payment link.** Razorpay links cannot be
+  un-cancelled, so an invoice that becomes owed again needs a new link created by hand.
+  The reversal says so rather than leaving the customer with no way to pay
 
 ## 15. What production would require
 
