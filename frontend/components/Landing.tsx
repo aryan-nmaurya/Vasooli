@@ -212,7 +212,7 @@ export function Landing() {
             as equally soft, which none of them are. */}
         <div className="landing-metrics">
           <div className="landing-metric landing-reveal" data-reveal>
-            <strong>940</strong><span>tests passing</span><small>833 backend, 107 frontend. Run them yourself.</small>
+            <strong>943</strong><span>tests passing</span><small>836 backend, 107 frontend. Run them yourself.</small>
           </div>
           <div className="landing-metric landing-reveal" data-reveal>
             <strong>10</strong><span>policy checks before any send</span><small>Pure functions, no model involved</small>

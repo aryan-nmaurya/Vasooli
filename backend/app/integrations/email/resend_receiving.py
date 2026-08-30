@@ -22,10 +22,19 @@ def verify_webhook(
     svix_id: str | None,
     svix_timestamp: str | None,
     svix_signature: str | None,
+    secret: str | None = None,
 ) -> dict[str, Any]:
-    """Verify and parse a Resend event, raising ``ValueError`` on any failure."""
-    if not settings.resend_inbound_webhook_secret:
-        raise ValueError("Resend inbound webhook secret is not configured")
+    """Verify and parse a Resend event, raising ``ValueError`` on any failure.
+
+    `secret` defaults to the inbound-mail secret for backward compatibility, but each
+    Resend webhook endpoint is issued its own signing secret — Resend does not share
+    one across an account, despite this module having assumed that for a while. The
+    delivery endpoint passes its own value explicitly rather than silently reusing
+    inbound's.
+    """
+    secret = secret if secret is not None else settings.resend_inbound_webhook_secret
+    if not secret:
+        raise ValueError("Resend webhook secret is not configured")
     event = resend.Webhooks.verify(
         {
             "payload": raw_body.decode("utf-8"),
@@ -34,7 +43,7 @@ def verify_webhook(
                 "timestamp": svix_timestamp or "",
                 "signature": svix_signature or "",
             },
-            "webhook_secret": settings.resend_inbound_webhook_secret,
+            "webhook_secret": secret,
         }
     )
     return dict(event)

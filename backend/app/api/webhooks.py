@@ -278,10 +278,11 @@ async def resend_inbound_webhook(request: Request, session: SessionDep) -> dict[
 async def resend_delivery_webhook(request: Request, session: SessionDep) -> dict[str, str]:
     """Record what Resend says happened to a reminder after it accepted it.
 
-    Same endpoint family and the same signing secret as inbound mail — Resend signs all
-    of its webhooks with one Svix secret — but a different concern entirely. Inbound is
-    a customer talking to us; this is the provider telling us whether we ever reached
-    them.
+    Same endpoint family as inbound mail, but a DIFFERENT signing secret. Resend issues
+    a distinct secret per webhook endpoint rather than one per account, so this is
+    verified against RESEND_DELIVERY_WEBHOOK_SECRET, not the inbound one — using the
+    wrong value here fails only delivery events; inbound mail is unaffected because it
+    is checked independently.
 
     Answering 200 to an unverifiable payload is not an option, so the signature is
     checked first and a bad one is a 400, exactly as for Razorpay.
@@ -294,6 +295,7 @@ async def resend_delivery_webhook(request: Request, session: SessionDep) -> dict
             svix_id=event_id,
             svix_timestamp=request.headers.get("svix-timestamp"),
             svix_signature=request.headers.get("svix-signature"),
+            secret=settings.resend_delivery_webhook_secret,
         )
     except (UnicodeDecodeError, ValueError) as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid webhook signature") from exc

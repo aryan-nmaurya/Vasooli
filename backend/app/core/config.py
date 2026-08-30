@@ -59,6 +59,12 @@ class Settings(BaseSettings):
     email_from: str = "Vasooli <onboarding@resend.dev>"
     email_reply_to_domain: str = "example.com"
     resend_inbound_webhook_secret: str = ""
+    #: Each Resend webhook endpoint is issued its own signing secret — Resend does not
+    #: share one across an account. This is the secret for the delivery/bounce
+    #: endpoint specifically, separate from the inbound-mail one above; using the
+    #: wrong value here fails signature verification for delivery events even though
+    #: inbound mail keeps working, since the two are checked independently.
+    resend_delivery_webhook_secret: str = ""
     inbound_email_webhook_secret: str = ""
 
     #: The demo control that injects a customer reply without an email ever existing.

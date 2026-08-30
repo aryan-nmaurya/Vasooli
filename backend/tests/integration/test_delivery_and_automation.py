@@ -468,3 +468,65 @@ def test_a_delayed_bounce_undoes_an_earlier_delivery_confirmation(
     assert sent_reminder.hard_failed is True
     assert sent_reminder.reached_the_customer is False
     assert sent_reminder.delivered_at is not None  # the history is kept, not erased
+
+
+# ===========================================================================
+# The delivery endpoint's signature is checked against ITS OWN secret.
+#
+# Resend issues a distinct signing secret per webhook endpoint — not one shared
+# across an account, despite this module having assumed exactly that for a while.
+# `verify_webhook` was hardcoded to the inbound-mail secret and the delivery route
+# called it with no way to say otherwise, so a real deployment with two genuinely
+# different secrets would have failed to verify one of its two webhooks no matter
+# which value went into which setting. These exercise the real verifier, unmocked,
+# to prove the two are checked independently.
+# ===========================================================================
+
+
+def _sign(secret: str, raw: bytes, *, msg_id: str, timestamp: str) -> str:
+    """A real Svix v1 signature, the same construction Resend's SDK verifies."""
+    import base64
+    import hmac as hmac_mod
+    from hashlib import sha256
+
+    key = base64.b64decode(secret.split("_", 1)[1])
+    signed = f"{msg_id}.{timestamp}.{raw.decode()}".encode()
+    digest = base64.b64encode(hmac_mod.new(key, signed, sha256).digest()).decode()
+    return f"v1,{digest}"
+
+
+def _svix_headers(secret: str, raw: bytes, *, msg_id: str = "msg_real_sig") -> dict:
+    import time as time_mod
+
+    timestamp = str(int(time_mod.time()))
+    return {
+        "svix-id": msg_id,
+        "svix-timestamp": timestamp,
+        "svix-signature": _sign(secret, raw, msg_id=msg_id, timestamp=timestamp),
+    }
+
+
+def test_the_delivery_endpoint_accepts_its_own_real_secret(api, session):
+    """The regression test. Signed with RESEND_DELIVERY_WEBHOOK_SECRET, verified for
+    real — no mock in this one — against the same setting."""
+    raw = b'{"type":"email.opened","data":{}}'
+    headers = _svix_headers(settings.resend_delivery_webhook_secret, raw)
+    response = api.post("/api/webhooks/resend/delivery", content=raw, headers=headers)
+    assert response.status_code == 200
+
+
+def test_the_delivery_endpoint_rejects_the_inbound_secret(api, session):
+    """The exact failure this whole fix exists to prevent: the two secrets are not
+    interchangeable, and a payload signed with the wrong one must not verify."""
+    raw = b'{"type":"email.opened","data":{}}'
+    headers = _svix_headers(settings.resend_inbound_webhook_secret, raw)
+    response = api.post("/api/webhooks/resend/delivery", content=raw, headers=headers)
+    assert response.status_code == 400
+
+
+def test_the_inbound_endpoint_rejects_the_delivery_secret(api, session):
+    """And the other direction: inbound mail must not accept a delivery-signed body."""
+    raw = b'{"type":"email.received","data":{"email_id":"x"}}'
+    headers = _svix_headers(settings.resend_delivery_webhook_secret, raw)
+    response = api.post("/api/webhooks/resend/inbound", content=raw, headers=headers)
+    assert response.status_code == 400

@@ -122,7 +122,7 @@ If you have ten minutes and want to check the central claim rather than the inte
 | `backend/eval/` + `backend/eval/out/results.csv` | The three-arm evaluation, including the arm where a naive chaser beats us |
 
 ```bash
-cd backend && uv run pytest -q          # 833 tests
+cd backend && uv run pytest -q          # 836 tests
 uv run python -m scripts.preflight      # every integration, live
 ```
 
