@@ -164,8 +164,8 @@ export default function GuidePage() {
         <p className="text-sm leading-relaxed text-ink-2">
           Reminders fire at 3, 10 and 21 days overdue, and mail is redirected away from
           customers. Both are right for a real merchant and impossible to evaluate in a
-          sitting, so the <strong className="text-ink">Settings</strong> panel — bottom
-          left of the dashboard — lets you move past both.
+          sitting, so the <strong className="text-ink">Workspace settings</strong> page
+          lets you move past both without covering the dashboard.
         </p>
         <div className="flex flex-col gap-2.5">
           <div className="rounded-lg border border-line bg-panel px-4 py-3">

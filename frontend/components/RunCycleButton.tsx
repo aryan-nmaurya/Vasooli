@@ -62,14 +62,15 @@ export function RunCycleButton({ emailMode = "dry_run" }: { emailMode?: string }
       <button
         onClick={() => run(false)}
         disabled={busy !== null}
-        className="rounded-md bg-invert px-3 py-1.5 text-sm font-medium text-invert-ink transition hover:opacity-90 disabled:opacity-50"
+        className="inline-flex min-h-9 items-center gap-2 rounded-lg bg-invert px-3.5 py-2 text-xs font-semibold text-invert-ink shadow-sm transition hover:opacity-90 disabled:opacity-50"
       >
-        {busy === "live" ? "Running…" : "Run recovery cycle"}
+        <span aria-hidden>{busy === "live" ? "···" : "▶"}</span>
+        {busy === "live" ? "Running…" : "Run cycle"}
       </button>
       <button
         onClick={() => run(true)}
         disabled={busy !== null}
-        className="rounded-md px-3 py-1.5 text-sm text-ink-3 ring-1 ring-inset ring-line transition hover:bg-panel-2 hover:text-ink disabled:opacity-50"
+        className="min-h-9 rounded-lg px-3 py-2 text-xs font-medium text-ink-3 ring-1 ring-inset ring-line transition hover:bg-panel-2 hover:text-ink disabled:opacity-50"
         title="Evaluate everything, send nothing"
       >
         {busy === "dry" ? "Checking…" : "Dry run"}

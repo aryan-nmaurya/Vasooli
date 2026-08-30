@@ -26,10 +26,11 @@ export default async function RecoveredPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex flex-wrap items-end justify-between gap-3">
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-lg font-semibold text-ink">Recovered</h1>
-          <p className="mt-1 text-sm text-ink-3">
+          <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-ink-4">Collections</p>
+          <h1 className="text-2xl font-semibold tracking-[-0.03em] text-ink sm:text-[1.75rem]">Recovered</h1>
+          <p className="mt-1.5 text-sm leading-6 text-ink-3">
             {rows.length === 0
               ? "Nothing recovered yet."
               : `${rows.length} invoice${rows.length === 1 ? "" : "s"} settled — confirmed by Razorpay, not by a model.`}
@@ -51,7 +52,7 @@ export default async function RecoveredPage() {
           When a payment is confirmed, the invoice closes and appears here.
         </p>
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-line bg-panel">
+        <div className="overflow-x-auto rounded-xl border border-line bg-panel shadow-sm">
           <table className="w-full min-w-[46rem] text-sm">
             <thead>
               <tr className="border-b border-line text-left">

@@ -103,7 +103,7 @@ export function ExportMenu({
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
         aria-haspopup="menu"
-        className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm text-ink-2 ring-1 ring-inset ring-line transition hover:bg-panel-2 hover:text-ink"
+        className="inline-flex min-h-9 items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium text-ink-2 ring-1 ring-inset ring-line transition hover:bg-panel-2 hover:text-ink"
       >
         <svg
           aria-hidden

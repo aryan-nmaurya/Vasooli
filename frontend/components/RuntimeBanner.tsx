@@ -18,7 +18,7 @@ export async function RuntimeBanner() {
   return (
     <aside
       aria-label="Runtime safety modes"
-      className={`border-b px-3 py-2 text-center text-xs sm:px-6 ${
+      className={`border-b px-3 py-1.5 text-center text-[10px] font-medium tracking-wide sm:px-6 ${
         mode.email === "direct_customer" || mode.razorpay === "live"
           ? "border-rose-300 bg-rose-50 text-rose-900 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200"
           : "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200"

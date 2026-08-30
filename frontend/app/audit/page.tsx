@@ -9,14 +9,15 @@ export default async function Page() {
   return (
     <div className="space-y-5">
       <div>
-        <h1 className="text-lg font-semibold text-ink">Audit log</h1>
-        <p className="mt-1 text-sm text-ink-3">
+        <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-ink-4">Activity</p>
+        <h1 className="text-2xl font-semibold tracking-[-0.03em] text-ink sm:text-[1.75rem]">Audit log</h1>
+        <p className="mt-1.5 max-w-3xl text-sm leading-6 text-ink-3">
           Append-only. A database trigger rejects any UPDATE or DELETE on this table, for
           every role — so what is here is what happened.
         </p>
       </div>
 
-      <div className="scroll-x rounded-xl border border-line">
+      <div className="scroll-x rounded-xl border border-line bg-panel shadow-sm">
         <table className="w-full min-w-[820px] text-sm">
           <thead className="border-b border-line text-left text-xs uppercase tracking-wider text-ink-3">
             <tr>

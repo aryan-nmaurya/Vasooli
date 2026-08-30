@@ -16,19 +16,20 @@ export default async function Page() {
   return (
     <div className="space-y-7">
       <div>
-        <h1 className="text-lg font-semibold text-ink">Promise tracker</h1>
-        <p className="mt-1 text-sm text-ink-3">
+        <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-ink-4">Commitments</p>
+        <h1 className="text-2xl font-semibold tracking-[-0.03em] text-ink sm:text-[1.75rem]">Promise tracker</h1>
+        <p className="mt-1.5 max-w-2xl text-sm leading-6 text-ink-3">
           A broken promise resumes escalation at the tier it paused, never back at polite.
         </p>
       </div>
 
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <Stat label="Active" value={groups.active.length} />
         <Stat label="Kept" value={groups.kept.length} tone="emerald" />
         <Stat label="Broken" value={groups.broken.length} tone="rose" />
       </div>
 
-      <div className="scroll-x rounded-xl border border-line">
+      <div className="scroll-x rounded-xl border border-line bg-panel shadow-sm">
         <table className="w-full min-w-[760px] text-sm">
           <thead className="border-b border-line text-left text-xs uppercase tracking-wider text-ink-3">
             <tr>

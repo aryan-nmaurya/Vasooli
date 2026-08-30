@@ -41,29 +41,34 @@ function Metric({
   sub,
   flash,
   tone = "plain",
+  compact = false,
 }: {
   label: string;
   value: string;
   sub?: string;
   flash?: boolean;
   tone?: keyof typeof TONE;
+  compact?: boolean;
 }) {
   return (
     <div
       // The transition exists for the payment flash. It is applied only while
       // flashing: left on permanently it also animates every theme switch, and the
       // toggle spends most of a second looking half-broken.
-      className={`rounded-xl border border-line bg-panel px-5 py-4 ${
+      className={`relative overflow-hidden rounded-xl border border-line bg-panel ${compact ? "px-4 py-3.5" : "px-5 py-5"} ${
         flash
           ? "border-emerald-400 bg-emerald-50 transition-colors duration-700 dark:border-emerald-500/60 dark:bg-emerald-500/10"
           : ""
       }`}
     >
-      <div className="text-xs uppercase tracking-wider text-ink-3">{label}</div>
-      <div className={`mt-1 text-2xl font-semibold tabular-nums tracking-tight ${TONE[tone]}`}>
+      {tone !== "plain" ? (
+        <span aria-hidden className={`absolute inset-y-0 left-0 w-0.5 ${tone === "good" ? "bg-emerald-500" : "bg-rose-500"}`} />
+      ) : null}
+      <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-ink-3">{label}</div>
+      <div className={`${compact ? "mt-1 text-xl" : "mt-2 text-3xl"} font-semibold tabular-nums tracking-[-0.03em] ${TONE[tone]}`}>
         {value}
       </div>
-      {sub ? <div className="mt-0.5 text-xs text-ink-3">{sub}</div> : null}
+      {sub ? <div className="mt-1 text-xs leading-4 text-ink-3">{sub}</div> : null}
     </div>
   );
 }
@@ -131,17 +136,23 @@ export function OverviewClient({
   const visible = statusFilter ? queue.filter((r) => r.status === statusFilter) : queue;
 
   return (
-    <div className="space-y-7">
-      <div className="flex flex-wrap items-start justify-between gap-4">
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-start justify-between gap-x-8 gap-y-5">
         <div>
-          <h1 className="text-lg font-semibold text-ink">Recovery overview</h1>
-          <p className="mt-1 text-sm text-ink-3">
-            Recovery rate is measured by value, not by invoice count — forty small wins and one
-            large miss is not a success.
+          <div className="mb-2 flex items-center gap-2">
+            <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-ink-4">Dashboard</span>
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-300">
+              <span className="size-1.5 rounded-full bg-emerald-500" aria-hidden /> Live
+            </span>
+          </div>
+          <h1 className="text-2xl font-semibold tracking-[-0.03em] text-ink sm:text-[1.75rem]">Recovery overview</h1>
+          <p className="mt-1.5 max-w-2xl text-sm leading-6 text-ink-3">
+            Monitor overdue value, act on the recovery queue, and keep exceptions moving.
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-line bg-panel p-1.5 shadow-sm">
           <RunCycleButton emailMode={emailMode} />
+          <ImportLedger />
           <ExportMenu
             groups={[
               {
@@ -165,7 +176,6 @@ export function OverviewClient({
               },
             ]}
           />
-          <ImportLedger />
         </div>
       </div>
 
@@ -184,7 +194,7 @@ export function OverviewClient({
         </div>
       ) : null}
 
-      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <section aria-label="Recovery performance" className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Metric
           label="Total overdue"
           value={overview.total_overdue_display}
@@ -209,34 +219,49 @@ export function OverviewClient({
         />
       </section>
 
-      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <Metric label="Active promises" value={String(overview.active_promises)} />
+      <section aria-labelledby="attention-heading" className="rounded-xl border border-line bg-panel p-4 sm:p-5">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div>
+            <h2 id="attention-heading" className="text-sm font-semibold text-ink">Operational signals</h2>
+            <p className="mt-0.5 text-xs text-ink-3">Commitments and exceptions that may need intervention.</p>
+          </div>
+          <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-ink-4">Now</span>
+        </div>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <Metric compact label="Active promises" value={String(overview.active_promises)} />
         <Metric
+          compact
           label="Broken promises"
           value={String(overview.broken_promises)}
           sub={overview.broken_promises ? "flagged" : undefined}
           tone={overview.broken_promises ? "bad" : "plain"}
         />
         <Metric
+          compact
           label="Needs attention"
           value={String(exceptions.total)}
           sub="failed payments or reminders"
           tone={exceptions.total ? "bad" : "plain"}
         />
         <Metric
+          compact
           label="Needs a human"
           value={String(overview.invoices_in_human_review)}
           sub="outside the automated cadence"
           tone={overview.invoices_in_human_review ? "bad" : "plain"}
         />
 
+        </div>
       </section>
 
-      <section>
-        <div className="mb-2.5 flex flex-wrap items-center gap-3">
-          <h2 className="text-sm font-semibold text-ink">Recovery queue</h2>
-          <span className="text-xs text-ink-3">
-            {visible.length} of {queue.length}
+      <section className="rounded-xl border border-line bg-panel p-3 sm:p-5">
+        <div className="mb-4 flex flex-wrap items-start gap-3">
+          <div>
+            <h2 className="text-base font-semibold text-ink">Recovery queue</h2>
+            <p className="mt-0.5 text-xs text-ink-3">Prioritized invoices ready for the next collection step.</p>
+          </div>
+          <span className="rounded-full bg-panel-2 px-2.5 py-1 text-[11px] font-medium text-ink-3">
+            {visible.length} of {queue.length} shown
           </span>
           {(filter || statusFilter) && (
             <button
@@ -251,7 +276,8 @@ export function OverviewClient({
           )}
         </div>
 
-        <div className="mb-2 flex flex-wrap items-center gap-1.5">
+        <div className="rounded-lg border border-line-2 bg-surface p-3">
+        <div className="flex flex-wrap items-center gap-1.5">
           <span className="mr-1 text-[11px] uppercase tracking-wider text-ink-4">
             Status
           </span>
@@ -270,7 +296,7 @@ export function OverviewClient({
           ))}
         </div>
 
-        <div className="mb-3 flex flex-wrap items-center gap-1.5">
+        <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
           <span className="mr-1 text-[11px] uppercase tracking-wider text-ink-4">
             Reason
           </span>
@@ -298,8 +324,9 @@ export function OverviewClient({
             </button>
           ))}
         </div>
+        </div>
 
-        <div className="scroll-x rounded-xl border border-line">
+        <div className="scroll-x mt-3 rounded-lg border border-line">
           <table className="w-full min-w-[860px] text-sm">
             <thead className="border-b border-line text-left text-xs uppercase tracking-wider text-ink-3">
               <tr>

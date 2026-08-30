@@ -69,7 +69,7 @@ export function SignOutButton({ signedIn }: { signedIn: boolean }) {
         aria-label={failed ? "Sign out failed — try again" : "Sign out"}
         aria-expanded={confirming}
         title={failed ? "Sign out failed — try again" : "Sign out"}
-        className="inline-flex items-center gap-1.5 rounded-md border border-line p-1.5 text-xs text-ink-3 transition hover:bg-panel-2 hover:text-ink disabled:opacity-50 sm:px-2.5"
+        className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-line bg-panel px-2.5 text-xs text-ink-3 transition hover:bg-panel-2 hover:text-ink disabled:opacity-50"
       >
         <svg
           aria-hidden

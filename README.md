@@ -50,7 +50,8 @@ Stated up front, because a judge should not have to work it out.
 | Delivery retry, closure retry, webhook reprocessing | Bounded backoff, all tested |
 | Policy engine | Pure functions, 89 tests |
 | Authentication | Named DB accounts, roles, lockout/revocation, every endpoint verified unauthenticated |
-| Outbound email | Durable leased outbox implemented; an earlier redirected send succeeded, but the current Resend key now returns 401 |
+| Outbound email | Durable leased outbox; the Resend key authenticates and `vasooli.space` is verified for sending. Mail is redirected to an operator inbox and cannot be pointed at a customer |
+| Inbound email | `vasooli.space` is receiving-enabled with MX records in place, and the Svix-signed webhook stores, deduplicates and correlates a reply before acting on it |
 | Audit trail | Append-only, enforced by a database trigger |
 
 ### Simulated
@@ -76,13 +77,19 @@ Deployed on Vercel (frontend) and AWS EC2 (backend + Postgres).
 
 | | State |
 |---|---|
-| Live Razorpay webhook end-to-end | Endpoint deployed and reachable; delivery depends on the webhook URL being registered against a host with a valid certificate |
-| Inbound email | Adapter, signature verification, threading and idempotency implemented and tested. Requires a Resend-verified domain with MX records before a reply can physically arrive |
-| Outbound email | Durable leased outbox implemented and tested. Blocked on a valid `RESEND_API_KEY` |
+| Live Razorpay webhook end-to-end | The handler is tested against signed payloads, but Razorpay can only deliver to a host presenting a valid certificate. Until the deployment's TLS is trusted, payment confirmation in the live environment comes from the authenticated Razorpay sync rather than a pushed webhook |
 
-Run `uv run python -m scripts.preflight --host https://<your-host>` for the current,
-machine-checked state of every one of these. It reports what is configured, what is
-missing, and the remedy for each — in the order they break.
+**`scripts/preflight` is the authority, not this file.** Prose goes stale between a
+change and the next edit; the preflight does not. Run it immediately before recording
+or demonstrating anything, and believe it over any sentence written here:
+
+```bash
+cd backend && uv run python -m scripts.preflight --host https://<your-host>
+```
+
+It checks configuration, DNS, Razorpay, Resend and Gemini, and reports what is
+missing and the remedy for each — in the order they break. At the last run: **13
+passed, 0 failed**, with the public-host check skipped because no `--host` was given.
 
 **Nothing above is presented as real anywhere else in this repository.** If you find a
 contrary claim, it is a bug.
@@ -456,8 +463,9 @@ Stated plainly, because a smaller honest demo beats a fake impressive one.
 - **All outbound email is redirected** to a single inbox. The 60 synthetic customers
   have invented domains
 - **Gemini free tier is 20 requests/day per model.** A full cycle over 8 invoices uses
-  roughly 14. When exhausted, Vasooli falls back to deterministic templates — visibly
-  labelled in the UI
+  roughly 14 — and Dry run costs the same, since it diagnoses and drafts through the
+  same AI path and only skips the send. When exhausted, Vasooli falls back to
+  deterministic templates — visibly labelled in the UI, never a silent failure
 - **Single merchant, named operators.** Humans now have independent DB credentials,
   admin/operator/auditor roles, account lockout, and revocable sessions. This is real
   per-user IAM for one merchant, not multi-tenant resource isolation or SSO/MFA

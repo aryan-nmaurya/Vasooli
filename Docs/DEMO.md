@@ -71,8 +71,11 @@ webhook is rejected as a bad signature.
 ### 6. Rehearse with Dry run, not the real thing
 
 Gemini's free tier is 20 requests/day and one full cycle over 8 invoices uses roughly
-14. Use the **Dry run** button for rehearsals — it evaluates everything and sends
-nothing.
+14. **Dry run sends no email, but it still diagnoses and drafts through the same AI
+path**, so it spends the same calls as a real cycle — use it to rehearse the flow,
+not to save quota. If the free tier runs out mid-demo, Vasooli falls back to
+deterministic templates automatically, visibly labelled in the UI; it degrades, it
+does not block.
 
 ---
 
@@ -124,14 +127,23 @@ never entered the cadence.
 
 ### 4 — A promise pausing everything (30s)
 
-**DEMO SIMULATION.** Under **Demo Controls**, press **Promise to pay** → **Send reply**.
+**This is a real email round-trip.** `vasooli.space` is verified in Resend for both
+sending and receiving, so do not reach for the simulation control — it ships disabled
+(`ALLOW_SIMULATED_REPLIES=false`) and returns 403.
 
-This step deliberately uses the labelled simulation control. A native, Svix-verified
-Resend Receiving endpoint is implemented, but it requires an enabled provider webhook
-and verified receiving domain; the runtime banner reports the actual mode. Both
-paths use the same extraction, validation, and promise handling.
+1. Open **Settings** (bottom left) → **Send reminders to** → your own inbox. Save.
+2. Press **Run recovery cycle**. A reminder arrives in that inbox, from this domain.
+3. **Reply to it** in your mail client, saying you will pay on Friday.
+
+The reply returns through `POST /api/webhooks/resend/inbound`, which verifies the Svix
+signature, deduplicates on event id, correlates the sender against the invoice thread,
+and only then hands the text to the extractor.
 
 Press **Dry run**: that invoice is now *held*.
+
+> The redirect can move between inboxes but cannot be cleared to reach a customer —
+> both the send path and the inbound authorization read the same value, so an address
+> you can receive at is an address you can reply from.
 
 ### 5 — The real payment (60s) ← the technical centre
 

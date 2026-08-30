@@ -14,7 +14,7 @@
  */
 
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
 import type { DemoClock as Clock } from "@/lib/api";
 
@@ -61,8 +61,6 @@ export function DemoSettingsPanel({ initial }: { initial: Clock }) {
   const [dryRun, setDryRun] = useState(false);
   const [auto, setAuto] = useState(false);
   const [stepsLeft, setStepsLeft] = useState(0);
-  const [open, setOpen] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
   const [emailDraft, setEmailDraft] = useState("");
   const [emailSaving, setEmailSaving] = useState(false);
   const [emailNote, setEmailNote] = useState<string | null>(null);
@@ -142,32 +140,6 @@ export function DemoSettingsPanel({ initial }: { initial: Clock }) {
     }
   }
 
-  useEffect(() => {
-    if (!open) return;
-
-    function dismissOnOutsideClick(event: PointerEvent) {
-      const target = event.target;
-      if (target instanceof Node && !containerRef.current?.contains(target)) {
-        setOpen(false);
-      }
-    }
-
-    function dismissOnEscape(event: KeyboardEvent) {
-      if (event.key === "Escape") setOpen(false);
-    }
-
-    // Closing does not stop an auto-play run in progress — the effect that steps it
-    // depends on `autoRunning`/`stepsLeft`, not on the panel being open. The
-    // collapsed pill still shows "Simulated +Nd" while it runs, so nothing silent
-    // happens off-screen.
-    document.addEventListener("pointerdown", dismissOnOutsideClick);
-    document.addEventListener("keydown", dismissOnEscape);
-    return () => {
-      document.removeEventListener("pointerdown", dismissOnOutsideClick);
-      document.removeEventListener("keydown", dismissOnEscape);
-    };
-  }, [open]);
-
   // Auto-advance. `stepsLeft` reaching zero is what ends the run, so the effect
   // only ever schedules — it never flips `auto` itself, which would cascade a
   // render from inside an effect body.
@@ -196,50 +168,17 @@ export function DemoSettingsPanel({ initial }: { initial: Clock }) {
   const running = clock.offset_days > 0;
 
   return (
-    <div ref={containerRef} className="fixed bottom-4 left-4 z-40 print:hidden">
-      {/* Collapsed by default. The panel is a demo affordance, not part of the
-          product — parking it inline pushed the actual recovery queue below the
-          fold, which is the opposite of what a reviewer should see first. */}
-      {!open ? (
-        <button
-          type="button"
-          onClick={() => setOpen(true)}
-          aria-expanded={false}
-          className={`inline-flex items-center gap-2 rounded-full border px-3.5 py-2 text-xs font-medium shadow-lg backdrop-blur transition hover:opacity-90 ${
-            running
-              ? "border-violet-300 bg-violet-100/90 text-violet-900 dark:border-violet-500/40 dark:bg-violet-500/20 dark:text-violet-100"
-              : "border-line bg-panel/90 text-ink-2"
-          }`}
-        >
-          <svg
-            aria-hidden
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-          >
-            <circle cx="12" cy="12" r="9" />
-            <path d="M12 7v5l3 2" />
-          </svg>
-          {running ? `Simulated +${clock.offset_days}d` : "Settings"}
-        </button>
-      ) : null}
-
-      {open ? (
     <section
       aria-labelledby="demo-clock-title"
-      className={`w-[min(94vw,26rem)] max-h-[80vh] overflow-y-auto rounded-xl border px-5 py-4 shadow-2xl backdrop-blur ${
+      className={`w-full rounded-xl border p-5 sm:p-6 ${
         running
-          ? "border-violet-300 bg-violet-50/95 dark:border-violet-500/30 dark:bg-[#171226]/95"
-          : "border-line bg-panel/95"
+          ? "border-violet-300 bg-violet-50 dark:border-violet-500/30 dark:bg-[#171226]"
+          : "border-line bg-panel"
       }`}
     >
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         <h2 id="demo-clock-title" className="text-sm font-semibold text-ink">
-          Reviewer settings
+          Demo controls
         </h2>
         {running ? (
           <span className="rounded bg-violet-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-violet-800 ring-1 ring-inset ring-violet-300 dark:bg-violet-500/20 dark:text-violet-200 dark:ring-violet-500/40">
@@ -250,14 +189,6 @@ export function DemoSettingsPanel({ initial }: { initial: Clock }) {
             Real time
           </span>
         )}
-        <button
-          type="button"
-          onClick={() => setOpen(false)}
-          aria-label="Close time machine"
-          className="ml-auto rounded-md px-1.5 py-0.5 text-lg leading-none text-ink-4 transition hover:text-ink"
-        >
-          ×
-        </button>
       </div>
 
       <div className="mt-3.5 border-t border-line pt-3 text-[10px] font-semibold uppercase tracking-wider text-ink-4">
@@ -451,7 +382,5 @@ export function DemoSettingsPanel({ initial }: { initial: Clock }) {
         <p className="mt-2.5 text-xs text-rose-700 dark:text-rose-300">{error}</p>
       ) : null}
     </section>
-      ) : null}
-    </div>
   );
 }
