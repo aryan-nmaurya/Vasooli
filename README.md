@@ -92,10 +92,12 @@ contrary claim, it is a bug.
 **Live:** [vasooli.space/guide](https://vasooli.space/guide) — a public page, no login
 required. It states what is real, what is test-mode, and where to click first.
 
-**Credentials** are issued per reviewer on request. Ask for an `auditor` account
-rather than an operator one: the role is enforced in `app/api/deps.py`, which refuses
-every non-GET request, so it cannot run a cycle, resolve a dispute, or send an email
-no matter what is clicked.
+**Credentials** are issued per reviewer on request, as an `operator` account: a
+reviewer should be able to run a cycle, redirect mail to their own inbox, reply to it,
+and watch the dispute open — evaluating a recovery system read-only means taking every
+interesting claim on trust. An `auditor` role also exists and is enforced in
+`app/api/deps.py`, which refuses every non-GET request; it is the right choice for
+someone who should see the evidence without being able to send mail.
 
 If you have ten minutes and want to check the central claim rather than the interface:
 
@@ -107,9 +109,121 @@ If you have ten minutes and want to check the central claim rather than the inte
 | `backend/eval/` + `backend/eval/out/results.csv` | The three-arm evaluation, including the arm where a naive chaser beats us |
 
 ```bash
-cd backend && uv run pytest -q          # 691 tests
+cd backend && uv run pytest -q          # 765 tests
 uv run python -m scripts.preflight      # every integration, live
 ```
+
+
+## Reviewer settings (demo controls)
+
+The cadence fires at 3, 10 and 21 days overdue, and reminder mail is redirected away
+from customers. Both are correct for a real merchant and make the product impossible
+to evaluate in a sitting, so a signed-in operator gets a **Settings** panel — bottom
+left of the dashboard — with two controls.
+
+Gated behind `DEMO_CONTROLS_ENABLED`, which defaults to **false**. A real
+multi-merchant deployment leaves it off and neither control exists.
+
+### Time machine
+
+Moves a simulated clock forward, then runs the ordinary recovery cycle against the
+later date. It fabricates nothing: `run_recovery_cycle` is the same function the
+scheduler calls, and the policy engine still decides what is due under the same rules.
+Only the date the system believes it is has moved — and the panel shows the simulated
+and real dates side by side rather than hiding the difference.
+
+Every move writes an audit row (`demo_clock_advanced`, `demo_clock_reset`) naming who
+moved it and by how much, because the clock changes what "now" means for every
+decision underneath it.
+
+This is deliberately **not** `DEMO_TIME_OFFSET_DAYS`. That one is a static boot-time
+shift, and `assert_production_safe` refuses to start with it set — a forgotten offset
+in a real deployment corrupts overdue maths silently. The runtime clock starts at
+zero, moves only through an audited endpoint, is visible in the UI whenever it is not
+zero, and winds back without a redeploy.
+
+### Send reminders to
+
+Points reminder mail at the reviewer's own inbox. This is the only way to exercise the
+inbound path without access to the deployment's environment: receive a real reminder,
+reply to it, and watch the reply come back through the signed Resend webhook and open
+a dispute.
+
+Two properties make it safe to expose:
+
+- **It can only move the redirect, never remove it.** Clearing falls back to
+  `EMAIL_REDIRECT_TO`, so no sequence of calls here results in mail reaching the
+  invented customer addresses in the seeded ledger.
+- **The send path and the inbound path read the same value.** Both go through
+  `app.core.runtime.effective_email_redirect`, so a reviewer who redirects mail to
+  their own inbox can also reply from it — reading the raw setting in one place and
+  the override in the other would accept the reminder and then refuse the answer.
+
+Changes are audited as `demo_email_redirected`, recording the old and new address.
+
+**Known constraint:** these overrides live in module state, mirrored to the
+`demo_settings` row and rehydrated at startup. That makes them per-process. The
+deployment runs a single uvicorn process with the scheduler inside it, so the endpoint
+that sets an override, the cycle that sends mail and the webhook that accepts the
+reply all share one copy. Running multiple workers would break that and the reads
+would need to move to the database.
+
+
+## Getting the ledger in and out
+
+A recovery system that can only be loaded by a seed script is a demo. **Import** and
+**Export** sit next to each other in the dashboard header because they are the same
+job in two directions.
+
+### Export
+
+`GET /api/export/{recovered|overview|invoices}?format={csv|xlsx|pdf}`
+
+| Dataset | Contents |
+|---|---|
+| `invoices` | The recovery queue, honouring the `status` and `reason` filters currently on screen — so a download and the page can never disagree about which rows are in scope |
+| `recovered` | Settled invoices with what was paid and when |
+| `overview` | Recovery rate, totals, and the counts by status and reason |
+
+The three renderers share one `Sheet` structure, so a column added once appears in all
+three formats. Money is stored in paise and converted to rupees at exactly one place
+(`_paise_to_rupees`); the xlsx writes real numeric cells with an Indian-grouped format
+rather than pre-formatted strings, so the numbers stay summable in Excel.
+
+Downloads pass through `frontend/app/api/download/[...path]`, a separate proxy from
+the JSON one — that one reads the body as text and stamps every response
+`application/json`, which is right for the dashboard and silently corrupts an `.xlsx`.
+Paths are allowlisted and only `format`, `status` and `reason` are forwarded: an
+export route that accepts an arbitrary path is a data-exfiltration route with a
+friendly name.
+
+### Import
+
+`POST /api/invoices/import` (multipart, `dry_run` defaults to **true**)
+
+Two steps, because importing four hundred rows blind and discovering afterwards that
+row 47 was malformed is the version that wastes an afternoon:
+
+1. **Preview.** The file is parsed and nothing is written. The response reports how
+   many rows would import, which invoice numbers are already in the ledger, which
+   columns were ignored, and — for anything unparseable — the **spreadsheet line
+   number**, so the fix is a jump rather than a bisect.
+2. **Commit.** Only an explicit `dry_run=false` writes. The write itself is
+   `ingest_batch`, the same path the seed script uses, so imported invoices are
+   ordinary invoices: idempotent on invoice number, customers created as needed.
+
+One malformed row does not cost the merchant the other 399 — bad rows are skipped and
+reported, good rows import.
+
+A template is available at `GET /api/invoices/import/template`, generated from
+`InvoiceIngestRow.model_fields` so it cannot drift from what the parser accepts. The
+importer also understands the human-readable headings the exports emit ("Invoice",
+"Amount (₹)", "Issued"), so an exported ledger imports straight back in; an export
+that cannot be re-imported is a one-way door.
+
+Limits: 5 MB, 5,000 rows, UTF-8. Both require a signed-in account or the service key.
+Exports are open to auditors as well — producing evidence is the auditor's job — while
+the import commit is a write and is refused for that role.
 
 
 ## 3. Architecture

@@ -8,6 +8,7 @@ until the first query.
 
 from app.models.audit_log import AuditAction, AuditActor, AuditLog
 from app.models.customer import Customer
+from app.models.demo_settings import DemoSettings
 from app.models.dispute_case import DisputeCase
 from app.models.inbound_message import InboundMessage
 from app.models.invoice import Invoice
@@ -23,6 +24,7 @@ __all__ = [
     "AuditActor",
     "AuditLog",
     "Customer",
+    "DemoSettings",
     "DisputeCase",
     "Invoice",
     "InboundMessage",

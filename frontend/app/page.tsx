@@ -1,6 +1,13 @@
+import { DemoSettingsPanel } from "@/components/DemoSettings";
 import { Landing } from "@/components/Landing";
 import { OverviewClient } from "@/components/Overview";
-import { getExceptions, getOverview, getQueue, getRuntimeSafety } from "@/lib/api";
+import {
+  getDemoClock,
+  getExceptions,
+  getOverview,
+  getQueue,
+  getRuntimeSafety,
+} from "@/lib/api";
 import { currentSession } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
@@ -23,19 +30,30 @@ export default async function Page() {
     return <BackendUnreachable />;
   }
 
-  const [overview, queue, exceptions, runtime] = data;
+  const [overview, queue, exceptions, runtime, demoClock] = data;
   return (
-    <OverviewClient
-      initialOverview={overview}
-      initialQueue={queue}
-      initialExceptions={exceptions}
-      emailMode={runtime.email}
-    />
+    <>
+      {demoClock ? <DemoSettingsPanel initial={demoClock} /> : null}
+      <OverviewClient
+        initialOverview={overview}
+        initialQueue={queue}
+        initialExceptions={exceptions}
+        emailMode={runtime.email}
+      />
+    </>
   );
 }
 
 function loadAll() {
-  return Promise.all([getOverview(), getQueue(), getExceptions(), getRuntimeSafety()]);
+  return Promise.all([
+    getOverview(),
+    getQueue(),
+    getExceptions(),
+    getRuntimeSafety(),
+    // The panel hides itself when demo controls are off, and a deployment without
+    // them should not fail to render the dashboard over a missing endpoint.
+    getDemoClock().catch(() => null),
+  ]);
 }
 
 function BackendUnreachable() {

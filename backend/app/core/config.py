@@ -95,6 +95,16 @@ class Settings(BaseSettings):
     # --- Demo controls (Phase 8) ---
     demo_time_offset_days: int = 0
 
+    #: Enables the runtime demo clock and its endpoints.
+    #:
+    #: Separate from DEMO_TIME_OFFSET_DAYS on purpose. That one is a static boot-time
+    #: shift and `assert_production_safe` refuses to start with it set, because a
+    #: forgotten offset in a real deployment corrupts overdue maths silently. This
+    #: flag turns on a *runtime* clock that starts at zero, moves only through an
+    #: audited endpoint, is visible in the UI whenever it is not zero, and can be
+    #: wound back without a redeploy. A real multi-merchant deployment leaves it off.
+    demo_controls_enabled: bool = False
+
     @field_validator("database_url")
     @classmethod
     def _require_psycopg_driver(cls, v: str) -> str:

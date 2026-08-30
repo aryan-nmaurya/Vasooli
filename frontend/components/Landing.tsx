@@ -5,18 +5,23 @@ const REPO = "https://github.com/aryan-nmaurya/Vasooli";
 
 const STEPS = [
   ["01", "Find what needs attention.", "Vasooli finds overdue Razorpay invoices and reads the complete history before it acts. No spreadsheet triage. No invoice forgotten in a tab.", "Invoice age · contact history · promises · disputes · payment state"],
-  ["02", "Choose the next safe move.", "Deterministic policy decides whether to wait, follow up, pause, or escalate. AI understands context and drafts language; it cannot override the rules.", "10 policy checks · 3-day cooldown · 3-contact limit"],
+  ["02", "Choose the next safe move.", "Deterministic policy decides whether to wait, follow up, pause, or escalate. AI understands context and drafts language; it cannot override the rules.", "10 policy checks · 7-day cooldown · 3-contact limit"],
   ["03", "Listen before chasing again.", "A promise to pay pauses recovery until the promised date. A dispute stops automation and opens a case for a person. Silence follows a bounded schedule.", "Promise tracking · dispute handoff · inbound reply classification"],
   ["04", "Stop when the money lands.", "Only verified Razorpay state can mark an invoice paid. The workflow closes immediately, the audit trail remains, and the customer is not contacted again.", "Signed webhooks · authenticated reconciliation · immediate stop"],
 ];
 
+// Bare times with no date read as same-day and in order — which the original data
+// was not: payment landed at 11:18 on the promised Friday, a day after the 14:42
+// entries on the Monday it was reported due. Rendered without a day label, that put
+// the "payment verified" row above two entries that happened later the same
+// afternoon, in a section whose entire point is auditable chronological evidence.
 const TRACE = [
-  ["09:00", "Invoice detected", "INV-2048 · 8 days overdue"],
-  ["09:00", "Policy approved", "First reminder · professional tone"],
-  ["09:01", "Email delivered", "Contact 1 of 3"],
-  ["14:42", "Reply understood", "Promise to pay · Friday"],
-  ["14:42", "Recovery paused", "No contact before 28 Aug"],
-  ["11:18", "Payment verified", "Razorpay webhook · ₹84,000"],
+  ["Mon 09:00", "Invoice detected", "INV-2048 · 8 days overdue"],
+  ["Mon 09:00", "Policy approved", "First reminder · professional tone"],
+  ["Mon 09:01", "Email delivered", "Contact 1 of 3"],
+  ["Mon 14:42", "Reply understood", "Promise to pay · Friday"],
+  ["Mon 14:42", "Recovery paused", "No contact before 28 Aug"],
+  ["Fri 11:18", "Payment verified", "Razorpay webhook · ₹84,000"],
 ];
 
 function Arrow() {
@@ -160,9 +165,9 @@ export function Landing() {
             which rule fired, and exactly what confirmed payment.
           </p>
         </div>
-        <div className="landing-trace landing-reveal" data-reveal aria-label="Example audit trail">
+        <div className="landing-trace landing-reveal" data-reveal aria-label="Example recovery trace">
           <div className="landing-trace-head">
-            <span>LIVE RECOVERY TRACE</span>
+            <span>EXAMPLE RECOVERY TRACE</span>
             <span className="landing-status"><i /> BOUNDED</span>
           </div>
           <ol>

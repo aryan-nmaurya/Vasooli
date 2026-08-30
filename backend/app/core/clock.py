@@ -3,8 +3,10 @@
 Every business-logic time read goes through this module. Two reasons:
 
 1. The cadence is measured in days past due (Doc §3 Stage 3), but a demo cannot wait
-   3, 10, and 21 real days. `DEMO_TIME_OFFSET_DAYS` shifts "now" so the whole schedule
-   can be walked in minutes. That only works if nothing calls `datetime.now()` directly.
+   3, 10, and 21 real days. Two shifts exist for that: `DEMO_TIME_OFFSET_DAYS`, a
+   static boot-time offset banned in production, and a runtime offset moved through an
+   audited endpoint (see app.services.demo_control). Both only work if nothing calls
+   `datetime.now()` directly.
 2. Overdue-day counts must match what a merchant in India sees on their calendar, so
    day math is done in IST while storage stays UTC.
 
@@ -22,13 +24,44 @@ IST = ZoneInfo(BUSINESS_TIMEZONE)
 UTC = ZoneInfo("UTC")
 
 
+#: Runtime demo offset, in days, on top of the static one from settings.
+#:
+#: Held in module state rather than read from the database on every call: `utcnow()`
+#: runs on essentially every code path, and a query per time read would be both slow
+#: and a layering violation — app.core may not reach app.core.db. The durable copy
+#: lives in the `demo_settings` table; app.services.demo_control owns writing to both and
+#: the app lifespan loads it at startup.
+_runtime_offset_days = 0
+
+
+def set_runtime_offset(days: int) -> None:
+    """Move the demo clock. Called only by app.services.demo_control."""
+    global _runtime_offset_days
+    _runtime_offset_days = max(0, int(days))
+
+
+def runtime_offset() -> int:
+    return _runtime_offset_days
+
+
 def _offset() -> timedelta:
-    return timedelta(days=settings.demo_time_offset_days)
+    return timedelta(days=settings.demo_time_offset_days + _runtime_offset_days)
 
 
 def utcnow() -> datetime:
     """Timezone-aware UTC now, shifted by the demo offset."""
     return datetime.now(UTC) + _offset()
+
+
+def real_now_ist() -> datetime:
+    """Unshifted wall-clock time in IST, ignoring every demo offset.
+
+    The one legitimate reason to want the real present: showing a reviewer what the
+    actual date is next to what the system currently believes it is. Business logic
+    must never call this — if it did, the demo clock would apply to some decisions
+    and not others, which is worse than not having one.
+    """
+    return datetime.now(UTC).astimezone(IST)
 
 
 def now_ist() -> datetime:

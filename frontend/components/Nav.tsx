@@ -14,6 +14,7 @@ import { usePathname } from "next/navigation";
 
 const NAV = [
   { href: "/", label: "Overview", compactLabel: "Overview" },
+  { href: "/recovered", label: "Recovered", compactLabel: "Recovered" },
   { href: "/promises", label: "Promises", compactLabel: "Promises" },
   { href: "/audit", label: "Audit log", compactLabel: "Audit" },
 ];

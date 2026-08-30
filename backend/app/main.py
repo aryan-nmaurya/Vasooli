@@ -4,10 +4,21 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlmodel import Session
 
-from app.api import admin, auth, dashboard, health, invoices, replies, webhooks
+from app.api import (
+    admin,
+    auth,
+    dashboard,
+    demo,
+    exports,
+    health,
+    invoices,
+    replies,
+    webhooks,
+)
 from app.core.config import settings
-from app.core.db import check_database, has_active_operator
+from app.core.db import check_database, engine, has_active_operator
 from app.core.logging import RequestContextMiddleware, configure_logging, get_logger
 from app.core.middleware import (
     BodySizeLimitMiddleware,
@@ -15,6 +26,7 @@ from app.core.middleware import (
     SecurityHeadersMiddleware,
 )
 from app.scheduler.setup import shutdown_scheduler, start_scheduler
+from app.services.demo_control import load_into_clock
 
 log = get_logger("app")
 
@@ -27,6 +39,15 @@ async def lifespan(app: FastAPI):
     db_ok, error = check_database()
     if db_ok:
         log.info("startup.db_connected")
+
+        # The demo clock lives in the database; module state has to be rehydrated or
+        # a restart quietly returns the system to real time in the middle of a review.
+        if settings.demo_controls_enabled:
+            with Session(engine) as session:
+                offset = load_into_clock(session)
+            if offset:
+                log.warning("startup.demo_clock_active", offset_days=offset)
+
         if settings.is_production and not has_active_operator():
             raise RuntimeError(
                 "No active operator account exists. Run scripts.manage_operator before startup."
@@ -84,6 +105,8 @@ def create_app() -> FastAPI:
     app.include_router(admin.router)
     app.include_router(replies.router)
     app.include_router(dashboard.router)
+    app.include_router(demo.router)
+    app.include_router(exports.router)
     return app
 
 

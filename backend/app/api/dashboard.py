@@ -421,6 +421,7 @@ def queue(
             payment_url=links[i.id].short_url if i.id in links else None,
             next_action=_next_action(i),
             dispute_open=i.id in disputed,
+            recovered_at=i.recovered_at,
             why=(reasons[i.id]).headline,
             why_next=(reasons[i.id]).next_step,
             why_state=(reasons[i.id]).state,

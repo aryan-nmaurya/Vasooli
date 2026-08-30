@@ -68,6 +68,11 @@ def main() -> None:
     for command in ("disable", "enable", "unlock"):
         child = sub.add_parser(command)
         child.add_argument("username", type=_username)
+
+    set_role = sub.add_parser("set-role")
+    set_role.add_argument("username", type=_username)
+    set_role.add_argument("role", choices=("admin", "operator", "auditor"))
+
     sub.add_parser("list")
 
     args = parser.parse_args()
@@ -110,6 +115,13 @@ def main() -> None:
             elif args.command == "unlock":
                 account.failed_login_attempts = 0
                 account.locked_until = None
+            elif args.command == "set-role":
+                # A role change is a privilege change on a live account, so it
+                # invalidates existing sessions the same way a password reset does —
+                # the old, less-privileged (or more-privileged) session token must not
+                # keep working under the new grant.
+                account.role = args.role
+                account.session_version += 1
             account.updated_at = utcnow()
             session.add(account)
 

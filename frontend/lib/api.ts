@@ -72,6 +72,8 @@ export type QueueRow = {
   next_action: string;
   /** Recovery is paused for an open dispute case. */
   dispute_open: boolean;
+  /** When the money arrived. Null unless recovered. */
+  recovered_at: string | null;
   why: string;
   why_next: string;
   why_state: string;
@@ -197,6 +199,21 @@ export type AuditEntry = {
 
 export const getOverview = (days = 30) => get<Overview>(`/api/dashboard/overview?days=${days}`);
 export const getRuntimeSafety = () => get<RuntimeSafety>("/api/dashboard/runtime");
+
+export type DemoClock = {
+  enabled: boolean;
+  offset_days: number;
+  simulated_date: string;
+  real_date: string;
+  updated_by: string | null;
+  max_advance_days: number;
+  /** Where reminder mail is actually going right now. */
+  email_to: string | null;
+  /** True when that is a runtime override rather than the deployment default. */
+  email_is_override: boolean;
+};
+
+export const getDemoClock = () => get<DemoClock>("/api/demo/clock");
 export const getQueue = (qs = "") => get<QueueRow[]>(`/api/dashboard/queue?limit=200${qs}`);
 export const getInvoice = (id: string) => get<InvoiceDetail>(`/api/dashboard/invoices/${id}`);
 export const getPromises = (status?: string) =>

@@ -24,6 +24,7 @@ from app.core.clock import utcnow
 from app.core.config import settings
 from app.core.constants import TONE_FOR_TIER, InvoiceStatus
 from app.core.logging import get_logger
+from app.core.runtime import effective_email_redirect
 from app.integrations.email.base import EmailProvider
 from app.integrations.email.resend_client import ResendProvider
 from app.models import AuditAction, AuditActor, AuditLog, Customer, Invoice, Reminder
@@ -54,8 +55,12 @@ def resolve_recipient(customer_email: str) -> tuple[str, str | None]:
     ledger, an unredirected send means a stranger receives a debt reminder. The
     redirect makes that impossible rather than unlikely.
     """
-    if settings.email_redirect_to:
-        return settings.email_redirect_to, customer_email
+    # Effective, not the raw setting: a reviewer can point mail at their own inbox at
+    # runtime, and the inbound path below must agree about where it went or their
+    # reply is refused as coming from a stranger.
+    redirect = effective_email_redirect()
+    if redirect:
+        return redirect, customer_email
     return customer_email, None
 
 

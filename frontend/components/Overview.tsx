@@ -13,6 +13,8 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
 import { ReasonBadge, StatusBadge, TierBadge } from "@/components/badges";
+import { ExportMenu } from "@/components/ExportMenu";
+import { ImportLedger } from "@/components/ImportLedger";
 import { RunCycleButton } from "@/components/RunCycleButton";
 import { ExceptionsPanel } from "@/components/Exceptions";
 import {
@@ -138,7 +140,33 @@ export function OverviewClient({
             large miss is not a success.
           </p>
         </div>
-        <RunCycleButton emailMode={emailMode} />
+        <div className="flex flex-wrap items-center gap-2">
+          <RunCycleButton emailMode={emailMode} />
+          <ExportMenu
+            groups={[
+              {
+                dataset: "invoices",
+                label:
+                  filter || statusFilter
+                    ? `Filtered invoices (${visible.length})`
+                    : `All invoices (${queue.length})`,
+                // The same two filters the queue below is showing, so the download
+                // and the screen can never disagree about which rows are in scope.
+                hint:
+                  filter || statusFilter
+                    ? [statusFilter, filter].filter(Boolean).join(" · ").replace(/_/g, " ")
+                    : "The whole recovery queue",
+                params: { status: statusFilter, reason: filter },
+              },
+              {
+                dataset: "overview",
+                label: "Summary metrics",
+                hint: "Recovery rate, totals, counts by status and reason",
+              },
+            ]}
+          />
+          <ImportLedger />
+        </div>
       </div>
 
       {staleSince ? (

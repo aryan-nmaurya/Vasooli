@@ -87,6 +87,7 @@ def migrated_database():
 #: stray DELETE in application code while still allowing test isolation. A
 #: row-by-row cleanup cannot clear this table at all — which is the point.
 _TABLES = (
+    "demo_settings",
     "audit_logs",
     "inbound_messages",
     "reconciliation_events",

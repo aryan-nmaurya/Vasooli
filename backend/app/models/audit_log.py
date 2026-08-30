@@ -71,6 +71,14 @@ class AuditAction:
     RECOVERY_RESUMED = "recovery_resumed"
     #: Money arrived while a dispute was open. Razorpay is still the truth.
     PAYMENT_DURING_DISPUTE = "payment_during_dispute"
+    # --- Demo controls -------------------------------------------------------
+    #: The simulated clock was moved. Recorded because the clock changes what the
+    #: system believes "now" is, and every decision below it inherits that.
+    DEMO_CLOCK_ADVANCED = "demo_clock_advanced"
+    DEMO_CLOCK_RESET = "demo_clock_reset"
+    #: Reminder mail was pointed at a different inbox. Outbound mail is the
+    #: system's one side effect on the outside world; where it went is recorded.
+    DEMO_EMAIL_REDIRECTED = "demo_email_redirected"
     PAYMENT_RECONCILED = "payment_reconciled"
     PAYMENT_LINK_CLOSED = "payment_link_closed"
     PAYMENT_LINK_CLOSE_FAILED = "payment_link_close_failed"

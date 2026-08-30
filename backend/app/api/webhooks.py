@@ -30,6 +30,7 @@ from app.core.clock import utcnow
 from app.core.config import settings
 from app.core.db import SessionDep
 from app.core.logging import get_logger
+from app.core.runtime import effective_email_redirect
 from app.integrations.email.resend_receiving import fetch_received_email, verify_webhook
 from app.integrations.razorpay_signature import compute_signature, verify_signature
 from app.models import (
@@ -123,7 +124,10 @@ def _find_inbound_invoice(
     sender_address = parseaddr(sender)[1].casefold()
     recipient_addresses = {parseaddr(value)[1].casefold() for value in recipients}
 
-    redirect_to = (settings.email_redirect_to or "").casefold()
+    # The same effective address messaging.resolve_recipient sent to. Reading the raw
+    # setting here would mean a reviewer who redirected mail to their own inbox could
+    # receive a reminder and then have their reply rejected as an unknown sender.
+    redirect_to = (effective_email_redirect() or "").casefold()
     sender_is_operator = bool(redirect_to) and sender_address == parseaddr(redirect_to)[1]
 
     if sender_is_operator:

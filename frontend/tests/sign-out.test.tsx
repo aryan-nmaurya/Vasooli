@@ -30,6 +30,7 @@ describe("SignOutButton", () => {
     render(<SignOutButton signedIn />);
 
     fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+    fireEvent.click(screen.getByRole("button", { name: "Yes, sign out" }));
 
     await waitFor(() => expect(replace).toHaveBeenCalledWith("/login"));
     expect(request).toHaveBeenCalledWith(
@@ -40,6 +41,30 @@ describe("SignOutButton", () => {
       }),
     );
     expect(refresh).toHaveBeenCalledOnce();
+  });
+
+  it("stays signed in when sign out is cancelled", async () => {
+    const request = vi.fn();
+    vi.stubGlobal("fetch", request);
+    render(<SignOutButton signedIn />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+    expect(screen.getByRole("dialog", { name: "Confirm sign out" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "No, stay signed in" }));
+
+    expect(request).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Sign out" })).toBeEnabled();
+  });
+
+  it("closes the confirmation when clicking outside", () => {
+    render(<SignOutButton signedIn />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+    expect(screen.getByRole("dialog", { name: "Confirm sign out" })).toBeInTheDocument();
+
+    fireEvent.pointerDown(document.body);
+
+    expect(screen.queryByRole("dialog", { name: "Confirm sign out" })).not.toBeInTheDocument();
   });
 
   it("does not show a sign-out action on the login page", () => {
@@ -53,6 +78,7 @@ describe("SignOutButton", () => {
     render(<SignOutButton signedIn />);
 
     fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+    fireEvent.click(screen.getByRole("button", { name: "Yes, sign out" }));
 
     expect(
       await screen.findByRole("button", { name: "Sign out failed — try again" }),

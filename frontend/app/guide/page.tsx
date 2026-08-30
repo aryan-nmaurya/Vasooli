@@ -43,7 +43,7 @@ function Section({
 
 export default function GuidePage() {
   return (
-    <div className="mx-auto flex max-w-2xl flex-col gap-9 py-4">
+    <div className="mx-auto flex max-w-2xl flex-col gap-9 px-3 py-4 sm:px-0">
       <header className="flex flex-col gap-3">
         <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-ink-4">
           For reviewers and mentors
@@ -134,6 +134,10 @@ export default function GuidePage() {
               "Open the audit log",
               "Append-only, enforced by a database trigger rather than convention. Nothing in the application can edit or delete a row.",
             ],
+            [
+              "Take the ledger with you",
+              "Export gives you the queue, the recovered invoices, or the summary as CSV, Excel or PDF — and honours whatever filters are on screen. Import reads a CSV back in, showing you what would happen, with line numbers for anything it cannot parse, before it writes a single row.",
+            ],
           ].map(([title, body], i) => (
             <li key={title} className="flex gap-3">
               <span className="mt-0.5 font-mono text-sm font-semibold text-accent">
@@ -147,12 +151,48 @@ export default function GuidePage() {
           ))}
         </ol>
         <p className="rounded-lg border border-line bg-panel px-4 py-3 text-xs leading-relaxed text-ink-3">
-          <strong className="text-ink-2">Safe to explore.</strong> Reviewer accounts
-          are read-only at the framework level — they cannot run a cycle, resolve a
-          dispute, or send an email, whatever they click. If you were given an operator
-          account instead, the grey <strong className="text-ink-2">Dry run</strong>{" "}
-          button evaluates the whole cadence and sends nothing.
+          <strong className="text-ink-2">Safe to explore.</strong> Reminder mail is
+          redirected away from customers and cannot be pointed at them, Razorpay is in
+          test mode, and every action you take is attributed to you in the audit log.
+          If you would rather decide without sending anything, the grey{" "}
+          <strong className="text-ink-2">Dry run</strong> button evaluates the whole
+          cadence and sends nothing.
         </p>
+      </Section>
+
+      <Section eyebrow="Try it yourself" title="Compress three weeks into two minutes">
+        <p className="text-sm leading-relaxed text-ink-2">
+          Reminders fire at 3, 10 and 21 days overdue, and mail is redirected away from
+          customers. Both are right for a real merchant and impossible to evaluate in a
+          sitting, so the <strong className="text-ink">Settings</strong> panel — bottom
+          left of the dashboard — lets you move past both.
+        </p>
+        <div className="flex flex-col gap-2.5">
+          <div className="rounded-lg border border-line bg-panel px-4 py-3">
+            <div className="text-xs font-medium uppercase tracking-wider text-ink-3">
+              Time machine
+            </div>
+            <p className="mt-1.5 text-sm leading-relaxed text-ink-2">
+              Move the clock forward and the ordinary recovery cycle runs against the
+              later date. Nothing is fabricated — the policy engine still decides what
+              is due. Auto-play walks the whole cadence while you watch. Every move is
+              in the audit log, and the panel shows the simulated and real dates side
+              by side.
+            </p>
+          </div>
+          <div className="rounded-lg border border-line bg-panel px-4 py-3">
+            <div className="text-xs font-medium uppercase tracking-wider text-ink-3">
+              Send reminders to
+            </div>
+            <p className="mt-1.5 text-sm leading-relaxed text-ink-2">
+              Put your own address in and run a cycle. A real reminder arrives; reply
+              to it and your reply travels the live inbound path — signed webhook,
+              sender correlation, dispute detection — exactly as a customer&apos;s
+              would. This only moves the redirect: it cannot switch it off, so the
+              seeded ledger&apos;s invented addresses are never contacted.
+            </p>
+          </div>
+        </div>
       </Section>
 
       <Section eyebrow="Measured, not asserted" title="How well it actually works">

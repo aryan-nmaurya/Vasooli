@@ -20,6 +20,12 @@ const ALLOWED = [
   /^\/api\/dashboard\/invoices\/[0-9a-f-]{36}\/escalate$/,
   /^\/api\/dashboard\/invoices\/[0-9a-f-]{36}\/write-off$/,
   /^\/api\/dashboard\/disputes\/[0-9a-f-]{36}\/resolve$/,
+  // Demo clock. Write access only, and the backend refuses both unless
+  // DEMO_CONTROLS_ENABLED is set on that deployment.
+  /^\/api\/demo\/advance$/,
+  /^\/api\/demo\/reset$/,
+  /^\/api\/demo\/email-redirect$/,
+  /^\/api\/invoices\/import$/,
   // Operator retries. The event id is provider-supplied, so it is constrained to a
   // conservative character set rather than matched with `.*` — an allowlist entry
   // that accepts anything is not an allowlist.

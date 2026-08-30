@@ -25,6 +25,8 @@ class QueueRow(BaseModel):
     next_action: str
     #: Flags the row in the queue as paused for a dispute, without a second request.
     dispute_open: bool = False
+    #: When the money actually arrived. Null for anything not yet recovered.
+    recovered_at: datetime | None = None
     #: One plain sentence answering "why is Vasooli doing this?"
     why: str
     why_next: str

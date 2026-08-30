@@ -61,6 +61,18 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* Keep keyboard navigation visible on dark and light surfaces. Individual
+ * controls may change their border on focus, but the outline is the reliable
+ * signal for links, icon buttons, and keyboard users moving through the page. */
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 3px;
+}
+
 /* Wide content scrolls inside its own container; the page never scrolls sideways. */
 .scroll-x {
   overflow-x: auto;
@@ -954,6 +966,17 @@ body:has(.login-panel) footer > div {
     grid-row: auto;
     margin-bottom: 1rem;
   }
+
+  /* Mobile is the most likely surface for a cold demo link. Let the hero become
+   * readable within the first half second instead of holding the whole viewport
+   * at near-zero opacity while the reveal sequence catches up. */
+  .landing-hero .landing-reveal {
+    animation-duration: 520ms;
+  }
+
+  .landing-hero .landing-display { animation-delay: 45ms; }
+  .landing-hero .landing-hero-copy { animation-delay: 90ms; }
+  .landing-hero .landing-proof-strip { animation-delay: 135ms; }
 }
 
 @media (max-width: 620px) {

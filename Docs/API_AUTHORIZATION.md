@@ -47,6 +47,8 @@ kept intentionally smaller so it cannot pretend to be exhaustive while going sta
 | `/api/dashboard/**` | named session or service key | admin/operator session or service key; auditor rejected | active account and session generation checked on every request |
 | `/api/invoices/**` and `/api/admin/**` | named session or service key | admin/operator session or service key; auditor rejected | same central dependency; object lookup never bypasses it |
 | `/api/invoices/{id}/simulate-reply` | — | admin/operator session or service key | explicitly labelled demo control |
+| `/api/export/**` | named session or service key; auditors included, since exporting evidence is the auditor's job | — | whole-router dependency; the frontend proxy allowlists the path and forwards only `format`, `status`, `reason` |
+| `/api/invoices/import` | named session or service key (template download) | admin/operator session or service key; auditor rejected | `dry_run` defaults to true, so only an explicit `dry_run=false` writes; 5 MB and 5,000-row ceilings |
 | `/api/webhooks/**` | — | provider signature only | raw-body verification plus provider event deduplication and correlation |
 | `/api/auth/login`, `/api/auth/logout` | public | public | generic failures, rate limits, account lockout, httpOnly session cookie |
 | `/health`, `/live` | public | — | operational status only; no customer records |
