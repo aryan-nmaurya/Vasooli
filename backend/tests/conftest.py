@@ -14,6 +14,7 @@ DATABASE_URL is the one deliberate exception: CI supplies its own, with credenti
 See the resolution order below.
 """
 
+import base64
 import os
 
 # --- External integrations: pinned OFF, with obviously fake credentials -----------
@@ -33,8 +34,12 @@ os.environ["RAZORPAY_WEBHOOK_SECRET"] = "test-webhook-secret"
 os.environ["RAZORPAY_MIN_REQUEST_INTERVAL_SECONDS"] = "0"
 os.environ["ADMIN_API_KEY"] = "test-admin-key"
 os.environ["SESSION_SECRET"] = "test-session-secret-not-for-production"
-os.environ["RESEND_INBOUND_WEBHOOK_SECRET"] = "whsec_dGVzdC13ZWJob29rLXNlY3JldA=="
-os.environ["RESEND_DELIVERY_WEBHOOK_SECRET"] = "whsec_ZGVsaXZlcnktdGVzdC1zZWNyZXQtZGlmZmVyZW50IQ=="
+os.environ["RESEND_INBOUND_WEBHOOK_SECRET"] = (
+    "whsec_" + base64.b64encode(b"test-webhook-secret").decode()
+)
+os.environ["RESEND_DELIVERY_WEBHOOK_SECRET"] = (
+    "whsec_" + base64.b64encode(b"delivery-test-secret-different!").decode()
+)
 os.environ["INBOUND_EMAIL_WEBHOOK_SECRET"] = "test-normalizer-secret"
 os.environ["SCHEDULER_ENABLED"] = "false"
 os.environ["DEMO_TIME_OFFSET_DAYS"] = "0"

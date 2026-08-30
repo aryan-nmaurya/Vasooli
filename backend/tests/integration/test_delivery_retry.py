@@ -6,6 +6,7 @@ single bounced email therefore consumed the tier permanently — the customer ne
 received a reminder, and the invoice was never chased again, with no error anywhere.
 """
 
+import base64
 from datetime import timedelta
 
 import pytest
@@ -53,7 +54,7 @@ def live_email(monkeypatch):
     monkeypatch.setattr(
         settings,
         "resend_inbound_webhook_secret",
-        "whsec_dGVzdC13ZWJob29rLXNlY3JldA==",
+        "whsec_" + base64.b64encode(b"test-webhook-secret").decode(),
         raising=False,
     )
 
