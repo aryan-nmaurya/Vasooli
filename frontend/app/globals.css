@@ -463,11 +463,16 @@ body:has(.login-panel) footer > div {
 }
 
 .landing-proof-strip span {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 4.5rem;
   padding: 1rem 1.25rem;
   color: var(--landing-muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 0.63rem;
   letter-spacing: 0.06em;
+  line-height: 1.45;
   text-align: center;
   text-transform: uppercase;
 }
