@@ -1,7 +1,7 @@
 """Reminder delivery. Doc §3 Stage 3.
 
-Phase 8 records reminders without sending them: `EMAIL_DRY_RUN` is the default and the
-real providers arrive in Phase 7. The seam matters more than the implementation — the
+The service records reminders without sending them when `EMAIL_DRY_RUN` is enabled; the
+real providers share the same seam. The seam matters more than the implementation — the
 recovery cycle calls `deliver`, and swapping dry-run for Resend changes nothing above
 this function.
 
@@ -31,6 +31,7 @@ from app.models import AuditAction, AuditActor, AuditLog, Customer, Invoice, Mer
 from app.models.reminder import MAX_DELIVERY_ATTEMPTS
 from app.policy import PolicyDecision
 from app.services.disputes import has_open_dispute
+from app.services.outbound_controls import OutboundBlockedError, claim_send_slot, is_suppressed
 
 log = get_logger("messaging")
 
@@ -370,7 +371,18 @@ def _dispatch_reminder(
                 error="invoice merchant missing",
                 retryable=False,
             )
+        elif not merchant.is_demo and is_suppressed(
+            session, merchant.id, customer=customer, email=customer.email
+        ):
+            result = DeliveryResult(
+                sent=False,
+                provider=getattr(provider, "name", "unknown"),
+                error="customer is suppressed",
+                retryable=False,
+            )
         else:
+            if not merchant.is_demo:
+                claim_send_slot(session, merchant.id)
             result = _send_email(
                 to=customer.email,
                 subject=reminder.subject,
@@ -384,6 +396,13 @@ def _dispatch_reminder(
                     is_demo=merchant.is_demo,
                 ),
             )
+    except OutboundBlockedError as exc:
+        result = DeliveryResult(
+            sent=False,
+            provider=getattr(provider, "name", "unknown"),
+            error=str(exc),
+            retryable=False,
+        )
     except Exception as exc:  # provider adapters should return failures, but fail safe
         result = DeliveryResult(
             sent=False,

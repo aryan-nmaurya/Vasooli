@@ -1,4 +1,4 @@
-"""The recovery cycle. Doc §3, Phase 8.
+"""The recovery cycle. Doc §3.
 
 The cycle is where every earlier phase meets: diagnosis picks a category, policy
 approves or refuses, messaging records the send, and the cadence counters advance.

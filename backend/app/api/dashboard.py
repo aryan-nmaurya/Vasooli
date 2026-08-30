@@ -6,10 +6,13 @@ arithmetic on currency — a rounding difference between two languages is exactl
 kind of bug that shows up as ₹1 missing on a slide.
 """
 
+import asyncio
+import json
 import uuid
 from datetime import timedelta
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, model_validator
 from sqlmodel import Session, select
 
@@ -46,6 +49,7 @@ from app.schemas.dashboard import (
 from app.services.automation import automation_health
 from app.services.closure import close_link_for_invoice, close_payment_link
 from app.services.disputes import cases_for, resolve_dispute
+from app.services.events import after_id
 from app.services.explain import Explanation, explain
 from app.services.manual_payments import payment_view, payments_for
 from app.services.messaging import retry_failed_deliveries
@@ -59,6 +63,33 @@ from app.services.replies import retry_failed_inbound
 # public, whether or not the caller can also change anything.
 router = APIRouter(prefix="/api", tags=["dashboard"], dependencies=[OperatorRequired])
 log = get_logger("dashboard")
+
+
+@router.get("/events/stream")
+async def events_stream(
+    request: Request, last_event_id: int = Query(default=0, ge=0)
+) -> StreamingResponse:
+    """Stream committed reconciliation updates; clients can fall back to polling."""
+
+    async def generate():
+        cursor = last_event_id
+        for _ in range(120):
+            if await request.is_disconnected():
+                return
+            emitted = False
+            for event_id, event in after_id(cursor):
+                cursor = event_id
+                emitted = True
+                yield f"id: {event_id}\nevent: {event['type']}\ndata: {json.dumps(event)}\n\n"
+            if not emitted:
+                yield ": heartbeat\n\n"
+            await asyncio.sleep(0.25)
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 class RuntimeSafety(BaseModel):

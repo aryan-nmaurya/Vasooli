@@ -50,7 +50,7 @@ def get_invoice(invoice_id: uuid.UUID, session: SessionDep) -> InvoiceRead:
 
 @router.get("", response_model=list[InvoiceRead])
 def list_invoices(session: SessionDep, limit: int = 50, offset: int = 0) -> list[InvoiceRead]:
-    """Minimal listing so Phase 2 is verifiable. Filtering lands in Phase 9."""
+    """Minimal demo listing; live invoice queries use merchant-scoped APIs."""
     invoices = session.exec(
         select(Invoice)
         .join(Merchant)

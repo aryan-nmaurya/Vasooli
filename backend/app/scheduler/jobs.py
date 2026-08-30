@@ -1,10 +1,14 @@
-"""Scheduled jobs. Phase 8.
+"""Scheduled jobs.
 
 Thin wrappers that own a database session and delegate to app.services. The cycle
 logic lives in services because it writes; the scheduler's only job is to decide when.
 """
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+
 import httpx
+from sqlalchemy import text
 from sqlmodel import Session
 
 from app.core.config import settings
@@ -19,6 +23,55 @@ from app.services.replies import retry_failed_inbound
 from app.services.sync import sync_payment_links
 
 log = get_logger("scheduler")
+
+#: One namespace for scheduler job locks, so a key here can never collide with the
+#: recovery cycle's own lock (0x7A50_0111) inside app.services.recovery.
+_JOB_LOCK_NAMESPACE = 0x7A50_0200
+
+_JOB_LOCK_KEYS = {
+    "payment_link_sync": 1,
+    "retry_operations": 2,
+    "service_heartbeat": 3,
+}
+
+
+@contextmanager
+def _only_one_runner(job_id: str) -> Iterator[bool]:
+    """Yield True only to the single process that holds this job's lock.
+
+    `run_recovery_cycle` already takes an advisory lock of its own, so the daily chase
+    was safe against a second scheduler. The other three jobs were not. That mattered
+    the moment more than one process ran a scheduler — which the default
+    `process_role="api"` allows, since only the `worker` role is excluded — and the
+    retry sweep is the dangerous one: two concurrent sweeps can lease and resend the
+    same failed reminder, so a customer receives a duplicate demand.
+
+    Session-scoped and taken on its own connection, matching the cycle's lock. A
+    crashed process drops its socket and Postgres releases the lock on its own.
+    """
+    conn = engine.connect()
+    try:
+        acquired = bool(
+            conn.execute(
+                text("SELECT pg_try_advisory_lock(:ns, :key)"),
+                {"ns": _JOB_LOCK_NAMESPACE, "key": _JOB_LOCK_KEYS[job_id]},
+            ).scalar()
+        )
+        conn.commit()
+        if not acquired:
+            log.info("scheduler.job_already_running", job=job_id)
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            conn.execute(
+                text("SELECT pg_advisory_unlock(:ns, :key)"),
+                {"ns": _JOB_LOCK_NAMESPACE, "key": _JOB_LOCK_KEYS[job_id]},
+            )
+            conn.commit()
+    finally:
+        conn.close()
 
 
 def _heartbeat(url: str, *, check: str) -> None:
@@ -60,12 +113,15 @@ def payment_link_sync_job() -> None:
     unrecorded indefinitely.
     """
     try:
-        with record_run("payment_link_sync") as detail:
-            with Session(engine) as session:
-                report = sync_payment_links(session)
-            detail.update(report)
-            if report["checked"]:
-                log.info("scheduler.payment_link_sync_done", **report)
+        with _only_one_runner("payment_link_sync") as mine:
+            if not mine:
+                return
+            with record_run("payment_link_sync") as detail:
+                with Session(engine) as session:
+                    report = sync_payment_links(session)
+                detail.update(report)
+                if report["checked"]:
+                    log.info("scheduler.payment_link_sync_done", **report)
     except Exception:
         log.exception("scheduler.payment_link_sync_failed")
 
@@ -73,26 +129,31 @@ def payment_link_sync_job() -> None:
 def retry_operations_job() -> None:
     """Run due retry backoffs independently of the once-daily recovery cycle."""
     try:
-        with record_run("retry_operations") as detail:
-            with Session(engine) as session:
-                deliveries = retry_failed_deliveries(session)
-                closures = retry_pending_closures(session)
-                events = retry_failed_events(session)
-                inbound = retry_failed_inbound(session)
-            detail.update(deliveries=deliveries, closures=closures, events=events, inbound=inbound)
-            if (
-                deliveries["attempted"]
-                or closures["attempted"]
-                or events["attempted"]
-                or inbound["attempted"]
-            ):
-                log.info(
-                    "scheduler.retry_sweep_done",
-                    deliveries=deliveries,
-                    closures=closures,
-                    events=events,
-                    inbound=inbound,
+        with _only_one_runner("retry_operations") as mine:
+            if not mine:
+                return
+            with record_run("retry_operations") as detail:
+                with Session(engine) as session:
+                    deliveries = retry_failed_deliveries(session)
+                    closures = retry_pending_closures(session)
+                    events = retry_failed_events(session)
+                    inbound = retry_failed_inbound(session)
+                detail.update(
+                    deliveries=deliveries, closures=closures, events=events, inbound=inbound
                 )
+                if (
+                    deliveries["attempted"]
+                    or closures["attempted"]
+                    or events["attempted"]
+                    or inbound["attempted"]
+                ):
+                    log.info(
+                        "scheduler.retry_sweep_done",
+                        deliveries=deliveries,
+                        closures=closures,
+                        events=events,
+                        inbound=inbound,
+                    )
     except Exception:
         log.exception("scheduler.retry_sweep_failed")
 

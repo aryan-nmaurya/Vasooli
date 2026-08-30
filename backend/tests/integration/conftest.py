@@ -88,6 +88,15 @@ def migrated_database():
 #: row-by-row cleanup cannot clear this table at all — which is the point.
 _TABLES = (
     "demo_settings",
+    "merchant_usage_buckets",
+    "data_requests",
+    "sending_domains",
+    "suppression_entries",
+    "reminder_policy_versions",
+    "integration_failures",
+    "erp_records",
+    "erp_sync_runs",
+    "erp_connections",
     "razorpay_connections",
     "billing_refunds",
     "billing_payment_attempts",

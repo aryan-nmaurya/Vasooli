@@ -90,6 +90,7 @@ class Settings(BaseSettings):
 
     # --- Ops ---
     scheduler_enabled: bool = True
+    process_role: Literal["api", "scheduler", "worker"] = "api"
     ops_heartbeat_url: str = ""
     ops_recovery_heartbeat_url: str = ""
     admin_api_key: str
@@ -105,7 +106,7 @@ class Settings(BaseSettings):
         default_factory=lambda: ["http://localhost:3000"]
     )
 
-    # --- Demo controls (Phase 8) ---
+    # --- Demo controls ---
     demo_time_offset_days: int = 0
 
     #: Enables the runtime demo clock and its endpoints.

@@ -31,6 +31,7 @@ from app.models import (
 from app.models.reconciliation_event import MAX_EVENT_ATTEMPTS, EventStatus
 from app.services.closure import close_link_for_invoice
 from app.services.disputes import open_case_for
+from app.services.events import publish
 
 log = get_logger("reconciliation")
 
@@ -266,6 +267,17 @@ def process_event(session: Session, event: ReconciliationEvent) -> None:
         )
 
     session.commit()
+
+    publish(
+        {
+            "type": "invoice_recovered" if locked.is_fully_paid else "invoice_payment_updated",
+            "invoice_id": str(locked.id),
+            "merchant_id": str(locked.merchant_id),
+            "amount_paid_paise": locked.amount_paid_paise,
+            "outstanding_paise": locked.outstanding_paise,
+            "status": str(locked.status),
+        }
+    )
 
     # --- External side effect, strictly after the money is committed ---------
     #

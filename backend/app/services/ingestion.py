@@ -93,7 +93,7 @@ def _upsert_customer(
 def _initial_status(invoice: Invoice) -> InvoiceStatus:
     """An invoice enters the queue already overdue, or waits until it is.
 
-    Diagnosis and tier selection are the scheduler's job (Phase 8); ingestion only
+    Diagnosis and tier selection are the scheduler's job; ingestion only
     decides whether the invoice is in scope at all.
     """
     return InvoiceStatus.CHASING if invoice.days_overdue > 0 else InvoiceStatus.PENDING

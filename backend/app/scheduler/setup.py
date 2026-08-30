@@ -1,4 +1,4 @@
-"""APScheduler wiring. Phase 8."""
+"""APScheduler wiring."""
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -38,7 +38,7 @@ def start_scheduler() -> BackgroundScheduler | None:
     early enough to land in a working day.
     """
     global _scheduler
-    if not settings.scheduler_enabled:
+    if not settings.scheduler_enabled or settings.process_role == "worker":
         log.info("scheduler.disabled")
         return None
     if _scheduler is not None:

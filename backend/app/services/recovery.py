@@ -1,4 +1,4 @@
-"""The recovery cycle. Doc §3, Phase 8.
+"""The recovery cycle. Doc §3.
 
 One function walks the entire loop: resolve promises, pick a tier, diagnose, draft,
 evaluate policy, then send or escalate. The scheduled run and the dashboard's manual
@@ -44,6 +44,7 @@ from app.models import (
     PaymentLink,
     Promise,
     Reminder,
+    ReminderPolicyVersion,
 )
 from app.policy import RequiredAction, evaluate_reminder, next_tier_for
 from app.policy.banned_language import find_banned_phrases
@@ -412,6 +413,17 @@ def _process_invoice(
         log.info("recovery.held_billing_inactive", merchant_id=str(merchant.id))
         report.held += 1
         return
+    policy_version = session.exec(
+        select(ReminderPolicyVersion)
+        .where(
+            ReminderPolicyVersion.merchant_id == merchant.id,
+            ReminderPolicyVersion.is_active.is_(True),  # type: ignore[union-attr]
+        )
+        .order_by(ReminderPolicyVersion.version.desc())
+    ).first()
+    tier_offsets = policy_version.tier_offsets if policy_version else None
+    cooldown_days = policy_version.cooldown_days if policy_version else None
+    max_attempts = policy_version.max_attempts if policy_version else None
     days_overdue = days_overdue_for(invoice.due_at)
     # Successfully DELIVERED tiers only. A reminder row whose send failed has
     # `sent_at` NULL and must not count: counting it made the cycle believe the tier
@@ -440,7 +452,9 @@ def _process_invoice(
         ).all()
     )
 
-    tier = next_tier_for(days_overdue=days_overdue, sent_tiers=sent_tiers)
+    tier = next_tier_for(
+        days_overdue=days_overdue, sent_tiers=sent_tiers, tier_offsets=tier_offsets
+    )
     if tier is None or tier in pending_tiers:
         report.skipped_no_tier += 1
         return
@@ -551,6 +565,9 @@ def _process_invoice(
         drafted_subject=draft.subject,
         drafted_body=draft.body,
         now=utcnow(),
+        tier_offsets=tier_offsets,
+        cooldown_days=cooldown_days,
+        max_attempts=max_attempts,
     )
 
     # One regeneration attempt when the only objection is the drafted wording. Doc §5
@@ -579,6 +596,9 @@ def _process_invoice(
             drafted_subject=draft.subject,
             drafted_body=draft.body,
             now=utcnow(),
+            tier_offsets=tier_offsets,
+            cooldown_days=cooldown_days,
+            max_attempts=max_attempts,
         )
 
     session.add(

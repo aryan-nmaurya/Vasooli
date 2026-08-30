@@ -90,6 +90,6 @@ def test_local_environment_allows_demo_offset(monkeypatch):
 
 
 def test_email_dry_run_defaults_to_true(monkeypatch):
-    """Guards against accidentally emailing synthetic customers before Phase 7."""
+    """Guards against accidentally emailing synthetic customers before live-email approval."""
     build = _isolated_env(monkeypatch, {})
     assert build().email_dry_run is True

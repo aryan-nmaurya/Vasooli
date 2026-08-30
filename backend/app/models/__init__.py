@@ -17,6 +17,12 @@ from app.models.billing import (
     BillingRefund,
     BillingSubscription,
 )
+from app.models.controls import (
+    MerchantUsageBucket,
+    ReminderPolicyVersion,
+    SendingDomain,
+    SuppressionEntry,
+)
 from app.models.customer import Customer
 from app.models.demo_settings import DemoSettings
 from app.models.dispute_case import DisputeCase
@@ -36,9 +42,11 @@ from app.models.iam import (
     UserSession,
 )
 from app.models.inbound_message import InboundMessage
+from app.models.integrations import ErpConnection, ErpRecord, ErpSyncRun, IntegrationFailure
 from app.models.invoice import Invoice
 from app.models.job_run import JobRun, JobStatus
 from app.models.merchant import Merchant
+from app.models.operations import DataRequest
 from app.models.operator_account import OperatorAccount
 from app.models.payment_connection import PaymentConnection
 from app.models.payment_link import PaymentLink, PaymentLinkStatus
@@ -69,10 +77,15 @@ __all__ = [
     "EmailEvent",
     "ExternalPayment",
     "Invoice",
+    "ErpConnection",
+    "ErpRecord",
+    "ErpSyncRun",
+    "IntegrationFailure",
     "InboundMessage",
     "JobRun",
     "JobStatus",
     "Merchant",
+    "DataRequest",
     "MerchantInvitation",
     "MerchantMembership",
     "MFAFactor",
@@ -81,6 +94,10 @@ __all__ = [
     "PaymentMethod",
     "PaymentLinkStatus",
     "PaymentConnection",
+    "ReminderPolicyVersion",
+    "SuppressionEntry",
+    "SendingDomain",
+    "MerchantUsageBucket",
     "Promise",
     "Permission",
     "ReconciliationEvent",

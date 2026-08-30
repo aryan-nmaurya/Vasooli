@@ -10,13 +10,16 @@ from app.api import (
     admin,
     auth,
     billing,
+    controls,
     dashboard,
     demo,
     exports,
     health,
+    integrations,
     invoices,
     live_auth,
     live_invoices,
+    operations,
     payment_connections,
     payments,
     replies,
@@ -68,6 +71,7 @@ async def lifespan(app: FastAPI):
     log.info(
         "startup.complete",
         environment=settings.environment,
+        process_role=settings.process_role,
         scheduler_enabled=settings.scheduler_enabled,
         email_dry_run=settings.email_dry_run,
     )
@@ -108,6 +112,9 @@ def create_app() -> FastAPI:
     app.include_router(auth.router)
     app.include_router(live_auth.router)
     app.include_router(billing.router)
+    app.include_router(controls.router)
+    app.include_router(integrations.router)
+    app.include_router(operations.router)
     app.include_router(payment_connections.router)
     app.include_router(team.router)
     app.include_router(live_invoices.router)
