@@ -6,6 +6,53 @@ on:
   pull_request:
 
 jobs:
+  demo-regression:
+    name: demo-regression (required)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: vasooli
+          POSTGRES_PASSWORD: vasooli
+          POSTGRES_DB: vasooli_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    env:
+      ENVIRONMENT: test
+      DATABASE_URL: postgresql://vasooli:vasooli@localhost:5432/vasooli_test
+      RAZORPAY_KEY_ID: rzp_test_ci
+      RAZORPAY_KEY_SECRET: ci
+      RAZORPAY_WEBHOOK_SECRET: ci
+      GOOGLE_API_KEY: ci
+      RESEND_API_KEY: ci
+      ADMIN_API_KEY: ci
+      EMAIL_DRY_RUN: "true"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: uv sync --locked
+
+      - name: Frozen ledger, API, and policy traces
+        working-directory: backend
+        run: uv run pytest -q tests/integration/test_demo_golden.py
+
+      - name: Frozen screens and frontend surfaces
+        run: node scripts/verify_demo_freeze.mjs
+
   test:
     runs-on: ubuntu-latest
 

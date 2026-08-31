@@ -55,6 +55,9 @@ class PaymentLink(SQLModel, table=True):
     __table_args__ = (
         CheckConstraint("amount_expected_paise > 0", name="ck_payment_links_expected_positive"),
         CheckConstraint("amount_paid_paise >= 0", name="ck_payment_links_paid_non_negative"),
+        CheckConstraint(
+            "amount_refunded_paise >= 0", name="ck_payment_links_refunded_non_negative"
+        ),
     )
 
     id: uuid.UUID = Field(sa_column=pk_column())
@@ -76,6 +79,7 @@ class PaymentLink(SQLModel, table=True):
     status: str = PaymentLinkStatus.CREATED
     amount_expected_paise: int = Field(sa_column=money_column())
     amount_paid_paise: int = Field(default=0, sa_column=money_column(default=0))
+    amount_refunded_paise: int = Field(default=0, sa_column=money_column(default=0))
     #: Partial payment is allowed deliberately — a customer paying half is a customer
     #: paying, and refusing it would push them back to "I'll sort it out later".
     accept_partial: bool = Field(default=True, sa_column=bool_column(default=True))

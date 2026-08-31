@@ -3,11 +3,37 @@
 from typing import Annotated
 
 from fastapi import Cookie, Depends, Header, HTTPException, Request, status
-from sqlmodel import select
+from sqlalchemy import text
+from sqlmodel import Session, select
 
 from app.core.db import SessionDep
 from app.core.security import check_admin_key, verify_session_token
-from app.models import OperatorAccount
+from app.models import Merchant, OperatorAccount
+
+
+def bind_demo_tenant(session: Session) -> None:
+    """Scope this transaction to the demo merchant.
+
+    Row-level security is FORCEd on the tenant tables, so the owning role no longer
+    bypasses it. The legacy demo endpoints never set `app.merchant_id` — they predate
+    tenancy and read their tables globally — which under FORCE would return zero rows
+    and silently empty the frozen demo.
+
+    Binding the demo merchant here keeps those endpoints returning exactly the rows
+    they returned before, while leaving the policy in force rather than disabled. It
+    changes what the database permits, not what the demo shows: the demo owns every
+    row it was already reading.
+    """
+    merchant_id = session.exec(
+        select(Merchant.id).where(Merchant.is_demo.is_(True)).order_by(Merchant.created_at)  # type: ignore[union-attr]
+    ).first()
+    if merchant_id is None:
+        return
+    session.exec(
+        text("SELECT set_config('app.merchant_id', :merchant_id, true)").bindparams(
+            merchant_id=str(merchant_id)
+        )
+    )
 
 
 def require_operator(
@@ -31,6 +57,7 @@ def require_operator(
     recognised identity that lacks permission.
     """
     if check_admin_key(x_admin_key):
+        bind_demo_tenant(session)
         return "service"
 
     subject = verify_session_token(vasooli_session)
@@ -49,6 +76,7 @@ def require_operator(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Auditor accounts are read-only",
                 )
+            bind_demo_tenant(session)
             return account.username
 
     raise HTTPException(

@@ -23,9 +23,11 @@ from app.policy.banned_language import find_banned_phrases
 from app.policy.decisions import PolicyCheck, RequiredAction
 
 
-def cadence_due(days_overdue: int, proposed_tier: int) -> PolicyCheck:
+def cadence_due(
+    days_overdue: int, proposed_tier: int, *, tier_schedule: dict[int, int] | None = None
+) -> PolicyCheck:
     """Has this tier's day count been reached? Doc §3 Stage 3."""
-    required = TIER_SCHEDULE.get(proposed_tier)
+    required = (tier_schedule or TIER_SCHEDULE).get(proposed_tier)
     if required is None:
         return PolicyCheck(
             name="cadence_due",
@@ -43,7 +45,9 @@ def cadence_due(days_overdue: int, proposed_tier: int) -> PolicyCheck:
     )
 
 
-def cooldown_respected(last_reminder_at: datetime | None, now: datetime) -> PolicyCheck:
+def cooldown_respected(
+    last_reminder_at: datetime | None, now: datetime, *, cooldown_days: int = MIN_COOLDOWN_DAYS
+) -> PolicyCheck:
     """No same-week repeated contact. Doc §3 Stage 3.
 
     A compliance rule, so it wins over the tier schedule when the two disagree: a
@@ -58,28 +62,29 @@ def cooldown_respected(last_reminder_at: datetime | None, now: datetime) -> Poli
             on_failure=RequiredAction.HOLD,
         )
     elapsed = (now - last_reminder_at).days
-    ok = elapsed >= MIN_COOLDOWN_DAYS
+    ok = elapsed >= cooldown_days
     return PolicyCheck(
         name="cooldown_respected",
         passed=ok,
         detail=f"Days since last contact ({elapsed}) {'≥' if ok else '<'} "
-        f"cooldown ({MIN_COOLDOWN_DAYS})",
+        f"cooldown ({cooldown_days})",
         on_failure=RequiredAction.HOLD,
     )
 
 
-def reminder_cap(reminders_sent: int) -> PolicyCheck:
+def reminder_cap(
+    reminders_sent: int, *, max_attempts: int = MAX_AUTOMATED_REMINDERS
+) -> PolicyCheck:
     """Never more than three automated contacts. Doc §3 Stage 3.
 
     Failing this escalates rather than holds: the invoice has exhausted automation and
     a human must take over. Holding would leave it stuck in the queue forever.
     """
-    ok = reminders_sent < MAX_AUTOMATED_REMINDERS
+    ok = reminders_sent < max_attempts
     return PolicyCheck(
         name="reminder_cap",
         passed=ok,
-        detail=f"Reminder count ({reminders_sent}) {'<' if ok else '≥'} "
-        f"cap ({MAX_AUTOMATED_REMINDERS})",
+        detail=f"Reminder count ({reminders_sent}) {'<' if ok else '≥'} cap ({max_attempts})",
         on_failure=RequiredAction.ESCALATE_TO_HUMAN,
     )
 

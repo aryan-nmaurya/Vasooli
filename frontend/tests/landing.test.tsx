@@ -3,78 +3,68 @@ import { describe, expect, it } from "vitest";
 
 import { Landing } from "@/components/Landing";
 
-describe("Landing", () => {
-  it("explains the product, its safety boundary, proof, and honest scope", () => {
+describe("production landing page", () => {
+  it("explains the complete controlled recovery loop", () => {
     const html = renderToStaticMarkup(<Landing />);
-
-    expect(html).toContain("Recover revenue.");
-    expect(html).toContain("AI reads.");
-    expect(html).toContain("Policy decides.");
-    expect(html).toContain("Razorpay verifies.");
-    expect(html).toContain("65.1%");
-    expect(html).toContain("Real workflows.");
-    expect(html).toContain("Test money.");
+    expect(html).toContain("Stop when they dispute");
+    expect(html).toContain("Close when money lands");
+    expect(html).toContain("Connect your financial system");
+    expect(html).toContain("Detect what needs attention");
+    expect(html).toContain("Communicate with context");
+    expect(html).toContain("Reconcile and stop safely");
+    expect(html).toContain("Customer text and model output can never mark an invoice paid");
   });
 
-  it("offers clear paths into the demo, explanation, guide, and evidence", () => {
+  it("names only implemented ERP connection contracts", () => {
     const html = renderToStaticMarkup(<Landing />);
+    expect(html).toContain("Zoho Books");
+    expect(html).toContain("Previewed ledger import");
+    expect(html).toContain("Signed webhook ingestion");
+    expect(html).not.toContain("Tally");
+    expect(html).not.toContain("any ERP");
+  });
 
+  it("keeps calls to action focused on merchant accounts", () => {
+    const html = renderToStaticMarkup(<Landing />);
+    expect(html).toContain('href="/register"');
+    expect(html).toContain('href="/live/login"');
+    expect(html).toContain('href="/pricing"');
+  });
+
+  /**
+   * The page must not *position* Vasooli as a demo — the prose sells a product to a
+   * merchant, and words like "simulated" or "hackathon" undercut that.
+   *
+   * Navigation is a separate question, and conflating the two removed the only way in
+   * for the third audience this page serves. A prospective merchant registers or signs
+   * in; a reviewer or mentor arrives holding no credential at all, and for a while
+   * every link led to `/register` or `/live/login`. A working product looked like a
+   * locked door, which is the opposite of what the positioning was protecting.
+   *
+   * So the rule applies to the copy, not the links: anchors are stripped before the
+   * scan, and a labelled entry point is allowed to say plainly where it goes. Telling
+   * a reviewer the door is a demo is honest; describing the product as one is not.
+   */
+  const prose = () =>
+    renderToStaticMarkup(<Landing />)
+      .replace(/<a\b[^>]*>[\s\S]*?<\/a>/gi, " ")
+      .toLowerCase();
+
+  it.each(["simulated", "seeded", "time machine", "sample data", "test mode", "hackathon", "fake integration"])("does not position the product as %s", (term) => {
+    expect(prose()).not.toContain(term);
+  });
+
+  it("keeps demo and reviewer wording out of the prose", () => {
+    // Allowed inside an anchor label, forbidden in the surrounding copy.
+    expect(prose()).not.toContain("demo");
+    expect(prose()).not.toContain("reviewer");
+    expect(prose()).not.toContain("mentor");
+  });
+
+  it("gives a credential-less reviewer a way in", () => {
+    const html = renderToStaticMarkup(<Landing />);
     expect(html).toContain('href="/login"');
-    expect(html).toContain('href="#how"');
-    expect(html).toContain('href="/guide"');
-    expect(html).toContain("github.com/aryan-nmaurya/Vasooli");
-  });
-
-  // ---------------------------------------------------------------------
-  // Claims the code cannot support.
-  //
-  // A landing page is the easiest place in a codebase for a promise to drift ahead
-  // of the implementation, and the most expensive place for a reviewer to catch it.
-  // These pin the specific overclaims an audit found and the corrections that
-  // replaced them, so re-introducing one fails a test rather than a demo.
-  // ---------------------------------------------------------------------
-
-  it("does not claim to discover invoices it can only be given", () => {
-    const html = renderToStaticMarkup(<Landing />);
-
-    expect(html).not.toContain("finds overdue Razorpay invoices");
-    expect(html).toContain("You import your overdue invoices");
-    expect(html).toContain("does not browse your Razorpay account");
-  });
-
-  it("does not promise an instantaneous stop it cannot guarantee", () => {
-    const html = renderToStaticMarkup(<Landing />);
-
-    expect(html).not.toContain("stops the instant");
-    expect(html).toContain("stops as soon as the payment is");
-  });
-
-  it("acknowledges money that arrives outside a Vasooli payment link", () => {
-    const html = renderToStaticMarkup(<Landing />);
-
-    expect(html).toContain("bank transfer");
-    expect(html).toContain("their assertion");
-  });
-
-  it("labels the recovery figure as a simulation, and does not lead with it", () => {
-    const html = renderToStaticMarkup(<Landing />);
-
-    expect(html).toContain("Simulated, not observed");
-    expect(html).toContain("No merchant has run on this");
-    // The verified metrics come first in document order.
-    expect(html.indexOf("tests passing")).toBeLessThan(html.indexOf("65.1%"));
-  });
-
-  it("discloses the workload the simulation still handed to a person", () => {
-    const html = renderToStaticMarkup(<Landing />);
-    expect(html).toContain("83 of the 150");
-  });
-
-  it("states what the system does not do", () => {
-    const html = renderToStaticMarkup(<Landing />);
-
-    expect(html).toContain("no connector to your accounting system");
-    expect(html).toContain("does not ingest Razorpay refunds or chargebacks");
-    expect(html).toContain("production-shaped prototype");
+    expect(html).toContain("Open the demo");
+    expect(html).not.toContain('href="/guide"');
   });
 });

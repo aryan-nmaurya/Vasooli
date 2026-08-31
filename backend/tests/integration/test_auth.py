@@ -43,11 +43,49 @@ PUBLIC_BY_DESIGN = {
         "app.api.deps rejecting every non-GET — so this hands out no write access. "
         "404s entirely unless REVIEWER_ACCESS_ENABLED is set"
     ),
+    "/api/live/auth/register": "public live account enrollment; feature-flagged",
+    "/api/live/auth/verify-email": "public email verification token exchange",
+    "/api/live/auth/login": "public live credential exchange",
+    "/api/live/auth/refresh": "public live refresh-token exchange",
+    "/api/live/auth/logout": "public live cookie clearing",
+    "/api/live/billing/plans": (
+        "the published price list — slug, name, amount, and included caps, and nothing "
+        "merchant- or customer-owned. The pricing page is unauthenticated by "
+        "definition, and prices a prospect cannot read are not prices"
+    ),
+    "/api/live/auth/forgot-password": "public non-enumerating reset request",
+    "/api/live/auth/reset-password": "public password-reset token exchange",
+    "/api/live/auth/accept-invite": "public invitation enrollment token exchange",
 }
 
 #: Razorpay cannot log in. Proven by an HMAC over the raw body instead, so these
 #: reject with 400 (bad signature) rather than 401 (no session).
-SIGNATURE_GATED_PREFIX = "/api/webhooks/"
+#: Routes authenticated by a provider signature over the raw body rather than by a
+#: session. A provider cannot log in, so 401 would be wrong; these must answer 400
+#: to an unsigned payload. Billing lives outside /api/webhooks/ because it is the
+#: platform's own Razorpay account rather than a merchant's, and the two use
+#: different secrets — but it is verified the same way.
+SIGNATURE_GATED_PREFIX = (
+    "/api/webhooks/",
+    "/api/live/billing/webhook",
+    # Custom ERP push. Verified with X-ERP-Signature over the raw body and a
+    # replay-safe envelope; a sender cannot hold a session cookie.
+    "/api/live/integrations/custom/",
+)
+
+#: The multi-tenant surface. These require a live session and an explicit
+#: X-Merchant-ID; the tenancy-free admin key is refused by design.
+LIVE_PREFIX = "/api/live/"
+
+#: OAuth redirect targets. The provider sends the merchant's browser here, so a
+#: session cookie cannot be relied on — these are authenticated by a one-time
+#: `state` value instead: hashed at rest, single-use via `used_at`, and expiring.
+#: See `app.services.oauth.consume_state`. Answering 400 to a missing or spent
+#: state is the correct refusal here, exactly as 400 is for a bad signature.
+STATE_GATED_PATHS = (
+    "/api/live/integrations/zoho/oauth/callback",
+    "/api/live/payment-connections/oauth/callback",
+)
 
 
 def _discover(app_client, *, methods: tuple[str, ...]) -> list[tuple[str, str]]:
@@ -93,6 +131,7 @@ def test_every_read_rejects_anonymous_callers(api):
         for _, path in _discover(api, methods=("GET",))
         if path not in PUBLIC_BY_DESIGN
         and not path.startswith(SIGNATURE_GATED_PREFIX)
+        and path not in STATE_GATED_PATHS
         and path not in ("/openapi.json", "/docs", "/redoc", "/docs/oauth2-redirect")
         and api.get(_concrete(path)).status_code != 401
     ]
@@ -100,14 +139,45 @@ def test_every_read_rejects_anonymous_callers(api):
 
 
 def test_every_action_rejects_anonymous_callers(api):
+    """Nothing may be *done* without a credential.
+
+    422 counts as refused alongside 401. This sweep posts an empty body, and FastAPI
+    validates the body before the endpoint runs — so a 422 means the request never
+    reached the handler and nothing changed. Insisting on 401 here would force every
+    endpoint to accept a malformed body just to prove it rejects anonymous callers.
+    The stronger claim, that a *well-formed* anonymous request gets 401, is asserted
+    directly in `test_session_gated_endpoints_answer_401_to_a_valid_anonymous_body`.
+    """
     unprotected = [
         f"{verb} {path}"
         for verb, path in _discover(api, methods=("POST", "PUT", "PATCH", "DELETE"))
         if path not in PUBLIC_BY_DESIGN
         and not path.startswith(SIGNATURE_GATED_PREFIX)
-        and api.request(verb, _concrete(path), json={}).status_code != 401
+        and path not in STATE_GATED_PATHS
+        and api.request(verb, _concrete(path), json={}).status_code not in (401, 422)
     ]
     assert not unprotected, "state-changing without a credential:\n  " + "\n  ".join(unprotected)
+
+
+def test_session_gated_endpoints_answer_401_to_a_valid_anonymous_body(api):
+    """The endpoints the sweep above can only clear on a 422, proven properly.
+
+    Each is sent a body that passes validation, so the only thing left to reject it
+    is the missing session. A 422 here would mean the shape changed; a 200 would mean
+    the gate is gone.
+    """
+    cases = [
+        # The code moved out of the query string and into the body: as a query
+        # parameter the second factor was written verbatim into access and proxy logs.
+        ("/api/live/auth/mfa/verify", {"code": "123456"}),
+        ("/api/live/auth/reauth/challenge", {"purpose": "billing", "password": "x" * 12}),
+    ]
+    wrong = []
+    for path, body in cases:
+        resp = api.post(path, json=body) if body else api.post(path)
+        if resp.status_code != 401:
+            wrong.append(f"POST {path.split('?')[0]} -> {resp.status_code}")
+    assert not wrong, "expected 401 without a session:\n  " + "\n  ".join(wrong)
 
 
 def test_no_customer_data_leaks_in_the_401_body(api, merchant, customer, invoice):
@@ -121,11 +191,19 @@ def test_no_customer_data_leaks_in_the_401_body(api, merchant, customer, invoice
 # ===========================================================================
 
 
-def test_the_admin_key_grants_access_to_every_read(api):
-    """The gate must not merely reject — the right credential has to get through."""
+def test_the_admin_key_grants_access_to_every_legacy_read(api):
+    """The gate must not merely reject — the right credential has to get through.
+
+    Scoped to the demo/legacy surface. `/api/live/**` is deliberately excluded and is
+    covered by the test below, which asserts the opposite for those routes.
+    """
     refused = []
     for _, path in _discover(api, methods=("GET",)):
         if path in PUBLIC_BY_DESIGN or path.startswith(SIGNATURE_GATED_PREFIX):
+            continue
+        if path in STATE_GATED_PATHS:
+            continue
+        if path.startswith(LIVE_PREFIX):
             continue
         if path in ("/openapi.json", "/docs", "/redoc", "/docs/oauth2-redirect"):
             continue
@@ -135,6 +213,34 @@ def test_the_admin_key_grants_access_to_every_read(api):
         if resp.status_code == 401:
             refused.append(f"GET {path}")
     assert not refused, "admin key refused on:\n  " + "\n  ".join(refused)
+
+
+def test_the_admin_key_does_not_reach_live_tenant_data(api):
+    """A global service key must not open a tenant's data.
+
+    `X-Admin-Key` predates tenancy and carries no merchant context, so there is no
+    answer to "whose rows?". Accepting it on a live route would mean either serving
+    an arbitrary tenant's data or picking one — both worse than refusing. Live routes
+    require a session plus an explicit X-Merchant-ID, and a membership backs it.
+
+    The inverse of the test above, and the reason that one had to be narrowed: this
+    behaviour is the point, not a regression to be allowlisted away.
+    """
+    accepted = []
+    for _, path in _discover(api, methods=("GET",)):
+        if not path.startswith(LIVE_PREFIX):
+            continue
+        if path in PUBLIC_BY_DESIGN or path.startswith(SIGNATURE_GATED_PREFIX):
+            continue
+        if path in STATE_GATED_PATHS:
+            continue
+        resp = api.get(_concrete(path), headers={"X-Admin-Key": settings.admin_api_key})
+        if resp.status_code != 401:
+            accepted.append(f"GET {path} -> {resp.status_code}")
+    assert not accepted, (
+        "the global admin key reached live tenant routes, which carry no merchant "
+        "context:\n  " + "\n  ".join(accepted)
+    )
 
 
 def test_a_wrong_admin_key_is_refused(api):
@@ -380,7 +486,7 @@ def test_every_endpoint_is_gated_or_deliberately_public(api):
         "/api/auth/logout": "clears a cookie",
     }
     #: Razorpay cannot log in. Proven by HMAC over the raw body instead.
-    signature_gated = "/api/webhooks/"
+    signature_gated = SIGNATURE_GATED_PREFIX
 
     spec = api.get("/openapi.json").json()
     unprotected = []
@@ -404,7 +510,57 @@ def test_every_endpoint_is_gated_or_deliberately_public(api):
                 # 400 = rejected on signature. A 401 would mean it wrongly expects a
                 # session; a 200 would mean it accepts unsigned payloads.
                 assert response.status_code == 400, f"{verb} {path} -> {response.status_code}"
-            elif response.status_code != 401:
+            elif path in STATE_GATED_PATHS:
+                # OAuth redirect targets: refused on a missing or spent one-time
+                # `state`, which is a 400 for the same reason a bad signature is.
+                assert response.status_code == 400, f"{verb} {path} -> {response.status_code}"
+            elif response.status_code not in (401, 422):
+                # 422 = the body was rejected before the handler ran, so nothing was
+                # served and nothing changed. See the note on the anonymous-action
+                # sweep above for why that counts as refused here.
                 unprotected.append(f"{verb} {path} -> {response.status_code}")
 
     assert not unprotected, "endpoints served without a credential:\n  " + "\n  ".join(unprotected)
+
+
+def test_the_reviewer_button_is_hidden_when_its_account_is_missing(api, session, monkeypatch):
+    """The flag alone is not enough to advertise the reviewer door.
+
+    `reviewer_login` requires the configured account to exist and hold the auditor
+    role. A deployment that turned the flag on and forgot the account showed a button
+    that returned 403 to everyone who pressed it — the exact dead end the no-credential
+    path exists to remove.
+    """
+    from app.models import OperatorAccount
+
+    monkeypatch.setattr(settings, "reviewer_access_enabled", True)
+    monkeypatch.setattr(settings, "reviewer_username", "nobody-by-this-name")
+
+    assert api.get("/api/auth/modes").json()["reviewer_access"] is False
+
+    # And it appears once the account is really there.
+    session.add(
+        OperatorAccount(
+            username="nobody-by-this-name",
+            display_name="Read-only reviewer",
+            password_hash="x",
+            role="auditor",
+            is_active=True,
+        )
+    )
+    session.commit()
+    assert api.get("/api/auth/modes").json()["reviewer_access"] is True
+
+
+def test_the_reviewer_button_is_hidden_when_the_account_is_not_an_auditor(
+    api, session, monkeypatch, operator_account
+):
+    """Read-only is the promise. An operator-role account would hand out write access,
+    so `reviewer_login` refuses it — and the page must not offer it either."""
+    monkeypatch.setattr(settings, "reviewer_access_enabled", True)
+    monkeypatch.setattr(settings, "reviewer_username", operator_account.username)
+    operator_account.role = "operator"
+    session.add(operator_account)
+    session.commit()
+
+    assert api.get("/api/auth/modes").json()["reviewer_access"] is False

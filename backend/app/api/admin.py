@@ -1,4 +1,4 @@
-"""Operational endpoints. Phase 8.
+"""Operational endpoints.
 
 The manual trigger calls exactly the same function the scheduler does. A demo button
 wired to a separate code path would demonstrate the button, not the system.

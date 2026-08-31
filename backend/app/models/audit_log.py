@@ -94,6 +94,10 @@ class AuditAction:
     #: system's one side effect on the outside world; where it went is recorded.
     DEMO_EMAIL_REDIRECTED = "demo_email_redirected"
     PAYMENT_RECONCILED = "payment_reconciled"
+    PAYMENT_REFUNDED = "payment_refunded"
+    CHARGEBACK_OPENED = "chargeback_opened"
+    CHARGEBACK_WON = "chargeback_won"
+    CHARGEBACK_LOST = "chargeback_lost"
     # --- Money recorded by a person, not by a provider -----------------------
     #: A bank transfer, UPI, cheque, or agreed adjustment entered by an operator. The
     #: detail carries "verification": "operator_asserted" so the trail never lets this
@@ -101,6 +105,10 @@ class AuditAction:
     EXTERNAL_PAYMENT_RECORDED = "external_payment_recorded"
     #: A recorded payment retracted. The row survives; the balance is recomputed.
     EXTERNAL_PAYMENT_REVERSED = "external_payment_reversed"
+    ERP_INVOICE_UPDATED = "erp_invoice_updated"
+    ERP_INVOICE_CANCELLED = "erp_invoice_cancelled"
+    ERP_PAYMENT_APPLIED = "erp_payment_applied"
+    ERP_CREDIT_APPLIED = "erp_credit_applied"
     #: An unmatched Razorpay settlement an operator tied to an invoice by hand.
     RECONCILIATION_MANUALLY_MATCHED = "reconciliation_manually_matched"
     PAYMENT_LINK_CLOSED = "payment_link_closed"

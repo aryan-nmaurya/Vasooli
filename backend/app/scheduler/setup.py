@@ -1,4 +1,4 @@
-"""APScheduler wiring. Phase 8."""
+"""APScheduler wiring."""
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -8,8 +8,11 @@ from app.core.config import settings
 from app.core.constants import BUSINESS_TIMEZONE
 from app.core.logging import get_logger
 from app.scheduler.jobs import (
+    billing_reconciliation_job,
+    erp_sync_job,
     payment_link_sync_job,
     recovery_cycle_job,
+    retention_prune_job,
     retry_operations_job,
     service_heartbeat_job,
 )
@@ -38,7 +41,7 @@ def start_scheduler() -> BackgroundScheduler | None:
     early enough to land in a working day.
     """
     global _scheduler
-    if not settings.scheduler_enabled:
+    if not settings.scheduler_enabled or settings.process_role == "worker":
         log.info("scheduler.disabled")
         return None
     if _scheduler is not None:
@@ -71,6 +74,16 @@ def start_scheduler() -> BackgroundScheduler | None:
         replace_existing=True,
     )
     scheduler.add_job(
+        erp_sync_job,
+        CronTrigger(minute="7,37", timezone=BUSINESS_TIMEZONE),
+        id="erp_sync",
+        name="Live ERP incremental sync",
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=1800,
+        replace_existing=True,
+    )
+    scheduler.add_job(
         retry_operations_job,
         IntervalTrigger(minutes=1, timezone=BUSINESS_TIMEZONE),
         id="retry_operations",
@@ -88,6 +101,27 @@ def start_scheduler() -> BackgroundScheduler | None:
         max_instances=1,
         coalesce=True,
         misfire_grace_time=120,
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        billing_reconciliation_job,
+        CronTrigger(hour=3, minute=15, timezone=BUSINESS_TIMEZONE),
+        id="billing_reconciliation",
+        name="Daily billing reconciliation",
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=3600,
+        replace_existing=True,
+    )
+
+    scheduler.add_job(
+        retention_prune_job,
+        CronTrigger(hour=3, minute=45, timezone=BUSINESS_TIMEZONE),
+        id="retention_prune",
+        name="Expired session and token pruning",
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=3600,
         replace_existing=True,
     )
 

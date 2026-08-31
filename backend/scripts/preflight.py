@@ -337,6 +337,92 @@ def check_ai() -> None:
     )
 
 
+def check_tenant_isolation() -> None:
+    """Row-level security only isolates if the connecting role cannot bypass it.
+
+    Three separate things silently disable it, and none of them raise an error:
+    a superuser bypasses RLS unconditionally, a table owner bypasses it unless FORCE
+    is set, and a policy on a table where RLS was never enabled does nothing at all.
+    The tenancy migration documented "deployed application roles must be non-owners"
+    as a precondition; nothing checked it, and it was not met — the deployed role was
+    both the owner and a superuser, so every policy was inert while looking correct
+    in `pg_policies`.
+
+    This runs the actual test rather than reading configuration: scope the session to
+    a merchant that owns nothing and count what is still visible.
+    """
+    section("Tenant isolation (RLS)")
+    from sqlalchemy import text
+
+    from app.core.db import engine
+
+    try:
+        with engine.connect() as conn:
+            role, is_super = conn.execute(
+                text("SELECT current_user, usesuper FROM pg_user WHERE usename = current_user")
+            ).one()
+            owner, forced, enabled = conn.execute(
+                text(
+                    """SELECT pg_get_userbyid(c.relowner), c.relforcerowsecurity,
+                              c.relrowsecurity
+                       FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                       WHERE n.nspname = 'public' AND c.relname = 'invoices'"""
+                )
+            ).one()
+    except Exception as exc:  # noqa: BLE001 - reported, not raised
+        report("FAIL", "database reachable", str(exc)[:90], "Check DATABASE_URL.")
+        return
+
+    report(
+        "PASS" if enabled else "FAIL",
+        "RLS enabled on invoices",
+        "enabled" if enabled else "not enabled",
+        "The tenancy migration has not been applied.",
+    )
+    report(
+        "PASS" if forced else "FAIL",
+        "RLS forced",
+        "forced" if forced else "not forced — the owning role bypasses every policy",
+        "ALTER TABLE ... FORCE ROW LEVEL SECURITY (migration c7d31a08b915).",
+    )
+    report(
+        "FAIL" if is_super else "PASS",
+        "app role is not superuser",
+        f"{role} is a superuser" if is_super else f"{role}",
+        "Superusers bypass RLS unconditionally. Connect as a dedicated non-superuser "
+        "role; see deploy/README.md.",
+    )
+    report(
+        "FAIL" if role == owner else "PASS",
+        "app role does not own the tables",
+        f"{role} owns invoices" if role == owner else f"owner={owner}",
+        "An owner bypasses RLS unless FORCE is set. Prefer a non-owner role as well.",
+    )
+
+    # The empirical check. Configuration can look right and still leak.
+    try:
+        with engine.connect() as conn:
+            conn.execute(
+                text("SELECT set_config('app.merchant_id', :m, false)").bindparams(
+                    m="11111111-1111-1111-1111-111111111111"
+                )
+            )
+            leaked = conn.execute(text("SELECT count(*) FROM invoices")).scalar_one()
+    except Exception as exc:  # noqa: BLE001
+        report("WARN", "cross-tenant probe", str(exc)[:90])
+        return
+
+    report(
+        "PASS" if leaked == 0 else "FAIL",
+        "cross-tenant read blocked",
+        "0 rows visible outside the tenant"
+        if leaked == 0
+        else f"{leaked} rows readable while scoped to a merchant that owns none",
+        "RLS is not isolating. Fix the role and FORCE settings above before serving "
+        "a second merchant.",
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", help="public base URL, e.g. https://api.yourdomain.com")
@@ -344,6 +430,7 @@ def main() -> int:
 
     print(f"\nVasooli pre-flight  {DIM}environment={settings.environment}{RESET}")
     check_config()
+    check_tenant_isolation()
     check_dns()
     check_host(args.host)
     check_razorpay()

@@ -90,6 +90,40 @@ def test_local_environment_allows_demo_offset(monkeypatch):
 
 
 def test_email_dry_run_defaults_to_true(monkeypatch):
-    """Guards against accidentally emailing synthetic customers before Phase 7."""
+    """Guards against accidentally emailing synthetic customers before live-email approval."""
     build = _isolated_env(monkeypatch, {})
     assert build().email_dry_run is True
+
+
+def test_production_refuses_live_registration_without_identity_email(monkeypatch):
+    build = _isolated_env(
+        monkeypatch,
+        {
+            "ENVIRONMENT": "production",
+            "ADMIN_API_KEY": "production-admin-key",
+            "SESSION_SECRET": "s" * 32,
+            "CREDENTIAL_ENCRYPTION_KEY": "separate-encryption-key",
+            "LIVE_REGISTRATION_ENABLED": "true",
+            "EMAIL_DRY_RUN": "true",
+            "FRONTEND_PUBLIC_URL": "https://app.example.test",
+        },
+    )
+    with pytest.raises(RuntimeError, match="EMAIL_DRY_RUN=false"):
+        build().assert_production_safe()
+
+
+def test_production_refuses_insecure_identity_links(monkeypatch):
+    build = _isolated_env(
+        monkeypatch,
+        {
+            "ENVIRONMENT": "production",
+            "ADMIN_API_KEY": "production-admin-key",
+            "SESSION_SECRET": "s" * 32,
+            "CREDENTIAL_ENCRYPTION_KEY": "separate-encryption-key",
+            "LIVE_REGISTRATION_ENABLED": "true",
+            "EMAIL_DRY_RUN": "false",
+            "FRONTEND_PUBLIC_URL": "http://app.example.test",
+        },
+    )
+    with pytest.raises(RuntimeError, match="https://"):
+        build().assert_production_safe()

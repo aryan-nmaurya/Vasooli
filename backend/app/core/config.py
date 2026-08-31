@@ -36,6 +36,24 @@ class Settings(BaseSettings):
     razorpay_key_id: str
     razorpay_key_secret: str
     razorpay_webhook_secret: str
+    razorpay_plan_id_starter: str | None = None
+    razorpay_plan_id_growth: str | None = None
+    razorpay_plan_id_scale: str | None = None
+    razorpay_subscriptions_enabled: bool = False
+    live_trial_days: int = Field(default=14, ge=1, le=90)
+    razorpay_oauth_client_id: str | None = None
+    razorpay_oauth_client_secret: str | None = None
+    razorpay_oauth_redirect_uri: str | None = None
+    razorpay_oauth_token_url: str = "https://auth.razorpay.com/token"
+    razorpay_oauth_scope: str = "read_write"
+    razorpay_oauth_mode: Literal["test", "live"] = "test"
+    zoho_oauth_client_id: str | None = None
+    zoho_oauth_client_secret: str | None = None
+    zoho_oauth_redirect_uri: str | None = None
+    zoho_accounts_url: str = "https://accounts.zoho.com"
+    zoho_oauth_scope: str = "ZohoBooks.invoices.READ,ZohoBooks.settings.READ"
+    frontend_live_integrations_url: str = "http://localhost:3000/live/integrations"
+    frontend_public_url: str = "http://localhost:3000"
     #: Minimum gap between Razorpay API calls. Test mode rate-limits aggressively —
     #: a 60-invoice batch fired flat out trips it within a few requests.
     razorpay_min_request_interval_seconds: float = 1.5
@@ -76,6 +94,8 @@ class Settings(BaseSettings):
     email_provider_timeout_seconds: float = 10.0
     email_dry_run: bool = True
     allow_direct_customer_email: bool = False
+    global_send_kill_switch: bool = False
+    global_daily_send_quota: int = 100000
 
     #: When set, every reminder is delivered here instead of to the customer, with the
     #: intended recipient shown in the subject. The synthetic ledger contains 52 fake
@@ -86,19 +106,25 @@ class Settings(BaseSettings):
 
     # --- Ops ---
     scheduler_enabled: bool = True
+    process_role: Literal["api", "scheduler", "worker"] = "api"
+    worker_kind: Literal["all", "recovery", "email", "erp", "billing"] = "all"
+    worker_poll_seconds: int = Field(default=15, ge=1, le=300)
     ops_heartbeat_url: str = ""
     ops_recovery_heartbeat_url: str = ""
     admin_api_key: str
     #: HMAC key for session tokens. Rotating it invalidates every live session, which
     #: is the intended way to force everyone out.
     session_secret: str = ""
+    #: Optional Fernet key for connector credentials. Production should source this
+    #: from KMS/secret-manager material rather than reusing the session signing key.
+    credential_encryption_key: str | None = None
     # NoDecode: without it the dotenv source tries to JSON-parse this field before
     # our validator runs, so a comma-separated CORS_ORIGINS would be a hard error.
     cors_origins: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["http://localhost:3000"]
     )
 
-    # --- Demo controls (Phase 8) ---
+    # --- Demo controls ---
     demo_time_offset_days: int = 0
 
     #: Enables the runtime demo clock and its endpoints.
@@ -128,6 +154,10 @@ class Settings(BaseSettings):
     reviewer_access_enabled: bool = False
     #: Which account the reviewer button signs into. Must exist and must be an auditor.
     reviewer_username: str = "reviewer"
+
+    # Phase 1 live identity is deployed dark until staging evidence and launch
+    # ownership are complete. Demo authentication is independent of this flag.
+    live_registration_enabled: bool = False
 
     @field_validator("database_url")
     @classmethod
@@ -165,6 +195,23 @@ class Settings(BaseSettings):
             raise RuntimeError(
                 f"DEMO_TIME_OFFSET_DAYS must be 0 in production (got {self.demo_time_offset_days})"
             )
+        # Demo affordances that have no business running in a production process.
+        # `demo_time_offset_days` was already refused; these three were not, and each
+        # is a way for the guided demo to reach a real merchant's data:
+        #   * simulated replies write a fabricated customer statement into an audit
+        #     trail, with no signature and no sender correlation;
+        #   * demo controls move a clock the recovery cycle reads, which changes how
+        #     overdue every live invoice is;
+        #   * reviewer access is a shared credential to the operator console.
+        # Scope checks now stop each of them crossing into live data on their own, but
+        # a production process should not be offering them at all.
+        for flag, name in (
+            (self.allow_simulated_replies, "ALLOW_SIMULATED_REPLIES"),
+            (self.demo_controls_enabled, "DEMO_CONTROLS_ENABLED"),
+            (self.reviewer_access_enabled, "REVIEWER_ACCESS_ENABLED"),
+        ):
+            if flag:
+                raise RuntimeError(f"{name} must be false in production")
         if self.admin_api_key in {"", "changeme", "local-dev-key"}:
             raise RuntimeError("ADMIN_API_KEY must be set to a real secret in production")
         if not self.session_secret or len(self.session_secret) < 32:
@@ -173,6 +220,27 @@ class Settings(BaseSettings):
             )
         if self.razorpay_key_id.startswith("rzp_live_") and not self.allow_live_razorpay:
             raise RuntimeError("Live Razorpay credentials require ALLOW_LIVE_RAZORPAY=true")
+        # Merchant Razorpay credentials are encrypted with this key. Without it the
+        # code used to derive one from SESSION_SECRET, which meant rotating that
+        # secret — the ordinary way to revoke every session — silently made every
+        # stored credential undecryptable. Refuse to start rather than inherit it.
+        if not self.credential_encryption_key:
+            raise RuntimeError(
+                "CREDENTIAL_ENCRYPTION_KEY must be set in production. Generate one with:\n"
+                "  python -c 'from cryptography.fernet import Fernet; "
+                "print(Fernet.generate_key().decode())'"
+            )
+        if self.live_registration_enabled:
+            if self.email_dry_run:
+                raise RuntimeError(
+                    "LIVE_REGISTRATION_ENABLED requires EMAIL_DRY_RUN=false so email "
+                    "verification and password recovery can be completed"
+                )
+            if not self.frontend_public_url.startswith("https://"):
+                raise RuntimeError(
+                    "FRONTEND_PUBLIC_URL must be an https:// origin when live "
+                    "registration is enabled"
+                )
 
     def assert_safe_to_send(self) -> None:
         """Refuse to send live mail without a redirect target.

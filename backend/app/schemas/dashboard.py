@@ -144,6 +144,9 @@ class InvoiceDetail(BaseModel):
     #: and which part a colleague typed in.
     link_paid_display: str = "₹0"
     external_paid_display: str = "₹0"
+    refunded_display: str = "₹0"
+    chargeback_display: str = "₹0"
+    provider_net_display: str = "₹0"
     #: Payments recorded by hand, reversed entries included. A balance that once said
     #: "paid" and now says "owed" is exactly the history a customer will ask about.
     external_payments: list[dict] = []

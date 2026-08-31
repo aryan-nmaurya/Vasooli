@@ -1,0 +1,173 @@
+{
+  "invoice_count": 8,
+  "invoices": [
+    {
+      "amount_paise": 1250000,
+      "current_tier": 0,
+      "customer": "Nova Retail",
+      "customer_email": "accounts@nova-retail.example.com",
+      "customer_history": {
+        "avg_invoice_paise": 1100000,
+        "broken_promises": 0,
+        "invoices_defaulted": 0,
+        "invoices_paid_late": 0,
+        "total_invoices": 14
+      },
+      "customer_phone": "+919845012345",
+      "days_overdue": 2,
+      "demonstrates": "Not yet due — 2 days overdue, below the Tier 1 threshold of 3.",
+      "has_prior_dispute_note": false,
+      "invoice_number": "INV-3001",
+      "reminders_sent": 0,
+      "status": "chasing",
+      "terms_days": 30
+    },
+    {
+      "amount_paise": 1800000,
+      "current_tier": 0,
+      "customer": "Sunrise Textiles",
+      "customer_email": "finance@sunrise-textiles.example.com",
+      "customer_history": {
+        "avg_invoice_paise": 1700000,
+        "broken_promises": 0,
+        "invoices_defaulted": 0,
+        "invoices_paid_late": 0,
+        "total_invoices": 9
+      },
+      "customer_phone": "+919812345678",
+      "days_overdue": 3,
+      "demonstrates": "Oversight — clean payer, Tier 1 polite reminder fires today.",
+      "has_prior_dispute_note": false,
+      "invoice_number": "INV-3002",
+      "reminders_sent": 0,
+      "status": "chasing",
+      "terms_days": 30
+    },
+    {
+      "amount_paise": 3400000,
+      "current_tier": 0,
+      "customer": "ABC Traders",
+      "customer_email": "rahul@abc-traders.example.com",
+      "customer_history": {
+        "avg_invoice_paise": 1300000,
+        "broken_promises": 1,
+        "invoices_defaulted": 0,
+        "invoices_paid_late": 6,
+        "total_invoices": 22
+      },
+      "customer_phone": "+919823456789",
+      "days_overdue": 10,
+      "demonstrates": "Cash-constrained — Tier 2 firm reminder. Best invoice for the promise demo.",
+      "has_prior_dispute_note": false,
+      "invoice_number": "INV-3003",
+      "reminders_sent": 0,
+      "status": "chasing",
+      "terms_days": 30
+    },
+    {
+      "amount_paise": 2750000,
+      "current_tier": 0,
+      "customer": "Deccan Logistics",
+      "customer_email": "ap@deccan-logistics.example.com",
+      "customer_history": {
+        "avg_invoice_paise": 2400000,
+        "broken_promises": 3,
+        "invoices_defaulted": 2,
+        "invoices_paid_late": 5,
+        "total_invoices": 11
+      },
+      "customer_phone": "+919834567890",
+      "days_overdue": 21,
+      "demonstrates": "Unresponsive — Tier 3 final notice AND automatic human handoff.",
+      "has_prior_dispute_note": false,
+      "invoice_number": "INV-3004",
+      "reminders_sent": 0,
+      "status": "chasing",
+      "terms_days": 30
+    },
+    {
+      "amount_paise": 4100000,
+      "current_tier": 0,
+      "customer": "Kiran & Co",
+      "customer_email": "kiran@kiran-and-co.example.com",
+      "customer_history": {
+        "avg_invoice_paise": 2000000,
+        "broken_promises": 0,
+        "invoices_defaulted": 0,
+        "invoices_paid_late": 1,
+        "total_invoices": 8
+      },
+      "customer_phone": "+919845678901",
+      "days_overdue": 12,
+      "demonstrates": "Dispute-likely — never enters the cadence, goes straight to a human.",
+      "has_prior_dispute_note": true,
+      "invoice_number": "INV-3005",
+      "reminders_sent": 0,
+      "status": "chasing",
+      "terms_days": 30
+    },
+    {
+      "amount_paise": 2200000,
+      "current_tier": 0,
+      "customer": "Meridian Packaging",
+      "customer_email": "billing@meridian-pack.example.com",
+      "customer_history": {
+        "avg_invoice_paise": 1500000,
+        "broken_promises": 0,
+        "invoices_defaulted": 0,
+        "invoices_paid_late": 4,
+        "total_invoices": 17
+      },
+      "customer_phone": "+919856789012",
+      "days_overdue": 15,
+      "demonstrates": "RESERVED for the live payment. Do not touch during setup.",
+      "has_prior_dispute_note": false,
+      "invoice_number": "INV-3006",
+      "reminders_sent": 0,
+      "status": "chasing",
+      "terms_days": 30
+    },
+    {
+      "amount_paise": 1650000,
+      "current_tier": 0,
+      "customer": "Vega Industries",
+      "customer_email": "accounts@vega-industries.example.com",
+      "customer_history": {
+        "avg_invoice_paise": 900000,
+        "broken_promises": 2,
+        "invoices_defaulted": 0,
+        "invoices_paid_late": 7,
+        "total_invoices": 13
+      },
+      "customer_phone": "+919867890123",
+      "days_overdue": 30,
+      "demonstrates": "Repeat promise-breaker — history feeds the diagnosis.",
+      "has_prior_dispute_note": false,
+      "invoice_number": "INV-3007",
+      "reminders_sent": 0,
+      "status": "chasing",
+      "terms_days": 30
+    },
+    {
+      "amount_paise": 950000,
+      "current_tier": 0,
+      "customer": "Lotus Supplies",
+      "customer_email": "ap@lotus-supplies.example.com",
+      "customer_history": {
+        "avg_invoice_paise": 850000,
+        "broken_promises": 0,
+        "invoices_defaulted": 0,
+        "invoices_paid_late": 1,
+        "total_invoices": 6
+      },
+      "customer_phone": "+919878901234",
+      "days_overdue": 8,
+      "demonstrates": "Small invoice — pay this one to move the recovered counter early.",
+      "has_prior_dispute_note": false,
+      "invoice_number": "INV-3008",
+      "reminders_sent": 0,
+      "status": "chasing",
+      "terms_days": 30
+    }
+  ]
+}

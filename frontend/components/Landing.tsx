@@ -1,36 +1,24 @@
 import type { CSSProperties } from "react";
 import Link from "next/link";
 
-const REPO = "https://github.com/aryan-nmaurya/Vasooli";
-
-// Wording here is held to what the code actually does. The temptation on a landing
-// page is to describe the product you intend; the cost is a reviewer opening the
-// repository and finding a CSV importer behind the word "finds".
 const STEPS = [
-  ["01", "Bring the ledger in.", "You import your overdue invoices — a CSV, or the API. Vasooli creates a Razorpay payment link for each one and reads the history that came with it. It does not browse your Razorpay account or discover invoices on its own.", "CSV or API import · one payment link per invoice · history from the import"],
-  ["02", "Choose the next safe move.", "Deterministic policy decides whether to wait, follow up, pause, or escalate. AI understands context and drafts language; it cannot override the rules or move money.", "10 policy checks · 7-day cooldown · 3-contact limit"],
-  ["03", "Listen before chasing again.", "A promise to pay pauses recovery until the promised date. A dispute stops automation and opens a case for a person. A reminder that hard bounces stops the cadence instead of advancing it.", "Promise tracking · dispute handoff · delivery and bounce events"],
-  ["04", "Stop when the money lands — however it lands.", "A signed Razorpay webhook settles an invoice automatically. A bank transfer, UPI, or cheque is recorded by an operator and settles it the same way. Either closes the payment link and ends the chase.", "Signed webhooks · hourly Razorpay sync · hand-recorded bank payments"],
+  ["01", "Connect your financial system.", "Authorize Zoho Books or use a signed custom feed. Vasooli stores normalized, tenant-scoped invoice and customer records and records every synchronization run.", "Zoho Books · signed custom webhook · CSV"],
+  ["02", "Detect what needs attention.", "Overdue dates, payment state, active promises, disputes, suppressions, delivery outcomes, and policy limits are evaluated by deterministic application rules.", "Versioned policy · quiet windows · bounded attempts"],
+  ["03", "Communicate with context.", "AI helps interpret history and draft clear language. Authoritative invoice facts are inserted and validated by the application before a message can enter the delivery queue.", "Trusted amounts and dates · delivery tracking · bounce suppression"],
+  ["04", "Reconcile and stop safely.", "Signed Razorpay events and authenticated provider reads update the payment ledger. External payments can be recorded by an authorized operator with an explicit audit classification.", "Replay-safe events · partial payments · automatic recovery stop"],
 ];
 
-// Bare times with no date read as same-day and in order — which the original data
-// was not: payment landed at 11:18 on the promised Friday, a day after the 14:42
-// entries on the Monday it was reported due. Rendered without a day label, that put
-// the "payment verified" row above two entries that happened later the same
-// afternoon, in a section whose entire point is auditable chronological evidence.
 const TRACE = [
-  ["Mon 09:00", "Invoice detected", "INV-2048 · 8 days overdue"],
-  ["Mon 09:00", "Policy approved", "First reminder · professional tone"],
-  ["Mon 09:01", "Email delivered", "Contact 1 of 3"],
-  ["Mon 14:42", "Reply understood", "Promise to pay · Friday"],
-  ["Mon 14:42", "Recovery paused", "No contact before 28 Aug"],
-  ["Fri 11:18", "Payment verified", "Razorpay webhook · ₹84,000"],
-  ["Fri 11:18", "Payment link closed", "No second payment possible"],
+  ["09:00", "Invoice synchronized", "ERP record normalized and scoped to the workspace"],
+  ["09:01", "Policy evaluated", "Invoice eligible for the first recovery step"],
+  ["09:02", "Reminder accepted", "Provider message ID retained for delivery events"],
+  ["14:42", "Customer reply received", "Sender and inbound webhook verified"],
+  ["14:43", "Dispute opened", "Automation paused for operator review"],
+  ["11:18", "Payment reconciled", "Trusted financial event updates the ledger"],
+  ["11:19", "Recovery stopped", "Pending contact cancelled and action audited"],
 ];
 
-function Arrow() {
-  return <span aria-hidden>↗</span>;
-}
+function Arrow() { return <span aria-hidden>↗</span>; }
 
 export function Landing() {
   return (
@@ -38,251 +26,52 @@ export function Landing() {
       <div className="landing-progress" aria-hidden />
       <section className="landing-hero landing-grid" aria-labelledby="landing-title">
         <div className="landing-glow" aria-hidden />
-        <div className="landing-kicker landing-reveal" data-reveal>
-          <span className="landing-pulse" />
-          AI receivables recovery for Indian businesses
-        </div>
-        <h1 id="landing-title" className="landing-display landing-reveal" data-reveal>
-          Recover revenue.
-          <br />
-          <span>Keep the relationship.</span>
-        </h1>
+        <div className="landing-kicker landing-reveal" data-reveal><span className="landing-pulse" />Automated B2B receivables recovery</div>
+        <h1 id="landing-title" className="landing-display landing-reveal" data-reveal>Stop when they dispute.<br /><span>Close when money lands.</span></h1>
         <div className="landing-hero-copy landing-reveal" data-reveal>
-          <p>
-            Import your overdue ledger. Vasooli follows up, understands the replies,
-            tracks what customers promise, and stops as soon as the payment is
-            confirmed — by Razorpay, or by a bank transfer you record.
-          </p>
-          <div className="landing-actions">
-            <Link href="/login" className="landing-button landing-button-primary">
-              Open the read-only demo <Arrow />
-            </Link>
-            <a href="#how" className="landing-button landing-button-quiet">
-              See how it works ↓
-            </a>
-          </div>
+          <p>Vasooli pauses when a customer promises or disputes, keeps follow-up inside a bounded policy, and closes recovery when trusted financial records confirm the money. Your team sees the reason, owner, and next action throughout.</p>
+          {/* Three audiences reach this page: a merchant who wants an account, a merchant
+          who already has one, with a seeded read-only demo available separately.
+          The third had no route in at all for a while — every link led to register or
+          sign-in — which made a working product look like a locked door. */}
+          <div className="landing-actions"><Link href="/register" className="landing-button landing-button-primary">Start your workspace <Arrow /></Link><Link href="/login" className="landing-button landing-button-quiet">Open the demo — no sign-up</Link><Link href="/live/login" className="landing-button landing-button-quiet">Sign in</Link></div>
         </div>
-        <div className="landing-proof-strip landing-reveal" data-reveal>
-          <span>Razorpay test mode · no real money</span>
-          <span>Single merchant</span>
-          <span>Every action audited</span>
-          <span>Bounded by policy</span>
-        </div>
-        <div className="landing-scroll-cue" aria-hidden>
-          <span>Scroll to follow the recovery loop</span>
-          <i />
-        </div>
+        <div className="landing-proof-strip landing-reveal" data-reveal><span>Tenant-scoped records</span><span>ERP synchronization</span><span>Razorpay reconciliation</span><span>Audited decisions</span></div>
+        <a href="#how" className="landing-scroll-cue"><span>Follow the recovery loop</span><i aria-hidden /></a>
       </section>
 
       <section className="landing-statement landing-grid" aria-labelledby="problem-title">
         <span className="landing-section-number landing-reveal" data-reveal>00</span>
-        <div className="landing-statement-copy">
-          <p className="landing-eyebrow landing-reveal" data-reveal>The real problem</p>
-          <h2 id="problem-title" className="landing-big-copy landing-reveal" data-reveal>
-            Sending a reminder is easy.
-            <br />
-            <em>Knowing when to stop is the product.</em>
-          </h2>
-          <p className="landing-explainer landing-reveal" data-reveal>
-            Good recovery means remembering who promised what, recognising a genuine
-            dispute, giving customers room to respond, and never chasing an invoice
-            that has already settled. A recurring email job cannot do that. Vasooli
-            closes the whole loop.
-          </p>
-        </div>
+        <div className="landing-statement-copy"><p className="landing-eyebrow landing-reveal" data-reveal>The operating problem</p><h2 id="problem-title" className="landing-big-copy landing-reveal" data-reveal>A reminder is easy.<br /><em>A trustworthy recovery loop is not.</em></h2><p className="landing-explainer landing-reveal" data-reveal>Finance teams need current invoice state, consistent follow-up, clear ownership of disputes, and proof of why contact stopped. Vasooli brings those steps into one controlled workflow without making AI the source of financial truth.</p></div>
       </section>
 
       <section id="how" className="landing-story landing-grid" aria-labelledby="how-title">
-        <div className="landing-story-heading">
-          <span className="landing-section-number landing-reveal" data-reveal>01</span>
-          <div>
-            <p className="landing-eyebrow landing-reveal" data-reveal>One closed loop</p>
-            <h2 id="how-title" className="landing-section-title landing-reveal" data-reveal>
-              From overdue
-              <br />
-              to resolved.
-            </h2>
-          </div>
-        </div>
-        <ol className="landing-steps">
-          {STEPS.map(([number, title, body, detail]) => (
-            <li key={number} className="landing-step landing-reveal" data-reveal>
-              <span className="landing-step-number">{number}</span>
-              <div>
-                <h3>{title}</h3>
-                <p>{body}</p>
-                <span className="landing-step-detail">{detail}</span>
-              </div>
-            </li>
-          ))}
-        </ol>
+        <div className="landing-story-heading"><span className="landing-section-number landing-reveal" data-reveal>01</span><div><p className="landing-eyebrow landing-reveal" data-reveal>How Vasooli works</p><h2 id="how-title" className="landing-section-title landing-reveal" data-reveal>From ERP record<br />to resolved balance.</h2></div></div>
+        <ol className="landing-steps">{STEPS.map(([number, title, body, detail]) => <li key={number} className="landing-step landing-reveal" data-reveal><span className="landing-step-number">{number}</span><div><h3>{title}</h3><p>{body}</p><span className="landing-step-detail">{detail}</span></div></li>)}</ol>
+      </section>
+
+      <section id="integrations" className="landing-trace-section landing-grid" aria-labelledby="integration-title">
+        <div className="landing-trace-copy"><span className="landing-section-number landing-reveal" data-reveal>02</span><p className="landing-eyebrow landing-reveal" data-reveal>Continuous financial context</p><h2 id="integration-title" className="landing-section-title landing-reveal" data-reveal>Connect once.<br />Keep the ledger current.</h2><p className="landing-explainer landing-reveal" data-reveal>Provider-neutral adapters normalize source invoices into canonical records. Cursor state, source versions, replay protection, synchronization history, failure details, and freshness deadlines remain visible to operators.</p></div>
+        <div className="landing-boundary landing-reveal" data-reveal><div className="landing-boundary-row"><span>Zoho Books</span><strong>OAuth-based read connection</strong><small>Organization-scoped invoice retrieval</small></div><div className="landing-boundary-row"><span>CSV</span><strong>Previewed ledger import</strong><small>Row-level validation and duplicate reporting</small></div><div className="landing-boundary-row landing-boundary-final"><span>Custom ERP</span><strong>Signed webhook ingestion</strong><small>Event identity and duplicate protection</small></div></div>
       </section>
 
       <section id="safety" className="landing-safety landing-grid" aria-labelledby="safety-title">
-        <div className="landing-story-heading">
-          <span className="landing-section-number landing-reveal" data-reveal>02</span>
-          <div>
-            <p className="landing-eyebrow landing-reveal" data-reveal>Safe by architecture</p>
-            <h2 id="safety-title" className="landing-section-title landing-reveal" data-reveal>
-              AI reads.
-              <br />
-              Policy decides.
-              <br />
-              Razorpay verifies.
-            </h2>
-          </div>
-        </div>
-
-        <div className="landing-boundary landing-reveal" data-reveal>
-          <div className="landing-boundary-row">
-            <span>AI layer</span>
-            <strong>Understands replies and drafts language</strong>
-            <small>Cannot send, settle, or access payment credentials</small>
-          </div>
-          <div className="landing-boundary-row">
-            <span>Policy layer</span>
-            <strong>Authorises every recovery action</strong>
-            <small>Cooldowns, limits, dispute stops, and promise holds</small>
-          </div>
-          <div className="landing-boundary-row landing-boundary-final">
-            <span>Payment layer</span>
-            <strong>Decides what has actually been paid</strong>
-            <small>
-              Signed webhooks and authenticated Razorpay reads. A payment made outside a
-              Vasooli link is recorded by a named operator and marked as their
-              assertion, never as verified provider truth.
-            </small>
-          </div>
-          <p className="landing-boundary-note">
-            The separation is enforced in code and tested against the import graph—not
-            left as a promise inside an AI prompt.
-          </p>
-        </div>
+        <div className="landing-story-heading"><span className="landing-section-number landing-reveal" data-reveal>03</span><div><p className="landing-eyebrow landing-reveal" data-reveal>Safety architecture</p><h2 id="safety-title" className="landing-section-title landing-reveal" data-reveal>AI assists.<br />Policy authorizes.<br />Financial events settle.</h2></div></div>
+        <div className="landing-boundary landing-reveal" data-reveal><div className="landing-boundary-row"><span>Intelligence</span><strong>Classifies replies and drafts language</strong><small>Structured output, timeouts, fallbacks, and audited model metadata</small></div><div className="landing-boundary-row"><span>Control</span><strong>Decides whether communication is allowed</strong><small>Cooldowns, attempt caps, promises, disputes, suppressions, and pauses</small></div><div className="landing-boundary-row landing-boundary-final"><span>Financial truth</span><strong>Changes balances from trusted records</strong><small>Signed webhooks, authenticated reads, and attributed operator entries</small></div><p className="landing-boundary-note">Customer text and model output can never mark an invoice paid.</p></div>
       </section>
 
-      <section className="landing-trace-section landing-grid" aria-labelledby="trace-title">
-        <div className="landing-trace-copy">
-          <span className="landing-section-number landing-reveal" data-reveal>03</span>
-          <p className="landing-eyebrow landing-reveal" data-reveal>Every decision leaves evidence</p>
-          <h2 id="trace-title" className="landing-section-title landing-reveal" data-reveal>
-            See the recovery,
-            <br />
-            not just the result.
-          </h2>
-          <p className="landing-explainer landing-reveal" data-reveal>
-            Operators can see why an invoice was contacted, what the customer said,
-            which rule fired, and exactly what confirmed payment.
-          </p>
-        </div>
-        <div className="landing-trace landing-reveal" data-reveal aria-label="Example recovery trace">
-          <div className="landing-trace-head">
-            <span>EXAMPLE RECOVERY TRACE</span>
-            <span className="landing-status"><i /> BOUNDED</span>
-          </div>
-          <ol>
-            {TRACE.map(([time, event, detail], index) => (
-              <li key={`${time}-${event}`} style={{ "--trace-index": index } as CSSProperties}>
-                <time>{time}</time>
-                <span className="landing-trace-dot" />
-                <div>
-                  <strong>{event}</strong>
-                  <small>{detail}</small>
-                </div>
-              </li>
-            ))}
-          </ol>
-        </div>
+      <section id="operations" className="landing-trace-section landing-grid" aria-labelledby="operations-title">
+        <div className="landing-trace-copy"><span className="landing-section-number landing-reveal" data-reveal>04</span><p className="landing-eyebrow landing-reveal" data-reveal>Conversation and operations</p><h2 id="operations-title" className="landing-section-title landing-reveal" data-reveal>See what happened.<br />Know what happens next.</h2><p className="landing-explainer landing-reveal" data-reveal>A single operational trail connects synchronized invoices, policy decisions, outbound status, verified replies, promises, disputes, operator actions, payment events, and recovery closure.</p></div>
+        <div className="landing-trace landing-reveal" data-reveal aria-label="Illustrative recovery workflow"><div className="landing-trace-head"><span>RECOVERY WORKFLOW</span><span className="landing-status"><i /> AUDITED</span></div><ol>{TRACE.map(([time, event, detail], index) => <li key={`${time}-${event}`} style={{ "--trace-index": index } as CSSProperties}><time>{time}</time><span className="landing-trace-dot" /><div><strong>{event}</strong><small>{detail}</small></div></li>)}</ol></div>
       </section>
 
-      <section id="proof" className="landing-proof landing-grid" aria-labelledby="proof-title">
-        <div className="landing-story-heading">
-          <span className="landing-section-number landing-reveal" data-reveal>04</span>
-          <div>
-            <p className="landing-eyebrow landing-reveal" data-reveal>Measured, not asserted</p>
-            <h2 id="proof-title" className="landing-section-title landing-reveal" data-reveal>
-              Recovery with
-              <br />
-              restraint.
-            </h2>
-          </div>
-        </div>
-        {/* Verified facts first, simulated ones second and labelled as such.
-            The recovery figure comes from a simulator in this repository, not from a
-            merchant — leading with it invites a reviewer to treat every other number
-            as equally soft, which none of them are. */}
-        <div className="landing-metrics">
-          <div className="landing-metric landing-reveal" data-reveal>
-            <strong>943</strong><span>tests passing</span><small>836 backend, 107 frontend. Run them yourself.</small>
-          </div>
-          <div className="landing-metric landing-reveal" data-reveal>
-            <strong>10</strong><span>policy checks before any send</span><small>Pure functions, no model involved</small>
-          </div>
-          <div className="landing-metric landing-reveal" data-reveal>
-            <strong>0</strong><span>ways for AI to settle an invoice</span><small>Enforced in code, tested against the import graph</small>
-          </div>
-        </div>
-
-        <div className="landing-simulated landing-reveal" data-reveal>
-          <p className="landing-eyebrow">Simulated, not observed</p>
-          <p className="landing-explainer">
-            Against a 150-invoice, 45-day scenario generated by the simulator in this
-            repository, Vasooli recovered <strong>65.1%</strong> of invoice value with{" "}
-            <strong>1.10</strong> contacts per invoice and no policy breach, where a
-            naive chaser needed 5.17 contacts and broke policy 92 times. It also handed{" "}
-            <strong>83 of the 150</strong> invoices to a human.
-          </p>
-          <p className="landing-explainer">
-            No merchant has run on this. These are the numbers a deterministic model
-            produced about itself, and they belong in the same sentence as that
-            caveat — not on a slide on their own.
-          </p>
-        </div>
+      <section className="landing-proof landing-grid" aria-labelledby="control-title">
+        <div className="landing-story-heading"><span className="landing-section-number landing-reveal" data-reveal>05</span><div><p className="landing-eyebrow landing-reveal" data-reveal>Operational controls</p><h2 id="control-title" className="landing-section-title landing-reveal" data-reveal>Built for accountable teams.</h2></div></div>
+        <div className="landing-metrics"><div className="landing-metric landing-reveal" data-reveal><strong>Scoped</strong><span>Workspace access</span><small>Role permissions and tenant-bound data access</small></div><div className="landing-metric landing-reveal" data-reveal><strong>Replay-safe</strong><span>Integration events</span><small>Provider event identities and idempotent reconciliation</small></div><div className="landing-metric landing-reveal" data-reveal><strong>Observable</strong><span>Background operations</span><small>Run history, retries, exceptions, and stale-connection signals</small></div></div>
+        <p className="landing-proof-note landing-reveal" data-reveal>Payment state is derived from integer minor-unit records. Sensitive connector secrets are encrypted at rest, and high-impact actions require explicit permission with recent re-authentication where configured.</p>
       </section>
 
-      <section className="landing-scope landing-grid" aria-labelledby="scope-title">
-        <span className="landing-section-number landing-reveal" data-reveal>05</span>
-        <div>
-          <p className="landing-eyebrow landing-reveal" data-reveal>Honest scope</p>
-          <h2 id="scope-title" className="landing-section-title landing-reveal" data-reveal>
-            Real workflows.
-            <br />
-            Test money.
-          </h2>
-          <p className="landing-explainer landing-reveal" data-reveal>
-            Vasooli is a single-merchant system using Razorpay test keys. The payment
-            links, outbound email, delivery and bounce events, inbound replies, AI
-            calls, stopping rules, and audit trail are implemented and tested. No real
-            customer money has moved through it.
-          </p>
-          <p className="landing-explainer landing-reveal" data-reveal>
-            What it is not: it has no connector to your accounting system, so invoices
-            are imported rather than discovered and a change in your books does not
-            reach it. It does not ingest Razorpay refunds or chargebacks. One merchant,
-            one currency. Calling this production-grade would be a stretch; it is a
-            production-shaped prototype with the money paths built properly.
-          </p>
-          <a className="landing-text-link landing-reveal" data-reveal href={REPO} target="_blank" rel="noreferrer">
-            Inspect the source and tests <Arrow />
-          </a>
-        </div>
-      </section>
-
-      <section className="landing-final landing-grid">
-        <p className="landing-eyebrow landing-reveal" data-reveal>Chase less. Recover better.</p>
-        <h2 className="landing-final-title landing-reveal" data-reveal>
-          Put every overdue rupee
-          <br />
-          on a safe path home.
-        </h2>
-        <div className="landing-actions landing-reveal" data-reveal>
-          <Link href="/login" className="landing-button landing-button-primary">
-            Explore the dashboard <Arrow />
-          </Link>
-          <Link href="/guide" className="landing-button landing-button-quiet">
-            Read the reviewer guide
-          </Link>
-        </div>
-      </section>
+      <section className="landing-final landing-grid"><p className="landing-eyebrow landing-reveal" data-reveal>Receivables recovery with financial discipline</p><h2 className="landing-final-title landing-reveal" data-reveal>Stop when they dispute.<br />Pause when they promise.<br />Close when money lands.</h2><div className="landing-actions landing-reveal" data-reveal><Link href="/register" className="landing-button landing-button-primary">Start your workspace <Arrow /></Link><Link href="/login" className="landing-button landing-button-quiet">Open the demo</Link><Link href="/pricing" className="landing-button landing-button-quiet">View plans</Link></div></section>
     </div>
   );
 }

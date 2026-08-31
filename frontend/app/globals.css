@@ -237,10 +237,6 @@ body:has(.landing-shell) .landing-github-cta {
   display: inline-flex;
 }
 
-body:has(.landing-shell) .anonymous-theme-toggle {
-  display: none;
-}
-
 /* The login view has little content. Pinning this compact footer to the bottom
    prevents the empty viewport below it from reading as one enormous footer. */
 body:has(.login-panel) footer > div {
@@ -289,9 +285,9 @@ body:has(.login-panel) footer > div {
 
 .landing-hero {
   position: relative;
-  min-height: calc(100svh - 58px);
+  min-height: auto;
   align-content: center;
-  padding-block: clamp(7rem, 14vh, 12rem) 4rem;
+  padding-block: clamp(3.5rem, 7vh, 5.5rem) clamp(2.5rem, 5vh, 4rem);
   border-bottom: 1px solid var(--landing-line);
   isolation: isolate;
 }
@@ -379,7 +375,7 @@ body:has(.login-panel) footer > div {
 .landing-display {
   max-width: 12ch;
   margin: clamp(1.5rem, 3vw, 2.5rem) 0 0;
-  font-size: clamp(3.4rem, 8.4vw, 8.4rem);
+  font-size: clamp(3.2rem, 7.3vw, 7.2rem);
   font-weight: 600;
   letter-spacing: -0.068em;
   line-height: 0.88;
@@ -394,7 +390,7 @@ body:has(.login-panel) footer > div {
   display: grid;
   grid-template-columns: repeat(12, minmax(0, 1fr));
   gap: 1rem;
-  margin-top: clamp(2.5rem, 6vw, 5rem);
+  margin-top: clamp(1.75rem, 3.5vw, 3rem);
 }
 
 .landing-hero-copy > p {
@@ -457,7 +453,7 @@ body:has(.login-panel) footer > div {
 .landing-proof-strip {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  margin-top: clamp(4rem, 10vh, 8rem);
+  margin-top: clamp(2.5rem, 5vh, 4rem);
   border-top: 1px solid var(--landing-line);
   border-bottom: 1px solid var(--landing-line);
 }
@@ -644,6 +640,7 @@ body:has(.login-panel) footer > div {
   align-self: center;
   border: 1px solid rgba(17, 18, 14, 0.18);
   background: #e9e7dd;
+  color: #11120e;
   box-shadow: 1rem 1rem 0 #55c7d6;
 }
 
@@ -810,9 +807,10 @@ body:has(.login-panel) footer > div {
 
 .landing-metric {
   display: grid;
-  grid-template-columns: minmax(8rem, 0.75fr) 1fr;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
   align-items: end;
   gap: 0.25rem 1rem;
+  min-width: 0;
   padding: 2rem 0;
   border-top: 1px solid var(--landing-line);
 }
@@ -823,20 +821,25 @@ body:has(.login-panel) footer > div {
 
 .landing-metric strong {
   grid-row: span 2;
+  min-width: 0;
   color: var(--landing-signal);
-  font-size: clamp(3rem, 5vw, 5.5rem);
+  font-size: clamp(2.75rem, 3.6vw, 4.5rem);
   font-weight: 500;
   letter-spacing: -0.07em;
   line-height: 0.8;
+  overflow-wrap: anywhere;
 }
 
 .landing-metric span {
+  min-width: 0;
   font-size: 1rem;
   font-weight: 550;
 }
 
 .landing-metric small {
+  min-width: 0;
   color: var(--landing-muted);
+  line-height: 1.45;
 }
 
 .landing-proof-note {

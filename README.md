@@ -51,7 +51,7 @@ Stated up front, because a judge should not have to work it out.
 | Policy engine | Pure functions, 89 tests |
 | AI cannot invent a figure | Required figures must be present *and* nothing else money-shaped may be — every amount, link, and reference in a draft is matched against an allowlist, and a draft with an extra one is discarded for the template |
 | Authentication | Named DB accounts, roles, lockout/revocation, every endpoint verified unauthenticated |
-| Outbound email | Durable leased outbox; the Resend key authenticates and `vasooli.space` is verified for sending. Mail is redirected to an operator inbox and cannot be pointed at a customer |
+| Outbound email | Durable leased outbox; the Resend key authenticates and `vasooli.space` is verified for sending. **Demo** mail is always redirected. **Live** mail is direct only once `ALLOW_DIRECT_CUSTOMER_EMAIL=true`; until then its actual destination is recorded. Each live merchant registers a domain with Resend, publishes the returned DNS records, chooses a local part, and sends from that verified identity rather than the platform `EMAIL_FROM` |
 | Delivery and bounce outcomes | `sent` means the provider accepted the message and is named that way throughout. Delivery, bounce, deferral, and spam complaints arrive on a signed webhook and are applied separately; a hard bounce ends the cadence for that invoice rather than advancing it |
 | Payments outside a Vasooli link | Bank transfer, UPI, cheque, and agreed adjustments are recorded against their own invoice column, never mixed with the running total Razorpay reports. Recorded under a named operator, reversible, and marked `operator_asserted` in the trail |
 | Manual matching of an unmatched payment | An operator picks the invoice; the amount is read from the stored webhook payload, not from the request |
@@ -122,7 +122,7 @@ If you have ten minutes and want to check the central claim rather than the inte
 | `backend/eval/` + `backend/eval/out/results.csv` | The three-arm evaluation, including the arm where a naive chaser beats us |
 
 ```bash
-cd backend && uv run pytest -q          # 836 tests
+cd backend && uv run pytest -q          # 894 tests
 uv run python -m scripts.preflight      # every integration, live
 ```
 
@@ -454,71 +454,64 @@ failure domain. The frontend is deployed on Vercel. See `deploy/README.md` for t
 exact migration order, health checks, mandatory off-host backups, restore drills, and
 external dead-man alerts.
 
-## 14. Known limitations
+## 14. Current production status and known limitations
 
-Stated plainly, because a smaller honest demo beats a fake impressive one.
+The repository now contains two deliberately separate surfaces. The legacy guided
+experience remains isolated behind its own account, cookie, tenant, controls, and
+feature flags. The live surface has merchant-scoped identity, membership and RBAC,
+forced PostgreSQL row-level security, billing entitlements, encrypted connector
+credentials, ERP connection records, versioned policy, sending controls, per-merchant
+Razorpay connections, append-only audit events, and operational run history.
 
-- **Smart Collect is not used.** Razorpay does not offer it for this business type.
-  Collection is via Payment Links
-- **Payment Links are capped at ₹50,000** on this account, so the synthetic ledger uses
-  smaller invoices than a real B2B book would
-- **Inbound email is live.** `vasooli.space` is verified in Resend for both sending
-  and receiving, and the Svix-signed webhook stores the full message, deduplicates it,
-  correlates the sender to the invoice customer, and runs the same reply logic. The
-  simulated-reply endpoint is disabled in production and returns 403
-- **All outbound email is redirected** to a single inbox. The 60 synthetic customers
-  have invented domains
-- **Gemini free tier is 20 requests/day per model.** A full cycle over 8 invoices uses
-  roughly 14 — and Dry run costs the same, since it diagnoses and drafts through the
-  same AI path and only skips the send. When exhausted, Vasooli falls back to
-  deterministic templates — visibly labelled in the UI, never a silent failure
-- **Single merchant, named operators.** Humans now have independent DB credentials,
-  admin/operator/auditor roles, account lockout, and revocable sessions. This is real
-  per-user IAM for one merchant, not multi-tenant resource isolation or SSO/MFA
-- **Email transport is at-least-once without provider cooperation.** The database
-  outbox prevents lost intent and recovers expired worker leases. Exactly-once
-  delivery still requires the provider to honor the stable idempotency key
-- **The evaluation's customers are simulated**, driven by a stated behaviour model. It
-  measures the policy, not real human behaviour
-- **Invoices are imported, not discovered.** There is no connector to an accounting
-  system, ERP, or Razorpay's own invoice objects. A CSV or an API call is how the
-  ledger gets in, and re-importing an existing invoice number is skipped rather than
-  synchronised — so a change in the merchant's books does not reach Vasooli
-- **Payments made outside a Vasooli payment link are recorded by a person, not
-  detected.** There is no bank feed. The record-a-payment flow is what stops a customer
-  who paid by NEFT from being chased, and it depends on somebody entering it
-- **Refunds, chargebacks, and credit notes are not ingested.** A recorded payment can be
-  reversed by hand, which is enough to put an invoice back into the queue, but Razorpay
-  refund and dispute events are not consumed and there is no chargeback lifecycle
-- **A reversed payment does not reprovision a payment link.** Razorpay links cannot be
-  un-cancelled, so an invoice that becomes owed again needs a new link created by hand.
-  The reversal says so rather than leaving the customer with no way to pay
+Row-level security is only in force when the application connects as a role that does
+not bypass it. Postgres superusers and table owners bypass RLS unconditionally, so the
+deployment must connect as `vasooli_app` (`backend/scripts/create_app_role.sql`) — the
+compose files and `deploy/README.md` now do this, and run migrations separately as the
+owner. Connected as the owner, every policy in this repository is inert.
 
-## 15. What production would require
+The live system is code-complete for a private pilot, but is still **not approved for
+an unrestricted production launch** until the external provider and operational work
+below is completed:
 
-Vasooli today is a **single-merchant system on test-mode payment keys**. Everything in
-it is real — real Razorpay, real email in and out, real model calls, real reconciliation
-— but it serves one merchant, and it has never moved a real customer's money.
+- The live workspace now includes recovery metrics and queue, invoice conversations,
+  payments and provider-net reconciliation, promises, dispute review, operational
+  exceptions, and the append-only audit trail. All reads and actions are permissioned
+  and constrained to the authenticated merchant.
+- New workspaces receive a bounded `LIVE_TRIAL_DAYS` trial. When it expires, billable
+  import and recovery operations fail closed until a subscription is active.
 
-This section exists so that gap is stated rather than left for a reader to discover.
-The work below is deliberately *not* built: each item is a real engineering commitment,
-and shipping a half-version of any of them would be worse than the honest absence.
+- Zoho Books OAuth and invoice reads exist, and a locked scheduler polls connected
+  Zoho/Tally sources. Zoho accounts with multiple Books organizations are rejected
+  until the product provides an explicit organization picker.
+- ERP replays remain idempotent, while source version updates now change the canonical
+  amount, dates, and customer fields. Cancellations stop recovery, and provider-reported
+  payments and credit notes are appended as `erp_asserted` entries with superseded
+  versions reversed rather than deleted.
+- The Tally server-side adapter contract remains internal, but Tally is not advertised
+  or offered in the live UI until a distributable signed edge agent exists.
+- Razorpay payment links, signed payment webhooks, authenticated reconciliation reads,
+  partial payments, external operator-recorded payments, and manual reversals are
+  implemented. Signed refund and chargeback/dispute events now adjust provider-net
+  collections, reopen balances after refunds, and pause chargebacks for human review.
+- Live email verification and password-reset messages are provider-backed, but identity
+  mail is synchronous rather than a durable transactional outbox. Provider acceptance
+  followed by a database commit failure can still produce a dead link.
+- Merchant sender domains are registered with Resend and the returned DNS records are
+  shown in settings. Live reminders use the verified per-merchant From identity.
+- Registration is intentionally controlled by `LIVE_REGISTRATION_ENABLED`. Production
+  startup refuses to enable it with dry-run identity email or a non-HTTPS public URL.
+- No production provider account, DNS zone, TLS endpoint, backup restore, failover, or
+  real-money settlement was independently exercised in the 2026-08-31 local audit.
 
-| | What it means | Why it is not here |
-|---|---|---|
-| **Multi-tenancy** | Every query scoped to a merchant, enforced at the database, not in application code | Row-level isolation has to be right on day one. Retrofitting tenant scoping onto a single-tenant schema is how cross-tenant data leaks happen |
-| **Live payment keys** | Real money, real settlement, real refunds | Requires completed KYC, a settlement account, and a reconciliation process that survives a disputed chargeback — none of which is demonstrable in a hackathon |
-| **Merchant onboarding** | Sign-up, ledger import, domain verification for sending | Each merchant needs their own verified sending domain, or their reminders land in spam under someone else's reputation |
-| **SSO / MFA** | Real identity, not a shared operator account | Per-user IAM with roles, lockout and revocable sessions already exists; federated identity does not |
-| **Data retention and erasure** | A defined lifetime for customer messages, and a way to delete them on request | The audit log is append-only by database trigger — deliberately. Erasure and immutability have to be reconciled explicitly, not bolted on |
-| **Horizontal scale** | More than one worker running cycles | The advisory lock already makes a second worker safe rather than harmful, so this is a capacity question, not a correctness one |
+## 15. What is safe to claim now
 
-**What is production-shaped already**, and would carry over unchanged: the policy
-engine, the AI/deterministic boundary and its architecture tests, idempotent webhook
-handling with running-total semantics, the append-only audit trail, bounded retries
-with backoff, the durable email outbox, and the deployment's migration-on-boot,
-health-checked container setup.
+Safe claims are limited to behaviour proven by code and the local PostgreSQL-backed
+suite: tenant-scoped live records and permissions; deterministic contact policy; AI as
+an assistive drafting/classification layer; signed and replay-safe webhook handling;
+integer-minor-unit payment, refund and chargeback reconciliation; provider
+delivery/bounce state; dispute and promise pauses; bounded retries; append-only audit
+history; migration upgrade and downgrade; and automatic Zoho invoice polling.
 
-The honest summary: the *recovery engine* is production-grade; the *product around it*
-is not, and the list above is what standing that up actually costs.
-
+Do not claim universal ERP support, production provider certification, real-money
+proof, exactly-once email delivery, or production readiness until the external work
+above is closed and independently exercised.

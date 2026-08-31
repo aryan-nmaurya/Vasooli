@@ -44,7 +44,7 @@ UPLOAD_BODY_BYTES = 6 * 1024 * 1024
 
 #: Paths allowed the larger body. Prefix match, so the versioned/trailing-slash
 #: variants of the same route are covered.
-UPLOAD_PATHS = ("/api/invoices/import",)
+UPLOAD_PATHS = ("/api/invoices/import", "/api/live/invoices/csv/import")
 
 
 def body_limit_for(path: str) -> int:
@@ -56,11 +56,53 @@ def body_limit_for(path: str) -> int:
 #:
 #: Login is far tighter than everything else: it is the one endpoint where guessing is
 #: the attack, and a human typing a password needs a handful of attempts, not hundreds.
+#: Longest prefix wins, so the specific live-auth routes below are not swallowed by
+#: the `/api/live/auth/` group they sit inside.
 RATE_LIMITS: dict[str, tuple[int, int]] = {
     "/api/auth/login": (10, 60),
+    # The live merchant's own sign-in. It was covered only by `default` — 240 requests
+    # a minute — while the operator login next to it was capped at 10. Account lockout
+    # limits guessing at one account; it does nothing against credential stuffing
+    # spread across many, which is what 240/minute buys.
+    "/api/live/auth/login": (10, 60),
+    # Registration creates a workspace and sends mail to whatever address it is given,
+    # so an open one is both a spam relay and a way to fill the tenant table.
+    "/api/live/auth/register": (5, 300),
+    # Password reset issues a token by email. Loose limits here are how an attacker
+    # both floods a mailbox and gets enough attempts to be worth guessing.
+    "/api/live/auth/forgot-password": (5, 300),
+    "/api/live/auth/reset-password": (10, 300),
+    "/api/live/auth/verify-email": (10, 300),
+    # A second factor is only a second factor if it cannot be brute-forced. Six digits
+    # is a million combinations, which 240/minute walks through in under three days.
+    "/api/live/auth/mfa/": (10, 300),
+    "/api/live/auth/reauth/": (10, 300),
     "/api/webhooks/": (300, 60),  # Razorpay can burst; do not throttle real payments
     "default": (240, 60),
 }
+
+
+def client_ip(request: Request) -> str | None:
+    """The address the request actually came from, as far as it can be known.
+
+    Behind Caddy, `request.client.host` is Caddy — the same value for every request in
+    the deployment. Recorded on an `AuthEvent`, that makes the login trail useless
+    exactly when it matters: every failed attempt, from anywhere in the world, is
+    attributed to the reverse proxy.
+
+    `X-Forwarded-For` is client-controlled in general, but not here: the Caddyfile sets
+    `header_up X-Forwarded-For {remote_host}`, which *replaces* the header rather than
+    appending to it, so whatever a client sent is discarded before the app sees it. The
+    first entry is therefore the connecting peer. Anywhere the app is exposed without
+    that proxy in front, this degrades to a value the client can choose — which is why
+    it is used for attribution and rate limiting, and never for authorization.
+    """
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        first = forwarded.split(",")[0].strip()
+        if first:
+            return first
+    return request.client.host if request.client else None
 
 
 class BodySizeLimitMiddleware:
@@ -156,23 +198,22 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
     @staticmethod
     def _group(path: str) -> str:
-        for prefix in RATE_LIMITS:
-            if prefix != "default" and path.startswith(prefix):
-                return prefix
-        return "default"
+        """The most specific configured prefix this path falls under.
+
+        Longest match, not first match: `/api/live/auth/login` sits inside no other
+        prefix today, but dict order deciding which limit applies is the kind of thing
+        that silently loosens a limit the next time a prefix is added.
+        """
+        matches = [p for p in RATE_LIMITS if p != "default" and path.startswith(p)]
+        return max(matches, key=len) if matches else "default"
 
     @staticmethod
     def _client(request: Request) -> str:
-        """Best-effort client identity.
+        """Best-effort client identity — a speed bump, not a security boundary.
 
-        Railway and Vercel both put the real address in X-Forwarded-For. It is
-        spoofable, so this is a speed bump against casual abuse rather than a security
-        boundary — the boundary is the signed session and the admin key.
+        The boundary is the signed session and the admin key. See `client_ip`.
         """
-        forwarded = request.headers.get("x-forwarded-for")
-        if forwarded:
-            return forwarded.split(",")[0].strip()
-        return request.client.host if request.client else "unknown"
+        return client_ip(request) or "unknown"
 
     async def dispatch(self, request: Request, call_next):
         group = self._group(request.url.path)

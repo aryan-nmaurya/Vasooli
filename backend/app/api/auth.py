@@ -86,14 +86,34 @@ def login(payload: LoginRequest, response: Response, session: SessionDep) -> dic
 
 
 @router.get("/modes")
-def auth_modes() -> dict[str, bool]:
+def auth_modes(session: SessionDep) -> dict[str, bool]:
     """What sign-in routes exist. Public, and deliberately carries no secret.
 
     The login page is unauthenticated by definition, so it cannot ask a gated endpoint
     whether the reviewer button should be rendered. Showing a button that can only
-    return 404 is worse than showing none.
+    fail is worse than showing none.
+
+    `reviewer_access` therefore answers "will this actually work?", not "is the flag
+    on?". The flag alone was not enough: `reviewer_login` also requires the configured
+    account to exist, be active, and hold the `auditor` role — so a deployment that
+    enabled the flag and forgot the account advertised a button that returned 403 to
+    every reviewer who pressed it. That is exactly the dead end the reviewer path was
+    built to remove, and the check is cheap.
+
+    `live_registration` answers the same question for the live door. The sign-in page
+    offers both a live workspace and the demo, and self-serve registration ships dark —
+    so without this the page would advertise a "Create workspace" link that 403s.
     """
-    return {"reviewer_access": settings.reviewer_access_enabled}
+    reviewer_ready = False
+    if settings.reviewer_access_enabled:
+        account = session.exec(
+            select(OperatorAccount).where(OperatorAccount.username == settings.reviewer_username)
+        ).first()
+        reviewer_ready = account is not None and account.is_active and account.role == "auditor"
+    return {
+        "reviewer_access": reviewer_ready,
+        "live_registration": settings.live_registration_enabled,
+    }
 
 
 @router.post("/reviewer")

@@ -12,6 +12,7 @@ that shows nothing, so the amount columns are written as real numbers Excel can 
 
 import csv
 import io
+import uuid
 from dataclasses import dataclass
 
 from sqlmodel import Session, select
@@ -19,6 +20,7 @@ from sqlmodel import Session, select
 from app.core.clock import now_ist
 from app.core.money import format_inr
 from app.models import Customer, Invoice, PaymentLink
+from app.services.demo_scope import demo_invoices
 
 #: One row of an export, plus the metadata a renderer needs to lay it out.
 Row = list[object]
@@ -55,19 +57,64 @@ def _paise_to_rupees(paise: int) -> float:
     return round(paise / 100, 2)
 
 
+def _lookups(
+    session: Session, invoices: list[Invoice]
+) -> tuple[dict[uuid.UUID, Customer], dict[uuid.UUID, PaymentLink]]:
+    """Fetch only the customers and payment links the exported rows actually reference.
+
+    Both builders used to run a bare `select(Customer)` and `select(PaymentLink)` and
+    hold every row in a dict, to resolve a name and a URL per invoice. Nothing leaked —
+    the dicts are only ever read by id, and row-level security scopes them to the
+    tenant — but the cost is the whole table in memory on every export, for a filtered
+    view that may be twenty rows. It grows with the merchant's history rather than with
+    the size of the download, which is the wrong axis.
+
+    Chunked because a query is not allowed to grow without bound either: Postgres has a
+    parameter ceiling, and one enormous IN list is its own failure.
+    """
+    if not invoices:
+        return {}, {}
+
+    customer_ids = {inv.customer_id for inv in invoices}
+    invoice_ids = [inv.id for inv in invoices]
+
+    names: dict[uuid.UUID, Customer] = {}
+    for chunk in _chunked(sorted(customer_ids, key=str), _ID_CHUNK):
+        for row in session.exec(select(Customer).where(Customer.id.in_(chunk))).all():  # type: ignore[attr-defined]
+            names[row.id] = row
+
+    links: dict[uuid.UUID, PaymentLink] = {}
+    for chunk in _chunked(invoice_ids, _ID_CHUNK):
+        for row in session.exec(
+            select(PaymentLink).where(PaymentLink.invoice_id.in_(chunk))  # type: ignore[attr-defined]
+        ).all():
+            links[row.invoice_id] = row
+
+    return names, links
+
+
+#: Comfortably under Postgres' bind-parameter ceiling, with room for the rest of the
+#: statement.
+_ID_CHUNK = 1000
+
+
+def _chunked(items: list, size: int):
+    for start in range(0, len(items), size):
+        yield items[start : start + size]
+
+
 def recovered_invoices(session: Session, **_: object) -> Sheet:
     """Every invoice whose money actually arrived."""
     from app.core.constants import InvoiceStatus
 
     invoices = list(
         session.exec(
-            select(Invoice)
+            demo_invoices()
             .where(Invoice.status == InvoiceStatus.RECOVERED)
             .order_by(Invoice.recovered_at.desc())  # type: ignore[attr-defined]
         ).all()
     )
-    names = {c.id: c for c in session.exec(select(Customer)).all()}
-    links = {p.invoice_id: p for p in session.exec(select(PaymentLink)).all()}
+    names, links = _lookups(session, invoices)
 
     rows: list[Row] = []
     for inv in invoices:
@@ -303,7 +350,7 @@ def queue_invoices(
     """
     from app.core.constants import InvoiceStatus  # noqa: F401  (documents the vocabulary)
 
-    query = select(Invoice)
+    query = demo_invoices()
     if status:
         query = query.where(Invoice.status == status)
     if reason:
@@ -314,8 +361,7 @@ def queue_invoices(
     # a merchant's attention is worth the most.
     invoices.sort(key=lambda i: i.outstanding_paise, reverse=True)
 
-    names = {c.id: c for c in session.exec(select(Customer)).all()}
-    links = {p.invoice_id: p for p in session.exec(select(PaymentLink)).all()}
+    names, links = _lookups(session, invoices)
 
     rows: list[Row] = []
     for inv in invoices:

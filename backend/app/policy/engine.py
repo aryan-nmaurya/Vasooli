@@ -16,6 +16,7 @@ wins. An invoice that is both past its reminder cap and inside a cooldown belong
 with a human, not back in the queue.
 """
 
+from collections.abc import Sequence
 from datetime import date, datetime
 
 from app.core.constants import TONE_FOR_TIER, InvoiceStatus, ReasonCategory
@@ -40,6 +41,9 @@ def evaluate_reminder(
     drafted_subject: str,
     drafted_body: str,
     now: datetime,
+    tier_offsets: Sequence[int] | None = None,
+    cooldown_days: int | None = None,
+    max_attempts: int | None = None,
 ) -> PolicyDecision:
     """Decide whether a drafted reminder may be sent.
 
@@ -53,9 +57,17 @@ def evaluate_reminder(
         rules.amount_still_outstanding(outstanding_paise),
         rules.not_dispute_likely(reason_category, has_prior_dispute_note),
         rules.no_open_dispute(has_open_dispute),
-        rules.reminder_cap(reminders_sent),
-        rules.cadence_due(days_overdue, proposed_tier),
-        rules.cooldown_respected(last_reminder_at, now),
+        rules.reminder_cap(reminders_sent, max_attempts=max_attempts or 3),
+        rules.cadence_due(
+            days_overdue,
+            proposed_tier,
+            tier_schedule={i + 1: day for i, day in enumerate(tier_offsets)}
+            if tier_offsets
+            else None,
+        ),
+        rules.cooldown_respected(
+            last_reminder_at, now, cooldown_days=cooldown_days or rules.MIN_COOLDOWN_DAYS
+        ),
         rules.tier_not_repeated(sent_tiers, proposed_tier),
         rules.no_active_promise(active_promise_date, now.date()),
         rules.no_banned_language(drafted_subject, drafted_body),
@@ -97,7 +109,9 @@ def tone_for_tier(tier: int) -> str:
     return TONE_FOR_TIER[tier].value
 
 
-def next_tier_for(*, days_overdue: int, sent_tiers: frozenset[int]) -> int | None:
+def next_tier_for(
+    *, days_overdue: int, sent_tiers: frozenset[int], tier_offsets: Sequence[int] | None = None
+) -> int | None:
     """The highest tier now due that has not been sent yet.
 
     Returns the highest rather than the lowest so an invoice ingested at day 25 goes
@@ -106,6 +120,7 @@ def next_tier_for(*, days_overdue: int, sent_tiers: frozenset[int]) -> int | Non
     """
     from app.core.constants import TIER_SCHEDULE
 
-    due = [t for t, required in TIER_SCHEDULE.items() if days_overdue >= required]
+    schedule = {i + 1: day for i, day in enumerate(tier_offsets)} if tier_offsets else TIER_SCHEDULE
+    due = [t for t, required in schedule.items() if days_overdue >= required]
     unsent = [t for t in due if t not in sent_tiers]
     return max(unsent) if unsent else None

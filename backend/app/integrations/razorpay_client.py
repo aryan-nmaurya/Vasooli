@@ -260,6 +260,98 @@ class RazorpayClient:
         log.info("razorpay.payment_link_cancelled", link_id=link_id)
         return result
 
+    @retry(**_RETRY)
+    def create_subscription(
+        self, *, plan_id: str, total_count: int = 12, customer_notify: bool = True
+    ) -> dict[str, Any]:
+        """Create a Vasooli subscription against the platform Razorpay account."""
+        return self._call(
+            self._client.subscription.create,
+            {
+                "plan_id": plan_id,
+                "total_count": total_count,
+                "customer_notify": 1 if customer_notify else 0,
+            },
+        )
 
-def get_razorpay_client() -> RazorpayClient:
-    return RazorpayClient()
+    @retry(**_RETRY)
+    def fetch_subscription(self, subscription_id: str) -> dict[str, Any]:
+        """Read provider state for the daily billing reconciliation job."""
+        return self._call(self._client.subscription.fetch, subscription_id)
+
+
+class RazorpayOAuthClient:
+    """Payment-links client for a Technology Partner OAuth access token.
+
+    Razorpay's SDK authenticates with key/secret basic auth and cannot represent a
+    partner bearer token. This small client intentionally exposes the same methods
+    provisioning needs while keeping OAuth credentials out of logs and responses.
+    """
+
+    base_url = "https://api.razorpay.com/v1"
+
+    def __init__(self, access_token: str) -> None:
+        if not access_token:
+            raise RazorpayPermanentError("Razorpay OAuth access token is missing")
+        self._session = requests.Session()
+        self._session.headers.update(
+            {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
+        )
+        self._timeout = settings.razorpay_timeout_seconds
+
+    def _request(self, method: str, path: str, **kwargs) -> dict[str, Any]:
+        try:
+            response = self._session.request(
+                method, f"{self.base_url}{path}", timeout=self._timeout, **kwargs
+            )
+        except requests.RequestException as exc:
+            raise RazorpayTransientError(str(exc)) from exc
+        if response.status_code == 429 or response.status_code >= 500:
+            raise RazorpayTransientError(response.text[:500])
+        if response.status_code >= 400:
+            raise RazorpayPermanentError(response.text[:500])
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise RazorpayPermanentError("Razorpay returned an invalid JSON response") from exc
+
+    def create_payment_link(self, **kwargs) -> PaymentLinkResult:
+        payload = {
+            "amount": kwargs["amount_paise"],
+            "currency": "INR",
+            "accept_partial": kwargs.get("accept_partial", True),
+            "reference_id": kwargs["reference_id"],
+            "description": kwargs["description"][:255],
+            "customer": {
+                "name": kwargs["customer_name"],
+                "email": kwargs["customer_email"],
+            },
+            "notify": {"sms": False, "email": False},
+            "reminder_enable": False,
+            "notes": kwargs.get("notes") or {},
+        }
+        if kwargs.get("customer_phone"):
+            payload["customer"]["contact"] = kwargs["customer_phone"]
+        if kwargs.get("expire_by") is not None:
+            payload["expire_by"] = int(kwargs["expire_by"].timestamp())
+        return PaymentLinkResult.from_payload(self._request("POST", "/payment_links", json=payload))
+
+    def fetch_payment_link(self, link_id: str) -> PaymentLinkResult:
+        return PaymentLinkResult.from_payload(self._request("GET", f"/payment_links/{link_id}"))
+
+    def find_by_reference_id(self, reference_id: str) -> PaymentLinkResult | None:
+        payload = self._request("GET", "/payment_links", params={"reference_id": reference_id})
+        items = payload.get("payment_links") or []
+        return PaymentLinkResult.from_payload(items[0]) if items else None
+
+    def cancel_payment_link(self, link_id: str) -> PaymentLinkResult:
+        return PaymentLinkResult.from_payload(
+            self._request("POST", f"/payment_links/{link_id}/cancel")
+        )
+
+
+def get_razorpay_client(
+    *, key_id: str | None = None, key_secret: str | None = None
+) -> RazorpayClient:
+    """Build a client for the platform account or a merchant's BYO credentials."""
+    return RazorpayClient(key_id=key_id, key_secret=key_secret)

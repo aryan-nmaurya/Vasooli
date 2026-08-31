@@ -37,7 +37,13 @@ def get_or_create_merchant(
             raise ValueError(f"merchant {merchant_id} does not exist")
         return merchant
 
-    existing = session.exec(select(Merchant).order_by(Merchant.created_at)).first()
+    # The legacy operator/import path is demo-only. Never let it silently select a
+    # live tenant merely because that row was created first.
+    existing = session.exec(
+        select(Merchant)
+        .where(Merchant.is_demo.is_(True))  # type: ignore[union-attr]
+        .order_by(Merchant.created_at)
+    ).first()
     if existing is not None:
         return existing
 
@@ -87,7 +93,7 @@ def _upsert_customer(
 def _initial_status(invoice: Invoice) -> InvoiceStatus:
     """An invoice enters the queue already overdue, or waits until it is.
 
-    Diagnosis and tier selection are the scheduler's job (Phase 8); ingestion only
+    Diagnosis and tier selection are the scheduler's job; ingestion only
     decides whether the invoice is in scope at all.
     """
     return InvoiceStatus.CHASING if invoice.days_overdue > 0 else InvoiceStatus.PENDING

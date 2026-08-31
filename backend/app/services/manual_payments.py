@@ -105,7 +105,7 @@ def _apply_balance(session: Session, invoice: Invoice) -> tuple[str, str]:
     """
     previous_status = str(invoice.status)
     invoice.external_paid_paise = _active_external_total(session, invoice.id)
-    invoice.amount_paid_paise = invoice.link_paid_paise + invoice.external_paid_paise
+    invoice.amount_paid_paise = invoice.provider_net_paid_paise + invoice.external_paid_paise
 
     if invoice.is_fully_paid:
         invoice.status = InvoiceStatus.RECOVERED
@@ -128,6 +128,79 @@ def _apply_balance(session: Session, invoice: Invoice) -> tuple[str, str]:
 
     session.add(invoice)
     return previous_status, str(invoice.status)
+
+
+def sync_erp_adjustment(
+    session: Session,
+    *,
+    invoice: Invoice,
+    provider: str,
+    source_id: str,
+    amount_paise: int,
+    received_on: date,
+    is_credit: bool = False,
+) -> bool:
+    """Synchronize one provider-owned payment or credit without losing its history.
+
+    ERP entries are provider assertions, not human assertions and not Razorpay-signed
+    collection events. They therefore use the external-payment column but carry a
+    stable ``erp:`` reference and a system actor. When a source record changes, the
+    previous row is reversed and a versioned replacement is appended; nothing is
+    edited away and the balance is recomputed from standing rows.
+    """
+    amount_paise = max(0, amount_paise)
+    kind = "credit" if is_credit else "payment"
+    reference_prefix = f"erp:{provider}:{kind}:{source_id}:"
+    active = [
+        row
+        for row in session.exec(
+            select(ExternalPayment).where(ExternalPayment.invoice_id == invoice.id)
+        ).all()
+        if row.reference.startswith(reference_prefix) and row.is_active
+    ]
+    if len(active) == 1 and active[0].amount_paise == amount_paise:
+        return False
+
+    now = utcnow()
+    for row in active:
+        row.reversed_at = now
+        row.reversed_by = f"system:erp:{provider}"
+        row.reversal_reason = "Superseded by a newer ERP source version"
+        session.add(row)
+
+    if amount_paise:
+        reference = f"{reference_prefix}{amount_paise}:{uuid.uuid4().hex[:8]}"
+        session.add(
+            ExternalPayment(
+                invoice_id=invoice.id,
+                amount_paise=amount_paise,
+                method=(PaymentMethod.ADJUSTMENT if is_credit else PaymentMethod.BANK_TRANSFER),
+                reference=reference,
+                received_on=received_on,
+                note=f"Synchronized from {provider} {kind} {source_id}",
+                recorded_by=f"system:erp:{provider}",
+            )
+        )
+    session.flush()
+    previous_status, new_status = _apply_balance(session, invoice)
+    session.add(
+        AuditLog(
+            invoice_id=invoice.id,
+            actor=AuditActor.SYSTEM,
+            action=(
+                AuditAction.ERP_CREDIT_APPLIED if is_credit else AuditAction.ERP_PAYMENT_APPLIED
+            ),
+            detail={
+                "provider": provider,
+                "source_id": source_id,
+                "amount_paise": amount_paise,
+                "previous_status": previous_status,
+                "new_status": new_status,
+                "verification": "erp_asserted",
+            },
+        )
+    )
+    return True
 
 
 def _resolve_active_promise(session: Session, invoice: Invoice, status: str) -> None:

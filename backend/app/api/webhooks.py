@@ -15,6 +15,7 @@ rather than losing a payment.
 
 import json
 import secrets
+import uuid
 from datetime import datetime
 from email.utils import parseaddr
 from html.parser import HTMLParser
@@ -38,13 +39,22 @@ from app.models import (
     AuditActor,
     AuditLog,
     Customer,
+    DemoSettings,
     InboundMessage,
     Invoice,
+    Merchant,
+    PaymentConnection,
     ReconciliationEvent,
 )
+from app.services.authorization import service_scope, set_merchant_context
 from app.services.delivery_events import record_delivery_event
 from app.services.messaging import reply_address_for
-from app.services.reconciliation import begin_attempt, mark_event_failed, process_event
+from app.services.reconciliation import (
+    begin_attempt,
+    mark_event_failed,
+    match_invoice,
+    process_event,
+)
 from app.services.replies import handle_reply, mark_inbound_failed
 
 router = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
@@ -122,21 +132,71 @@ def _find_inbound_invoice(
     the real sender is recorded verbatim on the InboundMessage, so the trail never
     claims the customer wrote something the operator did.
     """
+    with service_scope(session):
+        return _correlate_inbound(session, sender=sender, recipients=recipients)
+
+
+def _correlate_inbound(
+    session: Session,
+    *,
+    sender: str,
+    recipients: list[str],
+) -> Invoice | None:
     sender_address = parseaddr(sender)[1].casefold()
     recipient_addresses = {parseaddr(value)[1].casefold() for value in recipients}
 
     # The same effective address messaging.resolve_recipient sent to. Reading the raw
     # setting here would mean a reviewer who redirected mail to their own inbox could
     # receive a reminder and then have their reply rejected as an unknown sender.
-    redirect_to = (effective_email_redirect() or "").casefold()
+    persisted_redirect = session.get(DemoSettings, 1)
+    redirect_to = (
+        persisted_redirect.email_redirect_override
+        if persisted_redirect and persisted_redirect.email_redirect_override
+        else effective_email_redirect()
+    )
+    redirect_to = (redirect_to or "").casefold()
     sender_is_operator = bool(redirect_to) and sender_address == parseaddr(redirect_to)[1]
 
+    # Live aliases contain a random per-invoice token. Resolve that token first, then
+    # validate the sender against that invoice's customer; never scan live invoices.
+    live_suffix = f"@{settings.email_reply_to_domain}".casefold()
+    for recipient in recipient_addresses:
+        if not recipient.startswith("reply-") or not recipient.endswith(live_suffix):
+            continue
+        token_hex = recipient.removeprefix("reply-").removesuffix(live_suffix)
+        if len(token_hex) != 32:
+            continue
+        try:
+            reply_token = uuid.UUID(hex=token_hex)
+        except ValueError:
+            continue
+        invoice = session.exec(select(Invoice).where(Invoice.reply_token == reply_token)).first()
+        if invoice is None:
+            continue
+        merchant = session.get(Merchant, invoice.merchant_id)
+        if merchant is None or merchant.is_demo or merchant.mode != "live":
+            continue
+        customer = session.get(Customer, invoice.customer_id)
+        if sender_is_operator or (
+            customer is not None and customer.email.casefold() == sender_address
+        ):
+            return invoice
+
+    # Legacy invoice-number aliases are accepted only for explicit demo merchants.
     if sender_is_operator:
         # The alias is the only correlation available, and it is invoice-specific.
-        candidates = session.exec(select(Invoice)).all()
+        candidates = session.exec(
+            select(Invoice).join(Merchant).where(Merchant.is_demo.is_(True))  # type: ignore[union-attr]
+        ).all()
     else:
         candidates = session.exec(
-            select(Invoice).join(Customer).where(func.lower(Customer.email) == sender_address)
+            select(Invoice)
+            .join(Customer)
+            .join(Merchant, Merchant.id == Invoice.merchant_id)
+            .where(
+                func.lower(Customer.email) == sender_address,
+                Merchant.is_demo.is_(True),  # type: ignore[union-attr]
+            )
         ).all()
 
     return next(
@@ -146,6 +206,15 @@ def _find_inbound_invoice(
             if reply_address_for(invoice.invoice_number).casefold() in recipient_addresses
         ),
         None,
+    )
+
+
+def _reply_address_for_invoice(session: Session, invoice: Invoice) -> str:
+    merchant = session.get(Merchant, invoice.merchant_id)
+    return reply_address_for(
+        invoice.invoice_number,
+        reply_token=invoice.reply_token,
+        is_demo=merchant is None or merchant.is_demo,
     )
 
 
@@ -246,7 +315,7 @@ async def resend_inbound_webhook(request: Request, session: SessionDep) -> dict[
     if invoice is None:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "message does not match invoice thread")
 
-    expected_recipient = reply_address_for(invoice.invoice_number)
+    expected_recipient = _reply_address_for_invoice(session, invoice)
     headers = message.get("headers") if isinstance(message.get("headers"), dict) else {}
     lowered_headers = {str(key).casefold(): str(value) for key, value in headers.items()}
     received_raw = message.get("created_at") or data.get("created_at")
@@ -379,6 +448,7 @@ def _event_id(request: Request, payload: dict) -> str:
     return "sha256:" + hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
 
+@router.post("/razorpay/collections")
 @router.post("/razorpay")
 async def razorpay_webhook(request: Request, session: SessionDep) -> dict[str, str]:
     # Raw bytes, not the parsed body. Re-serializing changes key order and whitespace,
@@ -404,6 +474,39 @@ async def razorpay_webhook(request: Request, session: SessionDep) -> dict[str, s
         payload = json.loads(raw_body)
     except json.JSONDecodeError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "malformed JSON") from exc
+
+    # Collection webhooks may be delivered for a merchant's connected Razorpay
+    # account. Resolve that account before recording the event and reject a payload
+    # whose account does not belong to the invoice's tenant.
+    # The payload names a payment link, not a tenant. Resolving which merchant it
+    # belongs to is therefore a cross-tenant read and has to say so explicitly; the
+    # scope is dropped again before anything is written.
+    with service_scope(session):
+        matched_invoice, _, _ = match_invoice(session, payload)
+        merchant = (
+            session.get(Merchant, matched_invoice.merchant_id)
+            if matched_invoice is not None
+            else None
+        )
+    if matched_invoice is not None:
+        # The append-only collection ledger is RLS-protected. Establish the tenant
+        # context before inserting the envelope or applying the payment, including
+        # demo events; unmatched events never write merchant-owned rows.
+        set_merchant_context(session, matched_invoice.merchant_id)
+        account_id = payload.get("account_id") or _link_account_id(payload)
+        if merchant is not None and merchant.mode == "live":
+            if not account_id:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, "missing connected account id")
+            connection = session.exec(
+                select(PaymentConnection).where(
+                    PaymentConnection.provider_account_id == str(account_id),
+                    PaymentConnection.merchant_id == merchant.id,
+                    PaymentConnection.status == "connected",
+                    PaymentConnection.revoked_at.is_(None),  # type: ignore[union-attr]
+                )
+            ).first()
+            if connection is None:
+                raise HTTPException(status.HTTP_403_FORBIDDEN, "unrecognized collection account")
 
     event_id = _event_id(request, payload)
 
@@ -453,3 +556,9 @@ async def razorpay_webhook(request: Request, session: SessionDep) -> dict[str, s
     # anyone reading the logs — that money was reconciled when it was not.
     session.refresh(event)
     return {"status": event.status, "event_id": event_id}
+
+
+def _link_account_id(payload: dict[str, Any]) -> str | None:
+    entity = (payload.get("payload", {}).get("payment_link", {}) or {}).get("entity", {}) or {}
+    value = entity.get("account_id") or entity.get("merchant_account_id")
+    return str(value) if value else None
