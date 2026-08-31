@@ -18,7 +18,13 @@ REQUIRED = {
 
 def _isolated_env(monkeypatch, overrides: dict[str, str], drop: str | None = None):
     """Build a clean env from REQUIRED, ignoring the developer's real .env file."""
-    for key in [*REQUIRED, "ENVIRONMENT", "DEMO_TIME_OFFSET_DAYS", "CORS_ORIGINS"]:
+    for key in [
+        *REQUIRED,
+        "ENVIRONMENT",
+        "DEMO_TIME_OFFSET_DAYS",
+        "CORS_ORIGINS",
+        "PROCESS_ROLE",
+    ]:
         monkeypatch.delenv(key, raising=False)
     values = {**REQUIRED, **overrides}
     if drop:
@@ -93,6 +99,11 @@ def test_email_dry_run_defaults_to_true(monkeypatch):
     """Guards against accidentally emailing synthetic customers before live-email approval."""
     build = _isolated_env(monkeypatch, {})
     assert build().email_dry_run is True
+
+
+def test_migration_process_role_is_valid(monkeypatch):
+    build = _isolated_env(monkeypatch, {"PROCESS_ROLE": "migrate"})
+    assert build().process_role == "migrate"
 
 
 def test_production_refuses_live_registration_without_identity_email(monkeypatch):

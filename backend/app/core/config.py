@@ -106,7 +106,10 @@ class Settings(BaseSettings):
 
     # --- Ops ---
     scheduler_enabled: bool = True
-    process_role: Literal["api", "scheduler", "worker"] = "api"
+    # Alembic imports application settings while the one-shot migration container
+    # runs. Treating that container as an invalid role makes every production deploy
+    # fail before the first revision is applied.
+    process_role: Literal["api", "scheduler", "worker", "migrate"] = "api"
     worker_kind: Literal["all", "recovery", "email", "erp", "billing"] = "all"
     worker_poll_seconds: int = Field(default=15, ge=1, le=300)
     ops_heartbeat_url: str = ""
