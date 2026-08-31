@@ -1,10 +1,11 @@
 {
   "schema_version": 1,
   "frozen_at_tag": "demo-freeze-2026-08-30",
+  "rebaselined_at": "2026-08-31",
   "backend_goldens": [
     {
       "path": "backend/tests/golden/demo/api_responses.json",
-      "sha256": "1dab13ae53b7a4de0ee7e03f17a49f618a9cfdcb9b67f1a620024aa92f6e3157"
+      "sha256": "32862fd32b0cbb187482440bd0b1779e0b76fdc0e6c62521196fbcfdc58f5ea3"
     },
     {
       "path": "backend/tests/golden/demo/ledger.json",
@@ -19,9 +20,9 @@
     {
       "route": "/",
       "path": "Docs/assets/demo-baseline/01-landing.jpg",
-      "sha256": "87e94936965bde6d4474d2f43f2ddd391d61ae8640f3acc60090ce306f2ec6b2",
+      "sha256": "d5c7311f31584fe14ca3367a15177f160205c0fc8e44b3435e3b7485e3280218",
       "format": "jpeg",
-      "height": 8499,
+      "height": 8224,
       "width": 1280
     },
     {
@@ -116,7 +117,7 @@
     },
     {
       "path": "frontend/app/globals.css",
-      "sha256": "594205083b60858fd4f492edfcc72ce2b957124a20774ea934db63d2181aa35a"
+      "sha256": "4b9cdbef376da93a3fceddeba775ce146151db4ba9e62f212e3448aeb1b3a540"
     },
     {
       "path": "frontend/app/guide/page.tsx",
@@ -128,7 +129,7 @@
     },
     {
       "path": "frontend/app/layout.tsx",
-      "sha256": "d3bcf10a6e830a1654a89981409e2ad9feeac0710907b91df95aff66d51ae172"
+      "sha256": "b89a79df2b50de2eefab6f628993745d57e4d12ca816e8577903af0e4a495573"
     },
     {
       "path": "frontend/app/loading.tsx",
@@ -136,7 +137,7 @@
     },
     {
       "path": "frontend/app/login/page.tsx",
-      "sha256": "e1b15d36bac7b0afc5d427a6bc8f9fd465ed31565aa4a33703adebc2feab779e"
+      "sha256": "86e72634b58dc3be8af2475679b960aaeb3054b1fdd7ff5757efcf139a256033"
     },
     {
       "path": "frontend/app/page.tsx",
@@ -184,7 +185,7 @@
     },
     {
       "path": "frontend/components/Landing.tsx",
-      "sha256": "1646dd016f1bb4f042aead27b68c3f01b79fee27bd38c1c45c4cc72708f0d9aa"
+      "sha256": "4620144601a963c985beef40d8ba6465eb1bcaa7e9ac973ecdbeebe901fe8192"
     },
     {
       "path": "frontend/components/Nav.tsx",
@@ -212,7 +213,7 @@
     },
     {
       "path": "frontend/components/RuntimeBanner.tsx",
-      "sha256": "85046c490cfb8813aab58a84bb2631d3158085bbfb05c422981709d2559cbe43"
+      "sha256": "4fde8498c1500d626540c6d4ca977a733d78951d16cd65f66bc5e2b269a26851"
     },
     {
       "path": "frontend/components/SignOutButton.tsx",
@@ -252,7 +253,7 @@
     },
     {
       "path": "frontend/proxy.ts",
-      "sha256": "4bc06832448090e358c8f9950f3ea81601a61cc3f2aa221febe754661865979c"
+      "sha256": "8738a8ff40d2974c81ae7c1d89fcba2558604fd4a1485e8b41ab3fb097c8c5b2"
     }
   ]
 }

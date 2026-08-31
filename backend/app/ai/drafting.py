@@ -108,6 +108,37 @@ _REFERENCE = re.compile(r"\b[A-Z]{2,6}[-/]?\d{3,}\b")
 #: ordinary and rejecting it would discard every correct draft.
 _LONG_NUMBER = re.compile(r"\b\d{4,}\b")
 
+#: A small number sitting next to a money word. `_MONEY` needs a currency marker or
+#: grouping, and `_LONG_NUMBER` needs four digits, so "a processing charge of 500
+#: applies" passed both — a fee nobody agreed to, in a figure small enough to look
+#: routine. Anchoring on the vocabulary of an added charge catches it without
+#: rejecting "3 days" or "2 invoices".
+_CHARGE_WORDS = r"fee|charge|penalty|interest|surcharge|levy|fine|commission|late\s*payment"
+_SMALL_CHARGE = re.compile(
+    rf"(?:{_CHARGE_WORDS})[^.\n]{{0,40}}?\b(\d[\d,]*(?:\.\d+)?)\b"
+    rf"|\b(\d[\d,]*(?:\.\d+)?)\s*(?:%|percent)?[^.\n]{{0,20}}?(?:{_CHARGE_WORDS})",
+    re.IGNORECASE,
+)
+
+#: A percentage. An interest or late-payment rate carries no rupee figure at all, so
+#: none of the amount checks see it, and "2% per month" is a term the merchant never
+#: agreed to being asserted to their customer.
+# No trailing `\b`: between "%" and a space there is no word boundary, so anchoring
+# one there silently matched nothing for the commonest form of all — "2%".
+_PERCENTAGE = re.compile(r"\b\d+(?:\.\d+)?\s*(?:%|per\s*cent\b|percent\b)", re.IGNORECASE)
+
+#: Somewhere else to send the money. The prompt forbids an alternative payment address
+#: and nothing enforced it: `_URL` matches only http(s):// and www., so an email
+#: address, a UPI handle and a bare `pay-now.example/settle` all passed. This is the
+#: highest-consequence miss of the three — it is the shape a redirected payment takes.
+_ALT_DESTINATION = re.compile(
+    # An email address or UPI handle: something@something, no scheme.
+    r"\b[\w.+-]+@[\w-]+(?:\.[\w-]+)*\b"
+    # A bare domain with a path and no scheme.
+    r"|\b(?:[a-z0-9-]+\.)+[a-z]{2,}/\S+",
+    re.IGNORECASE,
+)
+
 
 def _normalise_amount(raw: str) -> str:
     """Strip grouping so "4,20,000" and "420000" compare equal.
@@ -170,6 +201,23 @@ def find_invented_figures(text: str, inputs: DraftInputs) -> list[str]:
         if token in inputs.payment_url or token in inputs.invoice_number:
             continue
         problems.append("extra_number")
+        break
+
+    for match in _SMALL_CHARGE.finditer(text):
+        value = match.group(1) or match.group(2) or ""
+        if _normalise_amount(value) not in allowed_amounts:
+            problems.append("extra_charge")
+            break
+
+    if _PERCENTAGE.search(text):
+        problems.append("extra_rate")
+
+    for match in _ALT_DESTINATION.finditer(text):
+        found = match.group(0).rstrip(".,);:")
+        # The payment link is checked by `_URL` above and legitimately contains a host.
+        if found in inputs.payment_url:
+            continue
+        problems.append("alternative_payment_destination")
         break
 
     return problems

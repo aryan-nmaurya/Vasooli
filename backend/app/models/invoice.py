@@ -46,6 +46,8 @@ class Invoice(SQLModel, table=True):
         CheckConstraint("amount_paise > 0", name="ck_invoices_amount_positive"),
         # Reconciliation only ever adds. A negative balance means a bug upstream.
         CheckConstraint("amount_paid_paise >= 0", name="ck_invoices_paid_non_negative"),
+        CheckConstraint("refunded_paise >= 0", name="ck_invoices_refunded_non_negative"),
+        CheckConstraint("chargeback_paise >= 0", name="ck_invoices_chargeback_non_negative"),
         CheckConstraint("due_at >= issued_at", name="ck_invoices_due_after_issue"),
         UniqueConstraint("merchant_id", "invoice_number", name="uq_invoices_merchant_number"),
     )
@@ -81,6 +83,12 @@ class Invoice(SQLModel, table=True):
     #: link, cheques, cash, agreed adjustments. Additive, because each entry is a
     #: distinct transaction rather than a restatement of one running total.
     external_paid_paise: int = Field(default=0, sa_column=money_column(default=0))
+    refunded_paise: int = Field(default=0, sa_column=money_column(default=0))
+    chargeback_paise: int = Field(default=0, sa_column=money_column(default=0))
+
+    @property
+    def provider_net_paid_paise(self) -> int:
+        return max(0, self.link_paid_paise - self.refunded_paise - self.chargeback_paise)
 
     currency: str = "INR"
 

@@ -1,12 +1,14 @@
 # Production Phases 4–5 evidence
 
+> Historical phase evidence, updated 2026-08-31 where later work superseded it.
+
 ## Phase 4 — ERP adapter platform
 
 - Added tenant-owned `erp_connections`, cursor-based `erp_sync_runs`, canonical
   `erp_records`, and replayable `integration_failures` tables.
-- Added a provider-neutral `CanonicalInvoice`/`SyncPage` contract and deterministic
-  custom fixture adapter. Zoho and Tally providers fail explicitly until their
-  credential-backed workers are configured, rather than pretending a sync succeeded.
+- Added a provider-neutral `CanonicalInvoice`/`SyncPage` contract, a deterministic
+  custom fixture adapter, credential-backed Zoho/Tally adapters, and scheduled polling
+  under per-merchant RLS context.
 - Sync orchestration persists source identity, payload hashes, tombstones, cursors,
   freshness deadlines, partial counts, and retryable failures. Every record identity
   includes merchant, provider, source tenant, type, and source ID.
@@ -34,6 +36,7 @@
 - `uv run alembic upgrade head --sql` — PostgreSQL SQL generated through
   `b3e8f1a2c904` (`f42b7d1c9e53 → c7d31a08b915 → a7c4d2e91b10 → b3e8f1a2c904`).
 
-The local runtime remains Docker-managed PostgreSQL. Apply the new migrations there
-before exercising the Phase 4–5 APIs. Provider-specific Zoho/Tally workers and
-Technology Partner OAuth remain explicit integration gates, not silent fallbacks.
+Provider credentials, a deployed Tally edge agent, and live provider exercises remain
+explicit integration gates. ERP source updates, cancellations, provider payments, and
+credit notes are not yet folded into canonical ledger state; README §14 records this
+as a financial-integrity blocker.

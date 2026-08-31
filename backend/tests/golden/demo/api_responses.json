@@ -3,6 +3,7 @@
   "endpoints": {
     "GET /api/auth/modes": {
       "body": {
+        "live_registration": false,
         "reviewer_access": false
       },
       "content_type": "application/json",
@@ -794,6 +795,7 @@
     "GET detail INV-3001": {
       "body": {
         "amount_display": "₹12,500",
+        "chargeback_display": "₹0",
         "conversation": [],
         "current_tier": 0,
         "customer_email": "accounts@nova-retail.example.com",
@@ -816,11 +818,13 @@
         "payment_link_status": "created",
         "payment_url": "https://rzp.io/rzp/baseline-inv-3001",
         "promises": [],
+        "provider_net_display": "₹0",
         "reason_category": null,
         "reason_confidence": null,
         "reason_explanation": null,
         "reason_llm_disagreed": false,
         "recovered_at": null,
+        "refunded_display": "₹0",
         "reminders": [],
         "reminders_sent": 0,
         "reply_count": 0,
@@ -866,6 +870,7 @@
     "GET detail INV-3002": {
       "body": {
         "amount_display": "₹18,000",
+        "chargeback_display": "₹0",
         "conversation": [],
         "current_tier": 0,
         "customer_email": "finance@sunrise-textiles.example.com",
@@ -888,11 +893,13 @@
         "payment_link_status": "created",
         "payment_url": "https://rzp.io/rzp/baseline-inv-3002",
         "promises": [],
+        "provider_net_display": "₹0",
         "reason_category": null,
         "reason_confidence": null,
         "reason_explanation": null,
         "reason_llm_disagreed": false,
         "recovered_at": null,
+        "refunded_display": "₹0",
         "reminders": [],
         "reminders_sent": 0,
         "reply_count": 0,
@@ -938,6 +945,7 @@
     "GET detail INV-3003": {
       "body": {
         "amount_display": "₹34,000",
+        "chargeback_display": "₹0",
         "conversation": [],
         "current_tier": 0,
         "customer_email": "rahul@abc-traders.example.com",
@@ -960,11 +968,13 @@
         "payment_link_status": "created",
         "payment_url": "https://rzp.io/rzp/baseline-inv-3003",
         "promises": [],
+        "provider_net_display": "₹0",
         "reason_category": null,
         "reason_confidence": null,
         "reason_explanation": null,
         "reason_llm_disagreed": false,
         "recovered_at": null,
+        "refunded_display": "₹0",
         "reminders": [],
         "reminders_sent": 0,
         "reply_count": 0,
@@ -1010,6 +1020,7 @@
     "GET detail INV-3004": {
       "body": {
         "amount_display": "₹27,500",
+        "chargeback_display": "₹0",
         "conversation": [],
         "current_tier": 0,
         "customer_email": "ap@deccan-logistics.example.com",
@@ -1032,11 +1043,13 @@
         "payment_link_status": "created",
         "payment_url": "https://rzp.io/rzp/baseline-inv-3004",
         "promises": [],
+        "provider_net_display": "₹0",
         "reason_category": null,
         "reason_confidence": null,
         "reason_explanation": null,
         "reason_llm_disagreed": false,
         "recovered_at": null,
+        "refunded_display": "₹0",
         "reminders": [],
         "reminders_sent": 0,
         "reply_count": 0,
@@ -1082,6 +1095,7 @@
     "GET detail INV-3005": {
       "body": {
         "amount_display": "₹41,000",
+        "chargeback_display": "₹0",
         "conversation": [],
         "current_tier": 0,
         "customer_email": "kiran@kiran-and-co.example.com",
@@ -1104,11 +1118,13 @@
         "payment_link_status": "created",
         "payment_url": "https://rzp.io/rzp/baseline-inv-3005",
         "promises": [],
+        "provider_net_display": "₹0",
         "reason_category": null,
         "reason_confidence": null,
         "reason_explanation": null,
         "reason_llm_disagreed": false,
         "recovered_at": null,
+        "refunded_display": "₹0",
         "reminders": [],
         "reminders_sent": 0,
         "reply_count": 0,
@@ -1154,6 +1170,7 @@
     "GET detail INV-3006": {
       "body": {
         "amount_display": "₹22,000",
+        "chargeback_display": "₹0",
         "conversation": [],
         "current_tier": 0,
         "customer_email": "billing@meridian-pack.example.com",
@@ -1176,11 +1193,13 @@
         "payment_link_status": "created",
         "payment_url": "https://rzp.io/rzp/baseline-inv-3006",
         "promises": [],
+        "provider_net_display": "₹0",
         "reason_category": null,
         "reason_confidence": null,
         "reason_explanation": null,
         "reason_llm_disagreed": false,
         "recovered_at": null,
+        "refunded_display": "₹0",
         "reminders": [],
         "reminders_sent": 0,
         "reply_count": 0,
@@ -1226,6 +1245,7 @@
     "GET detail INV-3007": {
       "body": {
         "amount_display": "₹16,500",
+        "chargeback_display": "₹0",
         "conversation": [],
         "current_tier": 0,
         "customer_email": "accounts@vega-industries.example.com",
@@ -1248,11 +1268,13 @@
         "payment_link_status": "created",
         "payment_url": "https://rzp.io/rzp/baseline-inv-3007",
         "promises": [],
+        "provider_net_display": "₹0",
         "reason_category": null,
         "reason_confidence": null,
         "reason_explanation": null,
         "reason_llm_disagreed": false,
         "recovered_at": null,
+        "refunded_display": "₹0",
         "reminders": [],
         "reminders_sent": 0,
         "reply_count": 0,
@@ -1298,6 +1320,7 @@
     "GET detail INV-3008": {
       "body": {
         "amount_display": "₹9,500",
+        "chargeback_display": "₹0",
         "conversation": [],
         "current_tier": 0,
         "customer_email": "ap@lotus-supplies.example.com",
@@ -1320,11 +1343,13 @@
         "payment_link_status": "created",
         "payment_url": "https://rzp.io/rzp/baseline-inv-3008",
         "promises": [],
+        "provider_net_display": "₹0",
         "reason_category": null,
         "reason_confidence": null,
         "reason_explanation": null,
         "reason_llm_disagreed": false,
         "recovered_at": null,
+        "refunded_display": "₹0",
         "reminders": [],
         "reminders_sent": 0,
         "reply_count": 0,

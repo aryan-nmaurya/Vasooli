@@ -3,7 +3,7 @@
 import hashlib
 import hmac
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import func
@@ -91,7 +91,16 @@ def subscription_is_active(session: Session, merchant_id: uuid.UUID) -> bool:
         .order_by(BillingSubscription.updated_at.desc())  # type: ignore[attr-defined]
     ).first()
     if subscription is None:
-        return True  # onboarding remains usable before checkout is completed
+        merchant = session.get(Merchant, merchant_id)
+        if merchant is None:
+            return False
+        raw_end = (merchant.onboarding_state or {}).get("trial_ends_at")
+        try:
+            trial_end = datetime.fromisoformat(raw_end) if raw_end else None
+        except (TypeError, ValueError):
+            trial_end = None
+        trial_end = trial_end or (merchant.created_at + timedelta(days=settings.live_trial_days))
+        return trial_end > utcnow()
     return subscription.status in ACTIVE_STATES or (
         subscription.status == "past_due"
         and subscription.grace_until is not None

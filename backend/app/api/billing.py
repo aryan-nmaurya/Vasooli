@@ -17,6 +17,7 @@ from app.services.authorization import (
     set_merchant_context,
 )
 from app.services.billing import (
+    PLAN_CATALOG,
     apply_subscription_event,
     create_checkout_subscription,
     create_provider_subscription,
@@ -32,20 +33,18 @@ class CheckoutRequest(BaseModel):
 
 
 @router.get("/plans")
-def plans(session: SessionDep) -> list[dict]:
-    rows = ensure_plans(session)
-    session.commit()
+def plans() -> list[dict]:
+    """Published catalog without the idempotent database write checkout performs."""
     return [
         {
-            "slug": row.slug,
-            "version": row.version,
-            "name": row.name,
-            "amount_paise": row.amount_paise,
-            "included_active_invoices": row.included_active_invoices,
-            "included_seats": row.included_seats,
+            "slug": slug,
+            "version": 1,
+            "name": slug.title(),
+            "amount_paise": values[0],
+            "included_active_invoices": values[1],
+            "included_seats": values[2],
         }
-        for row in rows
-        if row.is_active
+        for slug, values in PLAN_CATALOG.items()
     ]
 
 

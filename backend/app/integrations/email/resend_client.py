@@ -13,14 +13,44 @@ from app.integrations.email.base import SendResult
 log = get_logger("email.resend")
 
 API_URL = "https://api.resend.com/emails"
+DOMAINS_URL = "https://api.resend.com/domains"
+
+
+def create_sending_domain(domain: str) -> dict:
+    response = httpx.post(
+        DOMAINS_URL,
+        json={"name": domain},
+        headers={"Authorization": f"Bearer {settings.resend_api_key}"},
+        timeout=settings.email_provider_timeout_seconds,
+    )
+    if response.is_error:
+        raise RuntimeError(f"Resend rejected domain registration ({response.status_code})")
+    return response.json()
+
+
+def get_sending_domain(provider_domain_id: str) -> dict:
+    response = httpx.get(
+        f"{DOMAINS_URL}/{provider_domain_id}",
+        headers={"Authorization": f"Bearer {settings.resend_api_key}"},
+        timeout=settings.email_provider_timeout_seconds,
+    )
+    if response.is_error:
+        raise RuntimeError(f"Resend domain check failed ({response.status_code})")
+    return response.json()
 
 
 class ResendProvider:
     name = "resend"
 
-    def __init__(self, api_key: str | None = None, timeout: float | None = None) -> None:
+    def __init__(
+        self,
+        api_key: str | None = None,
+        timeout: float | None = None,
+        from_email: str | None = None,
+    ) -> None:
         self._api_key = api_key or settings.resend_api_key
         self._timeout = timeout or settings.email_provider_timeout_seconds
+        self._from_email = from_email or settings.email_from
 
     def send(
         self,
@@ -34,7 +64,7 @@ class ResendProvider:
         idempotency_key: str | None = None,
     ) -> SendResult:
         payload: dict[str, object] = {
-            "from": settings.email_from,
+            "from": self._from_email,
             "to": [to],
             "subject": subject,
             "html": html,

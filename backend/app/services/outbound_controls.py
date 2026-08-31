@@ -3,7 +3,7 @@
 import uuid
 from datetime import date
 
-from sqlalchemy import func
+from sqlalchemy import and_, func, or_, text
 from sqlmodel import Session, select
 
 from app.core.clock import utcnow
@@ -22,37 +22,59 @@ def is_suppressed(
     customer: Customer | None = None,
     email: str | None = None,
 ) -> bool:
+    """Is this recipient on the merchant's do-not-contact list?
+
+    Answered in SQL rather than in Python. The earlier version loaded every active
+    suppression row for the merchant and filtered in memory — on every send. A
+    suppression list only grows: every hard bounce, complaint, unsubscribe and legal
+    hold adds a row and nothing removes them. A merchant a year in has thousands, and
+    a cycle over five hundred invoices would load all of them five hundred times, in
+    the delivery loop, for a question whose answer is one indexed row.
+
+    Two details that would quietly break the match if changed:
+
+    * The identity comparisons are guarded so a NULL never meets a NULL. An
+      address-only row has no `customer_id`, and `customer_id = NULL` matching a
+      caller who passed no customer is how one bounce silently muted an entire
+      merchant's ledger. `IS NOT NULL` on both sides keeps that impossible.
+    * Addresses are compared case-folded on both sides. `STOP@x.com` and `stop@x.com`
+      are one mailbox, and a case-sensitive match would let a differently-cased copy
+      of a bounced address straight through.
+    """
     if customer is None and not email:
         return False
 
-    rows = session.exec(
-        select(SuppressionEntry).where(
+    identity = []
+    if customer is not None:
+        identity.append(
+            and_(
+                SuppressionEntry.customer_id.is_not(None),  # type: ignore[union-attr]
+                SuppressionEntry.customer_id == customer.id,
+            )
+        )
+    if email:
+        identity.append(
+            and_(
+                SuppressionEntry.email.is_not(None),  # type: ignore[union-attr]
+                func.lower(SuppressionEntry.email) == email.casefold(),
+            )
+        )
+
+    now = utcnow()
+    found = session.exec(
+        select(SuppressionEntry.id)
+        .where(
             SuppressionEntry.merchant_id == merchant_id,
             SuppressionEntry.active.is_(True),  # type: ignore[union-attr]
+            or_(*identity),
+            or_(
+                SuppressionEntry.expires_at.is_(None),  # type: ignore[union-attr]
+                SuppressionEntry.expires_at > now,
+            ),
         )
-    ).all()
-    now = utcnow()
-    wanted_email = email.casefold() if email else None
-
-    def matches(row: SuppressionEntry) -> bool:
-        """Both sides of a comparison must actually be present.
-
-        The earlier form compared `row.customer_id == (customer.id if customer else
-        None)`. Called without a customer that is `None == None`, which is True — so a
-        single address-only suppression row matched every address on the merchant, and
-        one hard bounce silently blocked every reminder they had left to send. The
-        failure was invisible: each send was recorded as "customer is suppressed" and
-        never retried.
-        """
-        if customer is not None and row.customer_id == customer.id:
-            return True
-        return (
-            wanted_email is not None
-            and row.email is not None
-            and row.email.casefold() == wanted_email
-        )
-
-    return any(matches(row) and (row.expires_at is None or row.expires_at > now) for row in rows)
+        .limit(1)
+    ).first()
+    return found is not None
 
 
 def claim_send_slot(
@@ -62,9 +84,29 @@ def claim_send_slot(
     quota: int = 100,
     bucket_date: date | None = None,
 ) -> MerchantUsageBucket:
+    """Consume one slot from today's allowance, or refuse.
+
+    The check and the increment are a single statement on purpose. The earlier form
+    read `sent_count`, compared it in Python, then wrote back — a lost update between
+    any two concurrent senders, each seeing 99, each deciding 99 < 100, each writing
+    100. The daily cap exists to protect a sending domain's reputation, so quietly
+    exceeding it is exactly the failure it was meant to prevent.
+
+    Concurrency here is not hypothetical: the recovery cycle and the retry sweep hold
+    *different* advisory locks, so they can overlap, and the plan's direction is more
+    workers rather than fewer.
+
+    `ON CONFLICT ... WHERE` makes Postgres do the comparison while holding the row
+    lock. No row comes back when the cap is reached, which is the refusal.
+    """
     if settings.global_send_kill_switch:
         raise OutboundBlockedError("Outbound email is paused by the platform kill switch")
+
     today = bucket_date or utcnow().date()
+
+    # Platform-wide ceiling, checked before the per-merchant one so a single busy
+    # tenant cannot spend everyone else's headroom. Read-only, and approximate under
+    # concurrency by design — it is a backstop, not the enforcement point.
     global_sent = session.exec(
         select(func.coalesce(func.sum(MerchantUsageBucket.sent_count), 0)).where(
             MerchantUsageBucket.bucket_date == today
@@ -72,19 +114,36 @@ def claim_send_slot(
     ).one()
     if int(global_sent or 0) >= settings.global_daily_send_quota:
         raise OutboundBlockedError("Global daily outbound email quota exceeded")
+
+    claimed = session.exec(
+        text(
+            """
+            INSERT INTO merchant_usage_buckets
+                (id, merchant_id, bucket_date, sent_count, failed_count, quota,
+                 created_at, updated_at)
+            VALUES (gen_random_uuid(), :merchant_id, :bucket_date, 1, 0, :quota,
+                    now(), now())
+            ON CONFLICT (merchant_id, bucket_date) DO UPDATE
+                SET sent_count = merchant_usage_buckets.sent_count + 1,
+                    updated_at = now()
+                WHERE merchant_usage_buckets.sent_count < merchant_usage_buckets.quota
+            RETURNING id
+            """
+        ).bindparams(merchant_id=merchant_id, bucket_date=today, quota=quota)
+    ).first()
+
+    if claimed is None:
+        raise OutboundBlockedError("Daily outbound email quota exceeded")
+
     bucket = session.exec(
         select(MerchantUsageBucket).where(
             MerchantUsageBucket.merchant_id == merchant_id,
             MerchantUsageBucket.bucket_date == today,
         )
-    ).first()
-    if bucket is None:
-        bucket = MerchantUsageBucket(merchant_id=merchant_id, bucket_date=today, quota=quota)
-    if bucket.sent_count >= bucket.quota:
-        raise OutboundBlockedError("Daily outbound email quota exceeded")
-    bucket.sent_count += 1
-    session.add(bucket)
-    session.flush()
+    ).one()
+    # The row was changed by raw SQL, so a previously-loaded copy in this session is
+    # stale; refresh before anything reads the count back.
+    session.refresh(bucket)
     return bucket
 
 

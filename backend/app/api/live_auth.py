@@ -4,6 +4,7 @@ Cookies are deliberately distinct from the frozen demo's ``vasooli_session`` coo
 """
 
 import re
+import uuid
 from datetime import timedelta
 from typing import Annotated
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -15,9 +16,11 @@ from sqlmodel import select
 from app.core.clock import utcnow
 from app.core.config import settings
 from app.core.db import SessionDep
+from app.core.middleware import client_ip
 from app.core.passwords import (
     hash_live_password,
     live_password_needs_rehash,
+    perform_dummy_live_password_check,
     verify_live_password,
 )
 from app.core.security import create_session_token
@@ -42,6 +45,7 @@ from app.services.auth import (
     revoke_user_sessions,
     rotate_refresh_token,
 )
+from app.services.auth_email import AuthEmailError, send_auth_email
 from app.services.authorization import (
     LIVE_ACCESS_COOKIE,
     LIVE_REFRESH_COOKIE,
@@ -99,6 +103,19 @@ class ForgotRequest(BaseModel):
     email: EmailStr
 
 
+class MFAVerifyRequest(BaseModel):
+    #: In the body, not the query string. As a query parameter the six-digit code was
+    #: written into access logs, proxy logs and browser history — a second factor that
+    #: is recorded in plaintext alongside the request that used it is not a second
+    #: factor for anyone who can read those logs.
+    #:
+    #: Deliberately permissive here and checked in the handler. Body validation runs
+    #: before the endpoint, so a strict constraint would answer 422 to an anonymous
+    #: caller — telling them the route exists and what it expects — where every other
+    #: gated endpoint answers a flat 401.
+    code: str = Field(default="", max_length=16)
+
+
 class ReauthRequest(BaseModel):
     password: str = Field(min_length=1, max_length=512)
 
@@ -120,7 +137,9 @@ class ResetRequest(TokenRequest):
 
 
 def _client_ip(request: Request) -> str | None:
-    return request.client.host if request.client else None
+    # Behind the reverse proxy `request.client.host` is the proxy, so every auth event
+    # recorded the same address. See app.core.middleware.client_ip.
+    return client_ip(request)
 
 
 def _public_token(raw: str) -> str | None:
@@ -164,7 +183,13 @@ def register(payload: RegisterRequest, request: Request, session: SessionDep) ->
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
     email = normalize_email(str(payload.email))
     if session.exec(select(User.id).where(User.email == email)).first() is not None:
-        raise HTTPException(status.HTTP_409_CONFLICT, "An account already exists for this email")
+        # Same status and shape as a new registration. Revealing that the address is
+        # already present turns this public endpoint into an account directory.
+        return {
+            "status": "verification_required",
+            "merchant_id": str(uuid.uuid4()),
+            "verification_token": None,
+        }
 
     now = utcnow()
     user = create_live_user(email, payload.password, payload.display_name)
@@ -179,7 +204,10 @@ def register(payload: RegisterRequest, request: Request, session: SessionDep) ->
         mode="live",
         status="onboarding",
         is_demo=False,
-        onboarding_state={"identity": "pending_verification"},
+        onboarding_state={
+            "identity": "pending_verification",
+            "trial_ends_at": (now + timedelta(days=settings.live_trial_days)).isoformat(),
+        },
         terms_accepted_at=now,
         privacy_accepted_at=now,
     )
@@ -213,6 +241,14 @@ def register(payload: RegisterRequest, request: Request, session: SessionDep) ->
         object_id=merchant.id,
         ip_address=_client_ip(request),
     )
+    try:
+        send_auth_email(purpose="verify_email", email=email, token=raw_token)
+    except AuthEmailError as exc:
+        session.rollback()
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "We could not send the verification email. Please try again.",
+        ) from exc
     session.commit()
     return {
         "status": "verification_required",
@@ -258,6 +294,12 @@ def login(payload: LoginRequest, request: Request, response: Response, session: 
     email = normalize_email(str(payload.email))
     user = session.exec(select(User).where(User.email == email)).first()
     now = utcnow()
+    if user is None:
+        # Spend the same Argon2id work on an unknown address. The status and body were
+        # already identical for both branches, but the response time was not: skipping
+        # the hash returned in a fraction of the time, which is enough to enumerate
+        # which email addresses hold an account.
+        perform_dummy_live_password_check(payload.password)
     valid = user is not None and verify_live_password(payload.password, user.password_hash)
     locked = user is not None and user.locked_until is not None and user.locked_until > now
     mfa_factor = None
@@ -406,13 +448,15 @@ def enroll_mfa(
 
 @router.post("/mfa/verify")
 def verify_mfa(
-    code: str,
+    payload: MFAVerifyRequest,
     session: SessionDep,
     access_token: Annotated[str | None, Cookie(alias=LIVE_ACCESS_COOKIE)] = None,
 ) -> dict[str, str]:
     current = _current_session(session, access_token)
     if current is None:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Live authentication required")
+    if not re.fullmatch(r"[0-9]{6,8}", payload.code):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid authenticator code")
     factor = session.exec(
         select(MFAFactor)
         .where(
@@ -421,7 +465,9 @@ def verify_mfa(
         )
         .order_by(MFAFactor.created_at.desc())
     ).first()
-    if factor is None or not verify_code(decrypt_secret(factor.secret_encrypted or ""), code):
+    if factor is None or not verify_code(
+        decrypt_secret(factor.secret_encrypted or ""), payload.code
+    ):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid authenticator code")
     factor.verified_at = utcnow()
     factor.is_primary = True
@@ -556,6 +602,17 @@ def forgot_password(payload: ForgotRequest, request: Request, session: SessionDe
     raw_token = None
     if user is not None and user.status not in {"deleted", "suspended"}:
         raw_token = create_auth_token(session, user, "password_reset")
+        try:
+            send_auth_email(purpose="password_reset", email=email, token=raw_token)
+        except AuthEmailError:
+            # Keep the public response indistinguishable from an unknown account.
+            # Rolling back lets the user retry without accumulating unusable tokens.
+            session.rollback()
+            return {
+                "status": "accepted",
+                "message": "If the account exists, reset instructions have been sent.",
+                "reset_token": None,
+            }
     session.add(
         AuthEvent(
             user_id=user.id if user else None,

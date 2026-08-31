@@ -13,7 +13,10 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      DATABASE_URL: ${DATABASE_URL:?set the private RDS DATABASE_URL in deploy/.env}
+      # The application role, which must be NOSUPERUSER/NOBYPASSRLS — see
+      # backend/scripts/create_app_role.sql. Connecting as the owner leaves every
+      # forced row-level-security policy inert.
+      DATABASE_URL: ${APP_DATABASE_URL:?set APP_DATABASE_URL (the vasooli_app role) in deploy/.env}
       PROCESS_ROLE: api
       SCHEDULER_ENABLED: "false"
     expose:
@@ -41,10 +44,12 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      DATABASE_URL: ${DATABASE_URL:?set the private RDS DATABASE_URL in deploy/.env}
+      DATABASE_URL: ${APP_DATABASE_URL:?set APP_DATABASE_URL (the vasooli_app role) in deploy/.env}
       PROCESS_ROLE: scheduler
       SCHEDULER_ENABLED: "true"
-    command: ["sh", "-c", "alembic upgrade head && python -m app.scheduler_process"]
+    # Migrations run once, separately, as the owner. Three services racing the
+    # same `alembic upgrade head` on every deploy was never safe.
+    command: ["sh", "-c", "python -m app.scheduler_process"]
     depends_on:
       api:
         condition: service_started
@@ -61,11 +66,11 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      DATABASE_URL: ${DATABASE_URL:?set the private RDS DATABASE_URL in deploy/.env}
+      DATABASE_URL: ${APP_DATABASE_URL:?set APP_DATABASE_URL (the vasooli_app role) in deploy/.env}
       PROCESS_ROLE: worker
       SCHEDULER_ENABLED: "false"
       WORKER_KIND: all
-    command: ["sh", "-c", "alembic upgrade head && python -m app.worker"]
+    command: ["sh", "-c", "python -m app.worker"]
     depends_on:
       api:
         condition: service_started

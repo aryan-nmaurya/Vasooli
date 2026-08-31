@@ -7,6 +7,7 @@ from decimal import Decimal
 from sqlmodel import Session, select
 
 from app.core.clock import utcnow
+from app.core.constants import InvoiceStatus
 from app.integrations.erp import (
     CanonicalInvoice,
     adapter_for,
@@ -14,10 +15,22 @@ from app.integrations.erp import (
     json_safe,
     payload_hash,
 )
-from app.models import ErpConnection, ErpRecord, ErpSyncRun, IntegrationFailure
+from app.integrations.outbound_url import assert_safe_outbound_url
+from app.models import (
+    AuditAction,
+    AuditActor,
+    AuditLog,
+    Customer,
+    ErpConnection,
+    ErpRecord,
+    ErpSyncRun,
+    IntegrationFailure,
+    Invoice,
+)
 from app.schemas.invoice import InvoiceIngestRow
 from app.services.billing import assert_live_entitled
 from app.services.ingestion import ingest_batch
+from app.services.manual_payments import sync_erp_adjustment
 
 
 def sync_connection(
@@ -62,6 +75,7 @@ def sync_connection(
         if ledger_rows:
             ingest_batch(session, ledger_rows, merchant_id=connection.merchant_id)
         for record in page.records:
+            _apply_invoice_record(session, connection, record)
             _upsert_record(session, connection, run, record)
             run.imported_count += 1
         connection.cursor = page.next_cursor
@@ -93,6 +107,100 @@ def sync_connection(
     session.commit()
     session.refresh(run)
     return run
+
+
+def _apply_invoice_record(
+    session: Session, connection: ErpConnection, record: CanonicalInvoice
+) -> None:
+    """Apply source changes to the operational ledger, not only the ERP archive."""
+    invoice = session.exec(
+        select(Invoice).where(
+            Invoice.merchant_id == connection.merchant_id,
+            Invoice.invoice_number == record.invoice_number,
+        )
+    ).first()
+    if invoice is None:
+        return
+
+    changed: dict[str, object] = {}
+    for field, value in (
+        ("amount_paise", record.amount_paise),
+        ("issued_at", record.issued_at),
+        ("due_at", record.due_at),
+    ):
+        previous = getattr(invoice, field)
+        if previous != value:
+            changed[field] = {"before": str(previous), "after": str(value)}
+            setattr(invoice, field, value)
+
+    customer = session.get(Customer, invoice.customer_id)
+    if customer is not None:
+        if record.customer_name and customer.name != record.customer_name:
+            changed["customer_name"] = {
+                "before": customer.name,
+                "after": record.customer_name,
+            }
+            customer.name = record.customer_name
+        if record.customer_email and customer.email != record.customer_email:
+            changed["customer_email"] = {
+                "before": customer.email,
+                "after": record.customer_email,
+            }
+            customer.email = record.customer_email
+        session.add(customer)
+
+    if record.tombstoned and invoice.status not in {
+        InvoiceStatus.RECOVERED,
+        InvoiceStatus.WRITTEN_OFF,
+    }:
+        invoice.status = InvoiceStatus.WRITTEN_OFF
+        session.add(
+            AuditLog(
+                invoice_id=invoice.id,
+                actor=AuditActor.SYSTEM,
+                action=AuditAction.ERP_INVOICE_CANCELLED,
+                detail={
+                    "provider": record.source_system,
+                    "source_id": record.source_id,
+                    "source_version": record.source_version,
+                },
+            )
+        )
+    elif changed:
+        session.add(
+            AuditLog(
+                invoice_id=invoice.id,
+                actor=AuditActor.SYSTEM,
+                action=AuditAction.ERP_INVOICE_UPDATED,
+                detail={
+                    "provider": record.source_system,
+                    "source_id": record.source_id,
+                    "source_version": record.source_version,
+                    "changes": changed,
+                },
+            )
+        )
+    session.add(invoice)
+    session.flush()
+
+    effective_date = (record.updated_at or record.issued_at).date()
+    sync_erp_adjustment(
+        session,
+        invoice=invoice,
+        provider=record.source_system,
+        source_id=f"{record.source_id}:aggregate",
+        amount_paise=record.paid_paise,
+        received_on=effective_date,
+    )
+    sync_erp_adjustment(
+        session,
+        invoice=invoice,
+        provider=record.source_system,
+        source_id=f"{record.source_id}:aggregate",
+        amount_paise=record.credited_paise,
+        received_on=effective_date,
+        is_credit=True,
+    )
 
 
 def _upsert_record(
@@ -130,3 +238,18 @@ def _upsert_record(
     row.tombstoned = record.tombstoned
     session.add(row)
     return row
+
+
+def validate_connection_credentials(provider: str, credentials: dict) -> None:
+    """Refuse a connection whose endpoint points back inside our own network.
+
+    Lives here rather than in the API module because `app.api` reaches external
+    systems through `app.services` — and this is a question about an external system.
+    Applied when the connection is saved so the merchant gets an immediate, specific
+    error; the adapters re-check before every fetch, because DNS can be repointed
+    after a connection is stored.
+    """
+    for field in ("endpoint", "api_domain", "webhook_url"):
+        value = credentials.get(field)
+        if isinstance(value, str) and value.strip():
+            assert_safe_outbound_url(value, what=f"{provider} {field}")

@@ -14,11 +14,12 @@ from sqlmodel import select
 from app.core.clock import utcnow
 from app.core.config import settings
 from app.core.db import SessionDep
+from app.core.middleware import client_ip
 from app.models import ErpConnection, ErpSyncRun, ErpWebhookEvent
 from app.services.auth import audit
 from app.services.authorization import LiveContext, require_live_permission, require_live_reauth
 from app.services.billing import BillingEntitlementError, assert_live_entitled
-from app.services.erp import sync_connection
+from app.services.erp import sync_connection, validate_connection_credentials
 from app.services.oauth import (
     OAuthConfigurationError,
     OAuthExchangeError,
@@ -97,6 +98,8 @@ def zoho_oauth_callback(
                 {
                     "access_token": tokens.access_token,
                     "refresh_token": tokens.refresh_token,
+                    "organization_id": tokens.account_id,
+                    "api_domain": tokens.api_domain,
                     "scope": tokens.scopes,
                 },
                 sort_keys=True,
@@ -138,6 +141,8 @@ def refresh_integration_token(
             raise OAuthExchangeError("Zoho connection has no refresh token")
         tokens = refresh_zoho_token(refresh_token)
         credentials["access_token"] = tokens.access_token
+        if tokens.api_domain:
+            credentials["api_domain"] = tokens.api_domain
         row.credentials_encrypted = encrypt_secret(json.dumps(credentials, sort_keys=True))
         row.updated_at = utcnow()
         session.add(row)
@@ -187,6 +192,13 @@ def connect_integration(
     ).first()
     if row is None:
         row = ErpConnection(merchant_id=context.merchant.id, provider=payload.provider)
+    # Validate before storing. A connection saved with an internal endpoint is an SSRF
+    # the scheduler will re-trigger every half hour, entitlement checks included or not.
+    try:
+        validate_connection_credentials(payload.provider, payload.credentials)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+
     row.source_tenant = payload.source_tenant
     row.credentials_encrypted = encrypt_secret(json.dumps(payload.credentials, sort_keys=True))
     row.status = "connected"
@@ -200,7 +212,7 @@ def connect_integration(
         actor_user_id=context.user.id,
         object_type="erp_connection",
         object_id=row.id,
-        ip_address=request.client.host if request.client else None,
+        ip_address=client_ip(request),
         detail={"provider": row.provider, "source_tenant": row.source_tenant},
     )
     session.commit()

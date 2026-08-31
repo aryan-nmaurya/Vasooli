@@ -49,6 +49,7 @@ from app.models import (
 from app.policy import RequiredAction, evaluate_reminder, next_tier_for
 from app.policy.banned_language import find_banned_phrases
 from app.services.ai_audit import AITask, record_ai_outcome
+from app.services.authorization import merchant_scope, service_scope, set_merchant_context
 from app.services.billing import subscription_is_active
 from app.services.closure import retry_pending_closures
 from app.services.disputes import has_open_dispute
@@ -147,6 +148,10 @@ def sweep_promises(session: Session, report: CycleReport) -> None:
 
         if today <= promise.promised_date + timedelta(days=PROMISE_GRACE_DAYS):
             continue
+
+        # `promises` carries no merchant_id and so has no policy of its own; the
+        # invoice and customer rows this touches do.
+        set_merchant_context(session, invoice.merchant_id)
 
         promise.status = PromiseStatus.BROKEN
         promise.resolved_at = utcnow()
@@ -337,49 +342,63 @@ def run_recovery_cycle(
         return report
 
     try:
-        sweep_promises(session, report)
-        session.commit()
+        # The cycle is cross-tenant by definition: it walks every merchant's ledger and
+        # has no request to take a tenant from. Held here rather than in the scheduler
+        # wrapper so the manual trigger, the worker and the tests are covered too —
+        # without it, a connection that does not bypass row-level security sees no
+        # invoices at all and the cycle reports a clean run having done nothing.
+        with service_scope(session):
+            sweep_promises(session, report)
+            session.commit()
 
-        # Re-attempt failed deliveries before choosing new tiers. A customer owed a
-        # Tier 1 reminder that bounced should get that one, not skip to Tier 2.
-        if not dry_run:
-            retry = retry_failed_deliveries(session)
-            report.deliveries_retried = retry["attempted"]
-            report.deliveries_recovered = retry["recovered"]
+            # Re-attempt failed deliveries before choosing new tiers. A customer owed a
+            # Tier 1 reminder that bounced should get that one, not skip to Tier 2.
+            if not dry_run:
+                retry = retry_failed_deliveries(session)
+                report.deliveries_retried = retry["attempted"]
+                report.deliveries_recovered = retry["recovered"]
 
-            # A recovered invoice whose link is still live is a customer who can pay
-            # twice. Transient Razorpay failures during reconciliation land here.
-            closures = retry_pending_closures(session)
-            report.closures_retried = closures["attempted"]
-            report.closures_completed = closures["closed"]
+                # A recovered invoice whose link is still live is a customer who can pay
+                # twice. Transient Razorpay failures during reconciliation land here.
+                closures = retry_pending_closures(session)
+                report.closures_retried = closures["attempted"]
+                report.closures_completed = closures["closed"]
 
-            # Webhooks that failed reconciliation. Razorpay has stopped redelivering
-            # them (we returned 200), so this sweep is the only thing that will.
-            events = retry_failed_events(session)
-            report.events_retried = events["attempted"]
-            report.events_recovered = events["recovered"]
+                # Webhooks that failed reconciliation. Razorpay has stopped redelivering
+                # them (we returned 200), so this sweep is the only thing that will.
+                events = retry_failed_events(session)
+                report.events_retried = events["attempted"]
+                report.events_recovered = events["recovered"]
 
-        invoices = _eligible_invoices(session, invoice_ids)
-        if limit:
-            invoices = invoices[:limit]
+            invoices = _eligible_invoices(session, invoice_ids)
+            if limit:
+                invoices = invoices[:limit]
 
-        for invoice in invoices:
-            report.considered += 1
-            try:
-                merchant = session.get(Merchant, invoice.merchant_id)
-                _process_invoice(
-                    session,
-                    invoice,
-                    merchant_name=merchant.name if merchant else "Vasooli",
-                    report=report,
-                    dry_run=dry_run,
-                    use_llm=use_llm and not report.ai_disabled_after_failure,
-                )
-                session.commit()
-            except Exception as exc:  # noqa: BLE001 - one invoice must not stop the cycle
-                session.rollback()
-                report.errors.append({"invoice_number": invoice.invoice_number, "error": str(exc)})
-                log.exception("recovery.invoice_failed", invoice_number=invoice.invoice_number)
+            for invoice in invoices:
+                report.considered += 1
+                try:
+                    # Selecting the work is cross-tenant; acting on it is not. Pinning
+                    # the tenant for the whole invoice — not just one statement — is
+                    # what lets the diagnosis, the reminder row and the delivery
+                    # updates all commit, since each commit would otherwise drop the
+                    # tenant and the next write would be refused by WITH CHECK.
+                    with merchant_scope(session, invoice.merchant_id):
+                        merchant = session.get(Merchant, invoice.merchant_id)
+                        _process_invoice(
+                            session,
+                            invoice,
+                            merchant_name=merchant.name if merchant else "Vasooli",
+                            report=report,
+                            dry_run=dry_run,
+                            use_llm=use_llm and not report.ai_disabled_after_failure,
+                        )
+                        session.commit()
+                except Exception as exc:  # noqa: BLE001 - one invoice must not stop the cycle
+                    session.rollback()
+                    report.errors.append(
+                        {"invoice_number": invoice.invoice_number, "error": str(exc)}
+                    )
+                    log.exception("recovery.invoice_failed", invoice_number=invoice.invoice_number)
     finally:
         try:
             lock_conn.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": CYCLE_LOCK_ID})

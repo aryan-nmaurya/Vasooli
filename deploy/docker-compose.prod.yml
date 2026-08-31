@@ -11,6 +11,16 @@
 #     hours, and `vasooli:vasooli` is the first password they try.
 #   * The API never starts APScheduler. The dedicated scheduler and worker services
 #     own background execution, with Postgres advisory locks preventing duplicates.
+#   * Migrations run ONCE, in their own service, as the owning role. The application
+#     services then connect as `vasooli_app`, which is NOSUPERUSER/NOBYPASSRLS.
+#
+#     Both halves of that matter. Every service used to run `alembic upgrade head` in
+#     its own start command, so three containers raced the same migration on every
+#     deploy. And all three connected as the owning superuser, which bypasses
+#     row-level security unconditionally — so the forced RLS policies were inert and
+#     the only thing separating tenants was application code. Pointing the app at the
+#     owner is not a smaller version of the right configuration; it is a different one,
+#     and it is the one where the demo console can read live merchants' ledgers.
 
 name: vasooli
 
@@ -43,6 +53,25 @@ services:
         max-size: "10m"
         max-file: "5"
 
+  # Schema changes, once per deploy, as the role that owns the tables. DDL is not the
+  # application's job — and an application role that could ALTER TABLE could switch off
+  # the policies that constrain it.
+  migrate:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    restart: "no"
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-vasooli}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-vasooli}
+      PROCESS_ROLE: migrate
+      SCHEDULER_ENABLED: "false"
+    command: ["sh", "-c", "alembic upgrade head"]
+    depends_on:
+      db:
+        condition: service_healthy
+    logging: *bounded-logging
+
   api:
     build:
       context: ../backend
@@ -51,12 +80,15 @@ services:
     env_file: .env
     environment:
       # Composed here rather than in .env so the password lives in exactly one place.
-      DATABASE_URL: postgresql://${POSTGRES_USER:-vasooli}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-vasooli}
+      # `vasooli_app`, not the owner: see the header note and scripts/create_app_role.sql.
+      DATABASE_URL: postgresql://vasooli_app:${APP_DB_PASSWORD:?set APP_DB_PASSWORD in deploy/.env}@db:5432/${POSTGRES_DB:-vasooli}
       PROCESS_ROLE: api
       SCHEDULER_ENABLED: "false"
     depends_on:
       db:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     expose:
       - "8000"
     healthcheck:
@@ -78,13 +110,15 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-vasooli}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-vasooli}
+      DATABASE_URL: postgresql://vasooli_app:${APP_DB_PASSWORD:?set APP_DB_PASSWORD in deploy/.env}@db:5432/${POSTGRES_DB:-vasooli}
       PROCESS_ROLE: scheduler
       SCHEDULER_ENABLED: "true"
-    command: ["sh", "-c", "alembic upgrade head && python -m app.scheduler_process"]
+    command: ["sh", "-c", "python -m app.scheduler_process"]
     depends_on:
       db:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     deploy:
       resources:
         limits:
@@ -98,14 +132,16 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-vasooli}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-vasooli}
+      DATABASE_URL: postgresql://vasooli_app:${APP_DB_PASSWORD:?set APP_DB_PASSWORD in deploy/.env}@db:5432/${POSTGRES_DB:-vasooli}
       PROCESS_ROLE: worker
       SCHEDULER_ENABLED: "false"
       WORKER_KIND: all
-    command: ["sh", "-c", "alembic upgrade head && python -m app.worker"]
+    command: ["sh", "-c", "python -m app.worker"]
     depends_on:
       db:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     deploy:
       resources:
         limits:

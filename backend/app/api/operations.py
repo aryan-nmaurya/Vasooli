@@ -9,6 +9,7 @@ from sqlmodel import select
 
 from app.core.clock import utcnow
 from app.core.db import SessionDep, check_database
+from app.core.middleware import client_ip
 from app.models import DataRequest, JobRun
 from app.services.auth import audit
 from app.services.authorization import LiveContext, require_live_permission, require_live_reauth
@@ -43,11 +44,40 @@ def readiness(
             "status": row.status if row else "never_run",
             "stale": row is None or now - row.started_at > timedelta(hours=36),
         }
+    # "Ready" used to mean only "the database answered", so a workspace whose recovery
+    # cycle had never run once — the single thing the product exists to do — reported
+    # itself ready with `recovery_cycle: never_run, stale: true` sitting in the same
+    # response. A readiness signal that stays green while the automation is dead is
+    # worse than no signal, because someone acts on it.
+    stale_jobs = sorted(job_id for job_id, state in jobs.items() if state["stale"])
+    failed_jobs = sorted(job_id for job_id, state in jobs.items() if state["status"] == "failed")
+    # A failed job or a cycle that has not run is degraded, not merely noteworthy:
+    # in both cases nobody's invoices are being chased right now.
+    if not db_ok or failed_jobs or "recovery_cycle" in stale_jobs:
+        status_value = "degraded"
+    elif stale_jobs:
+        status_value = "attention"
+    else:
+        status_value = "ready"
+
     return {
-        "status": "ready" if db_ok else "degraded",
+        "status": status_value,
         "database": db_ok,
         "detail": detail,
         "jobs": jobs,
+        # Named explicitly so the UI does not have to re-derive the reason from the
+        # job map, and so the reason survives into logs and screenshots.
+        "stale_jobs": stale_jobs,
+        "failed_jobs": failed_jobs,
+        "summary": (
+            detail
+            if not db_ok
+            else "Automation is running."
+            if status_value == "ready"
+            else "The daily recovery cycle has not run recently — no invoice is being chased."
+            if "recovery_cycle" in stale_jobs
+            else f"Background job(s) need attention: {', '.join(failed_jobs or stale_jobs)}."
+        ),
     }
 
 
@@ -112,7 +142,7 @@ def _create_request(
         actor_user_id=context.user.id,
         object_type="data_request",
         object_id=row.id,
-        ip_address=request.client.host if request.client else None,
+        ip_address=client_ip(request),
     )
     session.commit()
     return {"id": str(row.id), "status": row.status, "type": row.request_type}

@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     razorpay_plan_id_growth: str | None = None
     razorpay_plan_id_scale: str | None = None
     razorpay_subscriptions_enabled: bool = False
+    live_trial_days: int = Field(default=14, ge=1, le=90)
     razorpay_oauth_client_id: str | None = None
     razorpay_oauth_client_secret: str | None = None
     razorpay_oauth_redirect_uri: str | None = None
@@ -52,6 +53,7 @@ class Settings(BaseSettings):
     zoho_accounts_url: str = "https://accounts.zoho.com"
     zoho_oauth_scope: str = "ZohoBooks.invoices.READ,ZohoBooks.settings.READ"
     frontend_live_integrations_url: str = "http://localhost:3000/live/integrations"
+    frontend_public_url: str = "http://localhost:3000"
     #: Minimum gap between Razorpay API calls. Test mode rate-limits aggressively —
     #: a 60-invoice batch fired flat out trips it within a few requests.
     razorpay_min_request_interval_seconds: float = 1.5
@@ -193,6 +195,23 @@ class Settings(BaseSettings):
             raise RuntimeError(
                 f"DEMO_TIME_OFFSET_DAYS must be 0 in production (got {self.demo_time_offset_days})"
             )
+        # Demo affordances that have no business running in a production process.
+        # `demo_time_offset_days` was already refused; these three were not, and each
+        # is a way for the guided demo to reach a real merchant's data:
+        #   * simulated replies write a fabricated customer statement into an audit
+        #     trail, with no signature and no sender correlation;
+        #   * demo controls move a clock the recovery cycle reads, which changes how
+        #     overdue every live invoice is;
+        #   * reviewer access is a shared credential to the operator console.
+        # Scope checks now stop each of them crossing into live data on their own, but
+        # a production process should not be offering them at all.
+        for flag, name in (
+            (self.allow_simulated_replies, "ALLOW_SIMULATED_REPLIES"),
+            (self.demo_controls_enabled, "DEMO_CONTROLS_ENABLED"),
+            (self.reviewer_access_enabled, "REVIEWER_ACCESS_ENABLED"),
+        ):
+            if flag:
+                raise RuntimeError(f"{name} must be false in production")
         if self.admin_api_key in {"", "changeme", "local-dev-key"}:
             raise RuntimeError("ADMIN_API_KEY must be set to a real secret in production")
         if not self.session_secret or len(self.session_secret) < 32:
@@ -211,6 +230,17 @@ class Settings(BaseSettings):
                 "  python -c 'from cryptography.fernet import Fernet; "
                 "print(Fernet.generate_key().decode())'"
             )
+        if self.live_registration_enabled:
+            if self.email_dry_run:
+                raise RuntimeError(
+                    "LIVE_REGISTRATION_ENABLED requires EMAIL_DRY_RUN=false so email "
+                    "verification and password recovery can be completed"
+                )
+            if not self.frontend_public_url.startswith("https://"):
+                raise RuntimeError(
+                    "FRONTEND_PUBLIC_URL must be an https:// origin when live "
+                    "registration is enabled"
+                )
 
     def assert_safe_to_send(self) -> None:
         """Refuse to send live mail without a redirect target.

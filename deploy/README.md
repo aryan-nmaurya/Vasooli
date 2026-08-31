@@ -68,16 +68,38 @@ cp .env.example .env && chmod 600 .env
 nano .env                      # fill everything; see section 4
 
 docker compose -f docker-compose.rds.yml build api
-docker compose -f docker-compose.rds.yml run --rm api alembic upgrade head
+
+# Migrations run as the OWNER (DATABASE_URL), once, before anything serves traffic.
+docker compose -f docker-compose.rds.yml run --rm \
+  -e DATABASE_URL="$DATABASE_URL" api alembic upgrade head
+
+# Create the application role. This step is not optional — see below.
+docker compose -f docker-compose.rds.yml run --rm \
+  -e DATABASE_URL="$DATABASE_URL" api \
+  psql "$DATABASE_URL" -v app_password="'<APP_DB_PASSWORD>'" -f scripts/create_app_role.sql
+
 docker compose -f docker-compose.rds.yml run --rm api \
   python -m scripts.manage_operator create owner --display-name "Owner" --role admin
 docker compose -f docker-compose.rds.yml up -d
 docker compose -f docker-compose.rds.yml logs -f caddy   # watch the cert issue
 ```
 
-The API container runs `alembic upgrade head` before binding, so migrations apply on
-every deploy. A container that boots against an out-of-date schema fails in a far more
-confusing way than one that refuses to start.
+**Why two database roles.** `DATABASE_URL` is the owner and runs migrations.
+`APP_DATABASE_URL` is `vasooli_app`, and it is what every application process connects
+as. Postgres superusers and table owners bypass row-level security unconditionally, so
+running the app as the owner leaves every forced RLS policy inert: tenant isolation and
+the demo/live boundary then rest entirely on application-layer filters. Both layers are
+supposed to hold. Verify after the first deploy:
+
+```bash
+psql "$DATABASE_URL" -c \
+  "SELECT rolname, rolsuper, rolbypassrls FROM pg_roles WHERE rolname = 'vasooli_app'"
+# Expect: vasooli_app | f | f
+```
+
+Migrations no longer run from the API, scheduler and worker start commands. All three
+used to run `alembic upgrade head` themselves, which meant three containers racing the
+same migration on every deploy.
 
 Redeploy after a push:
 

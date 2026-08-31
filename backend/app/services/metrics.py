@@ -19,6 +19,7 @@ from sqlmodel import Session, select
 from app.core.constants import InvoiceStatus, PromiseStatus
 from app.core.money import format_inr
 from app.models import Invoice, Promise
+from app.services.demo_scope import demo_invoices
 
 #: Invoices no longer being pursued.
 CLOSED_STATUSES = (InvoiceStatus.RECOVERED, InvoiceStatus.WRITTEN_OFF)
@@ -68,9 +69,23 @@ class RecoveryMetrics:
         }
 
 
-def compute_metrics(session: Session, *, since: datetime | None = None) -> RecoveryMetrics:
+def compute_metrics(
+    session: Session,
+    *,
+    since: datetime | None = None,
+    merchant_id=None,
+) -> RecoveryMetrics:
     """Everything the overview panel shows, from one pass over the ledger."""
-    invoices = list(session.exec(select(Invoice)).all())
+    # The overview is the demo console's headline. Without this filter a live
+    # merchant's receivables were counted into the demo's totals the moment anyone
+    # registered — see app.services.demo_scope.
+    invoice_query = (
+        select(Invoice).where(Invoice.merchant_id == merchant_id)
+        if merchant_id is not None
+        else demo_invoices()
+    )
+    invoices = list(session.exec(invoice_query).all())
+    invoice_ids = [invoice.id for invoice in invoices]
 
     recovered = [i for i in invoices if i.status == InvoiceStatus.RECOVERED]
     if since is not None:
@@ -111,11 +126,16 @@ def compute_metrics(session: Session, *, since: datetime | None = None) -> Recov
             key = str(invoice.reason_category)
             counts_by_reason[key] = counts_by_reason.get(key, 0) + 1
 
+    promise_scope = Promise.invoice_id.in_(invoice_ids)  # type: ignore[union-attr]
     active_promises = session.exec(
-        select(func.count()).select_from(Promise).where(Promise.status == PromiseStatus.ACTIVE)
+        select(func.count())
+        .select_from(Promise)
+        .where(promise_scope, Promise.status == PromiseStatus.ACTIVE)
     ).one()
     broken_promises = session.exec(
-        select(func.count()).select_from(Promise).where(Promise.status == PromiseStatus.BROKEN)
+        select(func.count())
+        .select_from(Promise)
+        .where(promise_scope, Promise.status == PromiseStatus.BROKEN)
     ).one()
 
     return RecoveryMetrics(

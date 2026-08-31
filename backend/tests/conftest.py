@@ -42,6 +42,12 @@ os.environ["RESEND_DELIVERY_WEBHOOK_SECRET"] = (
 )
 os.environ["INBOUND_EMAIL_WEBHOOK_SECRET"] = "test-normalizer-secret"
 os.environ["SCHEDULER_ENABLED"] = "false"
+# Feature flags that change a public API response, pinned for the same reason as the
+# credentials above: a developer enabling either of these locally would otherwise flip
+# `/api/auth/modes`, and the frozen-demo fixture would fail on their machine and pass
+# in CI. A test that depends on someone's .env is not a test.
+os.environ["REVIEWER_ACCESS_ENABLED"] = "false"
+os.environ["LIVE_REGISTRATION_ENABLED"] = "false"
 os.environ["DEMO_TIME_OFFSET_DAYS"] = "0"
 os.environ["ENVIRONMENT"] = "test"
 

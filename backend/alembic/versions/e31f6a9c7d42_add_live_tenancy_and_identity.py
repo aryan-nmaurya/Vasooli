@@ -392,10 +392,10 @@ def downgrade() -> None:
         "merchant_memberships",
         "merchant_invitations",
         "role_permissions",
+        "user_permission_overrides",
+        "mfa_factors",
         "roles",
         "permissions",
-        "mfa_factors",
-        "user_permission_overrides",
         "users",
     ):
         op.drop_table(table)

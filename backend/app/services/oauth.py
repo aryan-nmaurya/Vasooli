@@ -34,6 +34,7 @@ class OAuthTokens:
     expires_in: int | None
     account_id: str | None
     scopes: list[str]
+    api_domain: str | None = None
 
 
 def _hash(value: str) -> str:
@@ -233,12 +234,26 @@ def exchange_zoho_code(code: str, redirect_uri: str) -> OAuthTokens:
     access_token = payload.get("access_token")
     if not access_token:
         raise OAuthExchangeError("Zoho OAuth response did not include an access token")
+    api_domain = str(payload.get("api_domain") or "https://www.zohoapis.com").rstrip("/")
+    organizations = httpx.get(
+        f"{api_domain}/books/v3/organizations",
+        headers={"Authorization": f"Zoho-oauthtoken {access_token}"},
+        timeout=settings.razorpay_timeout_seconds,
+    )
+    if organizations.is_error:
+        raise _provider_error(organizations)
+    organization_rows = organizations.json().get("organizations") or []
+    if len(organization_rows) != 1 or not organization_rows[0].get("organization_id"):
+        raise OAuthExchangeError(
+            "Zoho Books must expose exactly one organization for this connection"
+        )
     return OAuthTokens(
         access_token=access_token,
         refresh_token=payload.get("refresh_token"),
         expires_in=int(payload["expires_in"]) if payload.get("expires_in") else None,
-        account_id=None,
+        account_id=str(organization_rows[0]["organization_id"]),
         scopes=settings.zoho_oauth_scope.split(","),
+        api_domain=api_domain,
     )
 
 
@@ -269,4 +284,5 @@ def refresh_zoho_token(refresh_token: str) -> OAuthTokens:
         expires_in=int(payload["expires_in"]) if payload.get("expires_in") else None,
         account_id=None,
         scopes=settings.zoho_oauth_scope.split(","),
+        api_domain=str(payload.get("api_domain")) if payload.get("api_domain") else None,
     )

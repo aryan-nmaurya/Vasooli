@@ -1,9 +1,12 @@
 """FastAPI application factory."""
 
 from contextlib import asynccontextmanager
+from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlmodel import Session
 
 from app.api import (
@@ -18,6 +21,7 @@ from app.api import (
     integrations,
     invoices,
     live_auth,
+    live_dashboard,
     live_invoices,
     operations,
     payment_connections,
@@ -38,6 +42,24 @@ from app.scheduler.setup import shutdown_scheduler, start_scheduler
 from app.services.demo_control import load_into_clock
 
 log = get_logger("app")
+
+
+def _scrub_validation_errors(errors: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Say what was wrong with the request without repeating the request back.
+
+    FastAPI's default validation response includes `input`: the value that failed. On
+    a login route the value that failed is the password, so a mistyped field name — or
+    a client sending `{"password": ...}` without `username` — returned a 422 with the
+    plaintext password in the body. That lands in browser devtools, proxy access logs,
+    and any error tracker watching 4xx responses.
+
+    `loc` and `msg` are what a client needs to fix the request. `input` and `ctx` are
+    the parts that echo submitted data, and neither is needed to act on the error.
+    """
+    return [
+        {"type": error.get("type"), "loc": error.get("loc"), "msg": error.get("msg")}
+        for error in errors
+    ]
 
 
 @asynccontextmanager
@@ -108,6 +130,13 @@ def create_app() -> FastAPI:
         expose_headers=["X-Request-ID"],
     )
 
+    @app.exception_handler(RequestValidationError)
+    async def validation_error_handler(_request: Request, exc: RequestValidationError):
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            content={"detail": _scrub_validation_errors(exc.errors())},
+        )
+
     app.include_router(health.router)
     app.include_router(auth.router)
     app.include_router(live_auth.router)
@@ -117,6 +146,7 @@ def create_app() -> FastAPI:
     app.include_router(operations.router)
     app.include_router(payment_connections.router)
     app.include_router(team.router)
+    app.include_router(live_dashboard.router)
     app.include_router(live_invoices.router)
     app.include_router(invoices.router)
     app.include_router(webhooks.router)

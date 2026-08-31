@@ -5,7 +5,7 @@ import struct
 
 from app.core.config import settings
 from app.services.mfa import new_secret, provisioning_uri, verify_code
-from app.services.oauth import razorpay_authorization_url
+from app.services.oauth import exchange_zoho_code, razorpay_authorization_url
 
 
 def _totp(secret: str, counter: int) -> str:
@@ -31,3 +31,71 @@ def test_razorpay_authorization_url_is_state_bound(monkeypatch):
     assert "client_id=client-123" in url
     assert "state=opaque-state" in url
     assert "redirect_uri=https%3A%2F%2Fapp.test%2Fcallback" in url
+
+
+def test_zoho_exchange_resolves_the_books_organization(monkeypatch):
+    import app.services.oauth as mod
+
+    class Response:
+        is_error = False
+
+        def __init__(self, payload):
+            self._payload = payload
+
+        def json(self):
+            return self._payload
+
+    monkeypatch.setattr(settings, "zoho_oauth_client_id", "zoho-client")
+    monkeypatch.setattr(settings, "zoho_oauth_client_secret", "zoho-secret")
+    monkeypatch.setattr(
+        mod.httpx,
+        "post",
+        lambda *args, **kwargs: Response(
+            {
+                "access_token": "access",
+                "refresh_token": "refresh",
+                "expires_in": 3600,
+                "api_domain": "https://www.zohoapis.in",
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        mod.httpx,
+        "get",
+        lambda *args, **kwargs: Response({"organizations": [{"organization_id": "org-123"}]}),
+    )
+
+    tokens = exchange_zoho_code("code", "https://api.example.test/callback")
+
+    assert tokens.account_id == "org-123"
+    assert tokens.api_domain == "https://www.zohoapis.in"
+
+
+def test_zoho_exchange_refuses_to_guess_between_organizations(monkeypatch):
+    import pytest
+
+    import app.services.oauth as mod
+    from app.services.oauth import OAuthExchangeError
+
+    class Response:
+        is_error = False
+
+        def __init__(self, payload):
+            self._payload = payload
+
+        def json(self):
+            return self._payload
+
+    monkeypatch.setattr(settings, "zoho_oauth_client_id", "zoho-client")
+    monkeypatch.setattr(settings, "zoho_oauth_client_secret", "zoho-secret")
+    monkeypatch.setattr(mod.httpx, "post", lambda *args, **kwargs: Response({"access_token": "a"}))
+    monkeypatch.setattr(
+        mod.httpx,
+        "get",
+        lambda *args, **kwargs: Response(
+            {"organizations": [{"organization_id": "one"}, {"organization_id": "two"}]}
+        ),
+    )
+
+    with pytest.raises(OAuthExchangeError, match="exactly one organization"):
+        exchange_zoho_code("code", "https://api.example.test/callback")

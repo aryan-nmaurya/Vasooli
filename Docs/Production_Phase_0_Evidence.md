@@ -10,6 +10,7 @@ staging rehearsal.
 | Evidence | State | Location |
 |---|---|---|
 | Pre-production source tag | Complete locally | `demo-freeze-2026-08-30` at `47243ee` |
+| Completion-audit re-baseline | Complete locally (tag pending review) | `Docs/demo-freeze-manifest.json`, 2026-08-31 |
 | Eight-invoice stable ledger | Complete | `backend/tests/golden/demo/ledger.json` |
 | Full demo API snapshots | Complete (45 contracts) | `backend/tests/golden/demo/api_responses.json` |
 | Eight ten-check policy traces | Complete | `backend/tests/golden/demo/policy_traces.json` |
@@ -83,5 +84,6 @@ These are intentionally not marked complete by source changes:
 - [ ] Connect error tracking and attach a verified test event.
 - [ ] Rehearse rollback from the first production feature flag and attach observed evidence.
 
-Phase 1 must not start on a release branch until these ownership/evidence items are
-closed or explicitly risk-accepted by the named launch owner.
+The repository implementation phases are complete. Production launch remains gated by
+the external ownership/evidence items above until they are closed or explicitly
+risk-accepted by the named launch owner.

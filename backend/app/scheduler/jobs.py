@@ -9,18 +9,22 @@ from contextlib import contextmanager
 
 import httpx
 from sqlalchemy import text
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from app.core.config import settings
 from app.core.db import engine
 from app.core.logging import get_logger
+from app.models import ErpConnection, Merchant
+from app.services.authorization import service_scope, set_merchant_context
 from app.services.automation import record_run
 from app.services.billing_reconciliation import reconcile_billing
 from app.services.closure import retry_pending_closures
+from app.services.erp import sync_connection
 from app.services.messaging import retry_failed_deliveries
 from app.services.reconciliation import retry_failed_events
 from app.services.recovery import run_recovery_cycle
 from app.services.replies import retry_failed_inbound
+from app.services.retention import prune_expired
 from app.services.sync import sync_payment_links
 
 log = get_logger("scheduler")
@@ -34,6 +38,11 @@ _JOB_LOCK_KEYS = {
     "retry_operations": 2,
     "service_heartbeat": 3,
     "billing_reconciliation": 4,
+    "retention_prune": 5,
+    # Distinct from retention_prune. Both were 5, so the two jobs shared one mutex and
+    # whichever ran second was skipped as "already running" — silently, with a log line
+    # that named the wrong job.
+    "erp_sync": 6,
 }
 
 
@@ -97,7 +106,7 @@ def recovery_cycle_job() -> None:
     """
     try:
         with record_run("recovery_cycle") as detail:
-            with Session(engine) as session:
+            with Session(engine) as session, service_scope(session):
                 report = run_recovery_cycle(session)
             detail.update(report.as_dict())
             log.info("scheduler.recovery_cycle_done", **report.as_dict())
@@ -119,7 +128,7 @@ def payment_link_sync_job() -> None:
             if not mine:
                 return
             with record_run("payment_link_sync") as detail:
-                with Session(engine) as session:
+                with Session(engine) as session, service_scope(session):
                     report = sync_payment_links(session)
                 detail.update(report)
                 if report["checked"]:
@@ -135,7 +144,7 @@ def retry_operations_job() -> None:
             if not mine:
                 return
             with record_run("retry_operations") as detail:
-                with Session(engine) as session:
+                with Session(engine) as session, service_scope(session):
                     deliveries = retry_failed_deliveries(session)
                     closures = retry_pending_closures(session)
                     events = retry_failed_events(session)
@@ -176,10 +185,80 @@ def billing_reconciliation_job() -> None:
             if not mine:
                 return
             with record_run("billing_reconciliation") as detail:
-                with Session(engine) as session:
+                with Session(engine) as session, service_scope(session):
                     report = reconcile_billing(session)
                 detail.update(report)
                 if report["status"] != "completed":
                     log.warning("scheduler.billing_reconciliation_drift", **report)
     except Exception:
         log.exception("scheduler.billing_reconciliation_failed")
+
+
+def erp_sync_job() -> None:
+    """Poll configured live ERP connections, one RLS-scoped merchant at a time."""
+    try:
+        with _only_one_runner("erp_sync") as mine:
+            if not mine:
+                return
+            with record_run("erp_sync") as detail:
+                attempted = completed = failed = 0
+                with Session(engine) as session:
+                    merchant_ids = session.exec(
+                        select(Merchant.id).where(
+                            Merchant.mode == "live",
+                            Merchant.is_demo.is_(False),  # type: ignore[union-attr]
+                            Merchant.status.in_(["onboarding", "active"]),  # type: ignore[union-attr]
+                        )
+                    ).all()
+                    for merchant_id in merchant_ids:
+                        set_merchant_context(session, merchant_id)
+                        connection_ids = session.exec(
+                            select(ErpConnection.id).where(
+                                ErpConnection.merchant_id == merchant_id,
+                                ErpConnection.provider.in_(["zoho", "tally"]),  # type: ignore[union-attr]
+                                ErpConnection.status.in_(["connected", "healthy", "error"]),  # type: ignore[union-attr]
+                            )
+                        ).all()
+                        session.rollback()
+                        for connection_id in connection_ids:
+                            set_merchant_context(session, merchant_id)
+                            connection = session.get(ErpConnection, connection_id)
+                            if connection is None:
+                                session.rollback()
+                                continue
+                            attempted += 1
+                            run = sync_connection(session, connection)
+                            if run.status == "completed":
+                                completed += 1
+                            else:
+                                failed += 1
+                detail.update(attempted=attempted, completed=completed, failed=failed)
+                if attempted:
+                    log.info(
+                        "scheduler.erp_sync_done",
+                        attempted=attempted,
+                        completed=completed,
+                        failed=failed,
+                    )
+    except Exception:
+        log.exception("scheduler.erp_sync_failed")
+
+
+def retention_prune_job() -> None:
+    """Remove expired sessions, refresh tokens and one-time states.
+
+    Nothing deleted a row from these tables, so they grew with every login and every
+    connect attempt while being read on the authenticated hot path. Runs off-peak: it
+    is maintenance, and it should never compete with a recovery cycle for locks.
+    """
+    try:
+        with _only_one_runner("retention_prune") as mine:
+            if not mine:
+                return
+            with record_run("retention_prune") as detail:
+                with Session(engine) as session:
+                    report = prune_expired(session)
+                    session.commit()
+                detail.update(deleted=report.deleted, total=report.total)
+    except Exception:
+        log.exception("scheduler.retention_prune_failed")

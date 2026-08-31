@@ -15,6 +15,7 @@ from app.api.deps import OperatorRequired
 from app.core.config import settings
 from app.core.db import SessionDep
 from app.models import Invoice
+from app.services.demo_scope import is_demo_invoice
 from app.services.replies import handle_reply
 
 router = APIRouter(prefix="/api", tags=["replies"], dependencies=[OperatorRequired])
@@ -56,8 +57,12 @@ def simulate_reply(
             "/api/webhooks/resend/inbound.",
         )
 
+    # A fabricated customer statement must never be injectable into a real merchant's
+    # ledger. The flag alone is not the boundary: it is a deployment setting, and a
+    # demo deployment that turns it on is exactly the one live merchants also sign up
+    # to. Scope, not configuration, is what keeps this on the demo side.
     invoice = session.get(Invoice, invoice_id)
-    if invoice is None:
+    if not is_demo_invoice(session, invoice):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Invoice not found")
 
     outcome = handle_reply(session, invoice, payload.body, use_llm=payload.use_llm)

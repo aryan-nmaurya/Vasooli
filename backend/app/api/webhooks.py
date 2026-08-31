@@ -46,7 +46,7 @@ from app.models import (
     PaymentConnection,
     ReconciliationEvent,
 )
-from app.services.authorization import set_merchant_context
+from app.services.authorization import service_scope, set_merchant_context
 from app.services.delivery_events import record_delivery_event
 from app.services.messaging import reply_address_for
 from app.services.reconciliation import (
@@ -132,6 +132,16 @@ def _find_inbound_invoice(
     the real sender is recorded verbatim on the InboundMessage, so the trail never
     claims the customer wrote something the operator did.
     """
+    with service_scope(session):
+        return _correlate_inbound(session, sender=sender, recipients=recipients)
+
+
+def _correlate_inbound(
+    session: Session,
+    *,
+    sender: str,
+    recipients: list[str],
+) -> Invoice | None:
     sender_address = parseaddr(sender)[1].casefold()
     recipient_addresses = {parseaddr(value)[1].casefold() for value in recipients}
 
@@ -468,9 +478,17 @@ async def razorpay_webhook(request: Request, session: SessionDep) -> dict[str, s
     # Collection webhooks may be delivered for a merchant's connected Razorpay
     # account. Resolve that account before recording the event and reject a payload
     # whose account does not belong to the invoice's tenant.
-    matched_invoice, _, _ = match_invoice(session, payload)
+    # The payload names a payment link, not a tenant. Resolving which merchant it
+    # belongs to is therefore a cross-tenant read and has to say so explicitly; the
+    # scope is dropped again before anything is written.
+    with service_scope(session):
+        matched_invoice, _, _ = match_invoice(session, payload)
+        merchant = (
+            session.get(Merchant, matched_invoice.merchant_id)
+            if matched_invoice is not None
+            else None
+        )
     if matched_invoice is not None:
-        merchant = session.get(Merchant, matched_invoice.merchant_id)
         # The append-only collection ledger is RLS-protected. Establish the tenant
         # context before inserting the envelope or applying the payment, including
         # demo events; unmatched events never write merchant-owned rows.

@@ -7,6 +7,7 @@ native dependency in the production image.
 """
 
 import base64
+import contextlib
 import hashlib
 import secrets
 
@@ -85,6 +86,24 @@ def perform_dummy_password_check(password: str) -> None:
     though the HTTP status and body are deliberately identical.
     """
     _derive(password, b"vasooli-login-dummy", n=SCRYPT_N, r=SCRYPT_R, p=SCRYPT_P)
+
+
+#: A real Argon2id hash of a value nobody can present, so the unknown-email branch of
+#: live login does the same work as the known-email branch. Computed once at import.
+_DUMMY_LIVE_HASH = _LIVE_HASHER.hash("vasooli-live-login-dummy")
+
+
+def perform_dummy_live_password_check(password: str) -> None:
+    """The Argon2id equivalent, for the live login's unknown-email branch.
+
+    `perform_dummy_password_check` spends scrypt work and is right for operator login.
+    Live identities are Argon2id, which is a different cost, so reusing the scrypt one
+    would leave a timing gap of a different shape rather than closing it. Verifying
+    against a fixed hash costs what a real verification costs.
+    """
+    # A mismatch is the expected outcome; the work, not the answer, is the point.
+    with contextlib.suppress(Exception):
+        _LIVE_HASHER.verify(_DUMMY_LIVE_HASH, password)
 
 
 def hash_live_password(password: str) -> str:

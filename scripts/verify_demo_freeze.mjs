@@ -130,6 +130,7 @@ async function currentManifest() {
   return {
     schema_version: 1,
     frozen_at_tag: "demo-freeze-2026-08-30",
+    rebaselined_at: "2026-08-31",
     backend_goldens: await Promise.all(goldenPaths.map(fileRecord)),
     screenshots: await Promise.all(screenshotRoutes.map(screenshotRecord)),
     frozen_frontend_sources: await Promise.all(sourcePaths.map(fileRecord)),

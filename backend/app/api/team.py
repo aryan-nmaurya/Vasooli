@@ -13,6 +13,7 @@ from sqlmodel import select
 from app.core.clock import utcnow
 from app.core.config import settings
 from app.core.db import SessionDep
+from app.core.middleware import client_ip
 from app.core.passwords import hash_live_password
 from app.models import (
     MerchantInvitation,
@@ -160,7 +161,7 @@ def invite(
         actor_user_id=context.user.id,
         object_type="merchant_invitation",
         object_id=row.id,
-        ip_address=request.client.host if request.client else None,
+        ip_address=client_ip(request),
         detail={"email": email, "role": role.slug},
     )
     session.commit()
@@ -197,7 +198,7 @@ def revoke_invitation(
         actor_user_id=context.user.id,
         object_type="merchant_invitation",
         object_id=invitation.id,
-        ip_address=request.client.host if request.client else None,
+        ip_address=client_ip(request),
     )
     session.commit()
     return {"status": "revoked"}
@@ -231,7 +232,7 @@ def revoke_membership(
         actor_user_id=context.user.id,
         object_type="merchant_membership",
         object_id=membership.id,
-        ip_address=request.client.host if request.client else None,
+        ip_address=client_ip(request),
     )
     session.commit()
     return {"status": "revoked"}
@@ -309,7 +310,7 @@ def accept_invite(payload: AcceptInviteRequest, request: Request, session: Sessi
         actor_user_id=user.id,
         object_type="merchant_membership",
         object_id=membership.id,
-        ip_address=request.client.host if request.client else None,
+        ip_address=client_ip(request),
     )
     session.commit()
     return {"status": "accepted", "merchant_id": str(invitation.merchant_id)}

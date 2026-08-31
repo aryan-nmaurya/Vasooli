@@ -9,6 +9,8 @@ from typing import Any, Protocol
 
 import httpx
 
+from app.integrations.outbound_url import assert_safe_outbound_url
+
 
 @dataclass(frozen=True)
 class CanonicalInvoice:
@@ -25,6 +27,8 @@ class CanonicalInvoice:
     due_at: datetime
     currency: str = "INR"
     tombstoned: bool = False
+    paid_paise: int = 0
+    credited_paise: int = 0
     raw_payload: dict[str, Any] | None = None
 
 
@@ -97,10 +101,46 @@ def _invoice_from_mapping(provider: str, row: dict[str, Any], *, tenant: str) ->
                 Decimal("1"), rounding=ROUND_HALF_UP
             )
         )
+    total_paise = int(amount)
+    payments = row.get("payments") or []
+    credits = row.get("credit_notes") or row.get("creditnotes") or []
+
+    def _sum_rows(values: Any) -> int:
+        if not isinstance(values, list):
+            return 0
+        result = 0
+        for value in values:
+            if not isinstance(value, dict):
+                continue
+            raw = value.get("amount_paise")
+            if raw is None:
+                raw = Decimal(str(value.get("amount") or 0)) * 100
+            result += int(Decimal(str(raw)).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+        return result
+
+    credited_paise = int(
+        row.get("credited_paise")
+        or row.get("credits_applied_paise")
+        or (Decimal(str(row.get("credits_applied") or 0)) * 100)
+    ) or _sum_rows(credits)
+    paid_raw = row.get("paid_paise") or row.get("amount_paid_paise")
+    if paid_raw is None and row.get("payment_made") is not None:
+        paid_raw = Decimal(str(row.get("payment_made") or 0)) * 100
+    paid_paise = int(paid_raw or 0) or _sum_rows(payments)
+    if not paid_paise and row.get("balance") is not None:
+        balance_paise = int(
+            (Decimal(str(row.get("balance") or 0)) * 100).quantize(
+                Decimal("1"), rounding=ROUND_HALF_UP
+            )
+        )
+        paid_paise = max(0, total_paise - balance_paise - credited_paise)
+    if row.get("status") in {"paid", "closed"} and not paid_paise:
+        paid_paise = max(0, total_paise - credited_paise)
+
     return CanonicalInvoice(
         source_system=provider,
         source_tenant=tenant,
-        source_id=str(row.get("source_id") or row.get("id")),
+        source_id=str(row.get("source_id") or row.get("invoice_id") or row.get("id")),
         source_version=str(row.get("source_version") or row.get("version") or "") or None,
         updated_at=_parse_datetime(row.get("updated_at") or row.get("last_modified_time")),
         invoice_number=str(
@@ -108,11 +148,13 @@ def _invoice_from_mapping(provider: str, row: dict[str, Any], *, tenant: str) ->
         ),
         customer_name=str(row.get("customer_name") or row.get("customer_name_text") or "Unknown"),
         customer_email=str(row.get("customer_email") or row.get("email") or ""),
-        amount_paise=int(amount),
+        amount_paise=total_paise,
         issued_at=issued,
         due_at=due,
         currency=str(row.get("currency") or "INR"),
         tombstoned=bool(row.get("tombstoned", False) or row.get("status") in {"void", "cancelled"}),
+        paid_paise=paid_paise,
+        credited_paise=credited_paise,
         raw_payload=row,
     )
 
@@ -135,6 +177,7 @@ class ZohoBooksAdapter:
         self.timeout = credentials.get("timeout_seconds") or 20
         if not self.access_token or not self.organization_id:
             raise ValueError("Zoho requires access_token and organization_id")
+        assert_safe_outbound_url(self.api_domain, what="Zoho API domain")
 
     def fetch_invoices(self, *, cursor: str | None, limit: int = 100) -> SyncPage:
         page = int(cursor or "1")
@@ -153,6 +196,7 @@ class ZohoBooksAdapter:
             headers={"Authorization": f"Zoho-oauthtoken {self.access_token}"},
             params=params,
             timeout=self.timeout,
+            follow_redirects=False,
         )
         if response.status_code == 429 or response.status_code >= 500:
             raise RuntimeError(f"Zoho transient error ({response.status_code})")
@@ -182,6 +226,10 @@ class TallyAgentAdapter:
         self.timeout = credentials.get("timeout_seconds") or 20
         if not self.endpoint or not self.agent_token:
             raise ValueError("Tally requires endpoint and agent_token")
+        # Merchant-supplied, so it is untrusted input that this process will request
+        # with its own network position. Re-checked here as well as at configuration
+        # time: DNS can change after a connection is saved.
+        assert_safe_outbound_url(self.endpoint, what="Tally agent endpoint")
 
     def fetch_invoices(self, *, cursor: str | None, limit: int = 100) -> SyncPage:
         response = httpx.get(
@@ -189,6 +237,8 @@ class TallyAgentAdapter:
             headers={"Authorization": f"Bearer {self.agent_token}"},
             params={"cursor": cursor or "", "limit": min(max(limit, 1), 500)},
             timeout=self.timeout,
+            # A redirect would move the destination after the safety check.
+            follow_redirects=False,
         )
         if response.status_code == 429 or response.status_code >= 500:
             raise RuntimeError(f"Tally agent transient error ({response.status_code})")
@@ -280,6 +330,8 @@ class CustomFixtureAdapter:
                     due_at=row["due_at"],
                     currency=str(row.get("currency") or "INR"),
                     tombstoned=bool(row.get("tombstoned", False)),
+                    paid_paise=int(row.get("paid_paise") or row.get("amount_paid_paise") or 0),
+                    credited_paise=int(row.get("credited_paise") or 0),
                     raw_payload=row,
                 )
             )

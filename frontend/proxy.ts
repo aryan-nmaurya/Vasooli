@@ -38,6 +38,14 @@ export function proxy(request: NextRequest) {
     pathname === "/guide" ||
     pathname.startsWith("/demo/") ||
     pathname.startsWith("/api/auth") ||
+    // The live API carries its own session (`vasooli_live_access`), issued by the
+    // backend and unrelated to the demo cookie this guard checks. Gating it here
+    // would demand a demo session from a live merchant who has no reason to hold
+    // one — and would make signing in impossible, since sign-in is itself a call to
+    // this prefix. As the note above says, this guard is convenience: the backend
+    // authorises every /api/live route on its own, requiring an active session, an
+    // explicit X-Merchant-ID, and a membership behind it.
+    pathname.startsWith("/api/live") ||
     pathname.startsWith("/_next") ||
     pathname === "/favicon.ico";
 

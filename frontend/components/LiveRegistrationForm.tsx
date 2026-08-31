@@ -47,7 +47,7 @@ export function LiveRegistrationForm() {
     <form onSubmit={submit} className="mx-auto max-w-xl space-y-4 rounded-2xl border border-line bg-panel p-6 shadow-sm">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Start a live workspace</h1>
-        <p className="mt-1 text-sm text-ink-3">Your demo remains untouched. Live onboarding creates a separate merchant.</p>
+        <p className="mt-1 text-sm text-ink-3">Create your secure merchant workspace and verify your work email.</p>
       </div>
       <label className="block text-sm">Business name<input name="business" required minLength={2} className="mt-1 w-full rounded-lg border border-line bg-surface px-3 py-2" /></label>
       <label className="block text-sm">Work email<input name="email" type="email" required className="mt-1 w-full rounded-lg border border-line bg-surface px-3 py-2" /></label>
@@ -56,8 +56,9 @@ export function LiveRegistrationForm() {
         <label className="block text-sm">Country<input name="country" defaultValue="IN" pattern="[A-Z]{2}" className="mt-1 w-full rounded-lg border border-line bg-surface px-3 py-2" /></label>
         <label className="block text-sm">Timezone<input name="timezone" defaultValue="Asia/Kolkata" className="mt-1 w-full rounded-lg border border-line bg-surface px-3 py-2" /></label>
       </div>
-      <label className="flex gap-2 text-xs text-ink-3"><input name="terms" type="checkbox" required /> I accept the terms.</label>
-      <label className="flex gap-2 text-xs text-ink-3"><input name="privacy" type="checkbox" required /> I accept the privacy policy.</label>
+      <label className="flex gap-2 text-xs text-ink-3"><input name="terms" type="checkbox" required /> <span>I accept the <a href="/terms" className="text-accent underline">terms</a>.</span></label>
+      <label className="flex gap-2 text-xs text-ink-3"><input name="privacy" type="checkbox" required /> <span>I accept the <a href="/privacy" className="text-accent underline">privacy policy</a>.</span></label>
+      <p className="text-xs text-ink-4">Business data is processed under the <a href="/dpa" className="text-accent underline">Data Processing Addendum</a>.</p>
       {error ? <p role="alert" className="rounded-lg bg-rose-500/10 px-3 py-2 text-sm text-rose-700">{error}</p> : null}
       {message ? <p className="rounded-lg bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700">{message}</p> : null}
       <button disabled={busy} className="w-full rounded-lg bg-accent px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{busy ? "Creating workspace…" : "Create live workspace"}</button>

@@ -233,3 +233,48 @@ def test_verification_is_per_merchant(session, merchant):
     assert_can_send(session, merchant.id, is_demo=False)
     with pytest.raises(OutboundBlockedError):
         assert_can_send(session, other.id, is_demo=False)
+
+
+# ===========================================================================
+# Concurrency
+# ===========================================================================
+
+
+def test_the_quota_holds_under_concurrent_senders(session, merchant):
+    """The cap must be enforced by the database, not by a Python comparison.
+
+    Read-modify-write loses updates: two senders both read 9, both decide 9 < 10, both
+    write 10, and eleven messages leave. Real concurrency is available here because
+    the recovery cycle and the retry sweep take different advisory locks and can
+    overlap — so this drives twelve genuinely parallel connections at a quota of ten
+    and asserts exactly ten get through.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    from sqlmodel import Session
+
+    from app.core.db import engine
+
+    merchant_id = merchant.id
+    session.commit()  # the merchant must be visible to other connections
+
+    def claim() -> bool:
+        with Session(engine) as own:
+            try:
+                claim_send_slot(own, merchant_id, quota=10)
+                own.commit()
+                return True
+            except OutboundBlockedError:
+                own.rollback()
+                return False
+
+    with ThreadPoolExecutor(max_workers=12) as pool:
+        results = list(pool.map(lambda _: claim(), range(12)))
+
+    assert sum(results) == 10, f"expected exactly 10 sends to be allowed, got {sum(results)}"
+
+    session.expire_all()
+    bucket = session.exec(
+        select(MerchantUsageBucket).where(MerchantUsageBucket.merchant_id == merchant_id)
+    ).one()
+    assert bucket.sent_count == 10

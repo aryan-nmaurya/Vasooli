@@ -14,6 +14,7 @@ from datetime import timedelta
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, model_validator
+from sqlalchemy import or_
 from sqlmodel import Session, select
 
 from app.api.deps import Operator, OperatorRequired
@@ -48,6 +49,7 @@ from app.schemas.dashboard import (
 )
 from app.services.automation import automation_health
 from app.services.closure import close_link_for_invoice, close_payment_link
+from app.services.demo_scope import demo_invoice_ids, demo_invoices, is_demo_invoice
 from app.services.disputes import cases_for, resolve_dispute
 from app.services.events import after_id
 from app.services.explain import Explanation, explain
@@ -380,6 +382,14 @@ def _next_action(invoice: Invoice) -> str:
     return f"Tier {invoice.current_tier + 1} when due"
 
 
+def demo_invoice_or_404(session, invoice_id) -> Invoice:
+    """An invoice the demo owns, or a 404 indistinguishable from one that is absent."""
+    invoice = session.get(Invoice, invoice_id)
+    if not is_demo_invoice(session, invoice):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Invoice not found")
+    return invoice  # type: ignore[return-value]
+
+
 def _tier_label(invoice: Invoice) -> str:
     if invoice.status == InvoiceStatus.HUMAN_REVIEW:
         return "Human"
@@ -442,7 +452,7 @@ def queue(
     Ordered by outstanding value rather than age: the merchant's attention is best
     spent on the largest recoverable balance, not the oldest small one.
     """
-    query = select(Invoice)
+    query = demo_invoices()
     if status_filter:
         query = query.where(Invoice.status == status_filter)
     if reason:
@@ -491,9 +501,12 @@ def queue(
 @router.get("/dashboard/invoices/{invoice_id}", response_model=InvoiceDetail)
 def invoice_detail(invoice_id: uuid.UUID, session: SessionDep) -> InvoiceDetail:
     """Everything about one invoice, including the full audit timeline. Doc §7."""
-    invoice = session.get(Invoice, invoice_id)
-    if invoice is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Invoice not found")
+    invoice = demo_invoice_or_404(session, invoice_id)
+    return build_invoice_detail(session, invoice)
+
+
+def build_invoice_detail(session: Session, invoice: Invoice) -> InvoiceDetail:
+    """Build the shared operator/live view after the caller has authorized the invoice."""
 
     customer = session.get(Customer, invoice.customer_id)
     link = session.exec(select(PaymentLink).where(PaymentLink.invoice_id == invoice.id)).first()
@@ -536,6 +549,9 @@ def invoice_detail(invoice_id: uuid.UUID, session: SessionDep) -> InvoiceDetail:
         outstanding_display=format_inr(invoice.outstanding_paise),
         link_paid_display=format_inr(invoice.link_paid_paise),
         external_paid_display=format_inr(invoice.external_paid_paise),
+        refunded_display=format_inr(invoice.refunded_paise),
+        chargeback_display=format_inr(invoice.chargeback_paise),
+        provider_net_display=format_inr(invoice.provider_net_paid_paise),
         external_payments=[payment_view(p) for p in payments_for(session, invoice.id)],
         status=str(invoice.status),
         days_overdue=invoice.days_overdue,
@@ -613,12 +629,12 @@ def promise_tracker(
     session: SessionDep, status_filter: str | None = Query(None, alias="status")
 ) -> list[PromiseView]:
     """Active, kept, and broken promises. Doc §7."""
-    query = select(Promise)
+    query = select(Promise).where(Promise.invoice_id.in_(demo_invoice_ids()))  # type: ignore[attr-defined]
     if status_filter:
         query = query.where(Promise.status == status_filter)
     promises = list(session.exec(query.order_by(Promise.created_at.desc())).all())  # type: ignore[attr-defined]
 
-    invoices = {i.id: i for i in session.exec(select(Invoice)).all()}
+    invoices = {i.id: i for i in session.exec(demo_invoices()).all()}
     names = {c.id: c.name for c in session.exec(select(Customer)).all()}
 
     rows = []
@@ -651,7 +667,11 @@ def audit_log(
     offset: int = Query(0, ge=0),
 ) -> list[dict]:
     """The append-only log, newest first. Doc §3 Stage 6."""
-    query = select(AuditLog)
+    # Rows with no invoice are platform-level (invalid webhook signatures) and
+    # belong to nobody's ledger; everything else must be a demo invoice.
+    query = select(AuditLog).where(
+        or_(AuditLog.invoice_id.is_(None), AuditLog.invoice_id.in_(demo_invoice_ids()))  # type: ignore[attr-defined]
+    )
     if invoice_id:
         query = query.where(AuditLog.invoice_id == invoice_id)
     if action:
@@ -661,7 +681,7 @@ def audit_log(
         query.order_by(AuditLog.created_at.desc()).offset(offset).limit(limit)  # type: ignore[attr-defined]
     ).all()
 
-    numbers = {i.id: i.invoice_number for i in session.exec(select(Invoice)).all()}
+    numbers = {i.id: i.invoice_number for i in session.exec(demo_invoices()).all()}
     return [
         {
             "at": e.created_at.isoformat(),
@@ -679,9 +699,7 @@ def audit_log(
 @router.post("/dashboard/invoices/{invoice_id}/escalate")
 def manual_escalate(invoice_id: uuid.UUID, session: SessionDep, operator: Operator) -> dict:
     """Hand an invoice to a human by hand."""
-    invoice = session.get(Invoice, invoice_id)
-    if invoice is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Invoice not found")
+    invoice = demo_invoice_or_404(session, invoice_id)
     escalate_to_human(session, invoice, "manual", actor=AuditActor.human(operator))
     session.commit()
     return {"invoice_number": invoice.invoice_number, "status": str(invoice.status)}
@@ -702,9 +720,7 @@ def write_off(invoice_id: uuid.UUID, session: SessionDep, operator: Operator) ->
     first and is durable, and only then is Razorpay called. A closure failure is
     recorded on the link and retried by the sweep; it never rolls back the decision.
     """
-    invoice = session.get(Invoice, invoice_id)
-    if invoice is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Invoice not found")
+    invoice = demo_invoice_or_404(session, invoice_id)
 
     if invoice.status == InvoiceStatus.WRITTEN_OFF:
         # Two operators pressing the same button is ordinary. Re-attempt the closure
@@ -771,9 +787,9 @@ def exceptions(session: SessionDep) -> dict:
     operator: money that arrived but could not be matched, and messages that never
     reached a customer. Both were previously invisible outside application logs.
     """
-    numbers = {i.id: i.invoice_number for i in session.exec(select(Invoice)).all()}
+    numbers = {i.id: i.invoice_number for i in session.exec(demo_invoices()).all()}
     names = {c.id: c.name for c in session.exec(select(Customer)).all()}
-    invoices = {i.id: i for i in session.exec(select(Invoice)).all()}
+    invoices = {i.id: i for i in session.exec(demo_invoices()).all()}
 
     failed_events = session.exec(
         select(ReconciliationEvent)

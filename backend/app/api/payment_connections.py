@@ -10,6 +10,7 @@ from sqlmodel import select
 from app.core.clock import utcnow
 from app.core.config import settings
 from app.core.db import SessionDep
+from app.core.middleware import client_ip
 from app.models import PaymentConnection
 from app.services.authorization import LiveContext, require_live_permission, require_live_reauth
 from app.services.oauth import (
@@ -196,7 +197,7 @@ def connect(
         actor_user_id=context.user.id,
         object_type="razorpay_connection",
         object_id=row.id,
-        ip_address=request.client.host if request.client else None,
+        ip_address=client_ip(request),
         detail={"mode": row.mode, "provider_account_id": row.provider_account_id},
     )
     session.commit()
@@ -225,7 +226,7 @@ def disconnect(
             actor_user_id=context.user.id,
             object_type="razorpay_connection",
             object_id=row.id,
-            ip_address=request.client.host if request.client else None,
+            ip_address=client_ip(request),
         )
         session.commit()
     return {"status": "revoked"}

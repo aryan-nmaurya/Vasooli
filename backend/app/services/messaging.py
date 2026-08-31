@@ -36,6 +36,7 @@ from app.models import (
     Invoice,
     Merchant,
     Reminder,
+    SendingDomain,
 )
 from app.models.demo_settings import SINGLETON_ID
 from app.models.reminder import MAX_DELIVERY_ATTEMPTS
@@ -61,18 +62,48 @@ class DeliveryResult:
     message_id: str | None = None
     error: str | None = None
     retryable: bool = False
+    #: Where the message was actually addressed, when that is not the customer. The
+    #: audit trail recorded `to: customer.email` unconditionally, which is false for
+    #: every redirected send — the row claimed the customer had been written to when
+    #: the message went to an operator inbox instead.
+    redirected_to: str | None = None
 
 
 def resolve_recipient(
-    customer_email: str, *, redirect_override: str | None = None
+    customer_email: str,
+    *,
+    is_demo: bool = True,
+    redirect_override: str | None = None,
 ) -> tuple[str, str | None]:
     """Where this message actually goes, and who it was meant for.
 
-    The synthetic ledger has 52 invented domains, so unredirected live mail would
-    bounce off all of them. More importantly, if a real address ever lands in the
-    ledger, an unredirected send means a stranger receives a debt reminder. The
-    redirect makes that impossible rather than unlikely.
+    **Demo.** Always redirected. The seeded ledger has 52 invented domains, so
+    unredirected mail would bounce off all of them, and if a real address ever lands in
+    that ledger an unredirected send means a stranger receives a debt reminder. The
+    redirect makes that impossible rather than unlikely, and no runtime setting can
+    turn it off — `effective_email_redirect` can move the destination but never remove
+    it.
+
+    **Live.** Not redirected, once the deployment has explicitly opted in. This
+    distinction did not exist: the redirect was applied globally, so a live merchant's
+    reminder to their own overdue customer was delivered to the demo operator's inbox
+    instead. The customer never received it, the reminder was recorded as sent, and the
+    cadence advanced to the next tier — the product's central function, silently
+    inoperative, in exactly the configuration the deployment runs.
+
+    The opt-in is deliberate rather than a default. `ALLOW_DIRECT_CUSTOMER_EMAIL` is
+    what turns a workspace that can be registered by anyone into one that can send mail
+    to third parties, and that should be a decision someone makes, not a side effect of
+    a merchant signing up. Until it is set, live mail is still redirected — but the
+    reminder records `redirected_to` so the trail says the customer was not reached,
+    rather than implying they were.
     """
+    if not is_demo:
+        if settings.allow_direct_customer_email:
+            return customer_email, None
+        fallback = effective_email_redirect()
+        return (fallback, customer_email) if fallback else (customer_email, None)
+
     # Effective, not the raw setting: a reviewer can point mail at their own inbox at
     # runtime, and the inbound path below must agree about where it went or their
     # reply is refused as coming from a stranger.
@@ -133,9 +164,13 @@ def _send_email(
     provider: EmailProvider | None = None,
     reply_to: str | None = None,
     redirect_override: str | None = None,
+    is_demo: bool = True,
+    from_email: str | None = None,
 ) -> DeliveryResult:
     """Hand the message to a provider, or record it in dry-run."""
-    recipient, intended_for = resolve_recipient(to, redirect_override=redirect_override)
+    recipient, intended_for = resolve_recipient(
+        to, is_demo=is_demo, redirect_override=redirect_override
+    )
     final_subject = _subject_for(subject, intended_for)
 
     if settings.email_dry_run:
@@ -146,10 +181,15 @@ def _send_email(
             invoice_number=invoice_number,
             subject=final_subject,
         )
-        return DeliveryResult(sent=True, provider=DRY_RUN_PROVIDER, message_id="dry-run")
+        return DeliveryResult(
+            sent=True,
+            provider=DRY_RUN_PROVIDER,
+            message_id="dry-run",
+            redirected_to=recipient if intended_for else None,
+        )
 
     settings.assert_safe_to_send()
-    provider = provider or ResendProvider()
+    provider = provider or ResendProvider(from_email=from_email)
     result = provider.send(
         to=recipient,
         subject=final_subject,
@@ -165,7 +205,26 @@ def _send_email(
         message_id=result.message_id,
         error=result.error,
         retryable=result.retryable,
+        redirected_to=recipient if intended_for else None,
     )
+
+
+def sender_identity(session: Session, merchant: Merchant) -> str:
+    """The verified From identity for one merchant, falling back only for demo."""
+    if merchant.is_demo:
+        return settings.email_from
+    domain = session.exec(
+        select(SendingDomain)
+        .where(
+            SendingDomain.merchant_id == merchant.id,
+            SendingDomain.status == "verified",
+        )
+        .order_by(SendingDomain.verified_at.desc())  # type: ignore[attr-defined]
+    ).first()
+    if domain is None:
+        raise OutboundBlockedError("A verified merchant sending domain is required")
+    display = re.sub(r"[\r\n<>]", " ", merchant.legal_name or merchant.name).strip()
+    return f"{display} Accounts <{domain.local_part}@{domain.domain}>"
 
 
 def _backoff_seconds(attempt: int) -> int:
@@ -267,6 +326,11 @@ def _audit_attempt(
                 "generated_by": reminder.generated_by,
                 "llm_degraded": reminder.llm_degraded,
                 "to": customer.email,
+                # What actually happened, not what was intended. A redirected send did
+                # not reach the customer, and a trail that does not say so is the
+                # difference between "we contacted them" and "we believe we did".
+                "delivered_to": result.redirected_to or customer.email,
+                "redirected": result.redirected_to is not None,
                 "attempt": reminder.attempt_count,
                 "error": result.error,
                 "retryable": result.retryable,
@@ -421,6 +485,8 @@ def _dispatch_reminder(
                     is_demo=merchant.is_demo,
                 ),
                 redirect_override=redirect_override,
+                is_demo=merchant.is_demo,
+                from_email=sender_identity(session, merchant),
             )
     except OutboundBlockedError as exc:
         result = DeliveryResult(

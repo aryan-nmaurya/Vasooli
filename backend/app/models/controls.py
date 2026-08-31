@@ -66,6 +66,11 @@ class SendingDomain(SQLModel, table=True):
     domain: str = Field(sa_column=Column(String(255), nullable=False))
     status: str = Field(default="pending", sa_column=Column(String(30), nullable=False, index=True))
     verification_token: str = Field(sa_column=Column(String(160), nullable=False))
+    provider: str = Field(default="resend", sa_column=Column(String(30), nullable=False))
+    provider_domain_id: str | None = Field(
+        default=None, sa_column=Column(String(160), nullable=True, unique=True)
+    )
+    local_part: str = Field(default="accounts", sa_column=Column(String(64), nullable=False))
     dns_records: list[dict[str, Any]] = Field(
         default_factory=list, sa_column=jsonb_column(default=list)
     )

@@ -1,12 +1,14 @@
+"use client";
+
+import { useEffect, useState } from "react";
+
 import { getRuntimeSafety } from "@/lib/api";
 
-export async function RuntimeBanner() {
-  let mode: Awaited<ReturnType<typeof getRuntimeSafety>>;
-  try {
-    mode = await getRuntimeSafety();
-  } catch {
-    return null;
-  }
+export function RuntimeBanner() {
+  const [mode, setMode] = useState<Awaited<ReturnType<typeof getRuntimeSafety>> | null>(null);
+
+  useEffect(() => { getRuntimeSafety().then(setMode).catch(() => setMode(null)); }, []);
+  if (!mode) return null;
 
   const email =
     mode.email === "dry_run"

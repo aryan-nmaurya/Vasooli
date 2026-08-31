@@ -2,6 +2,7 @@
 
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 
 import { loginLive } from "@/lib/live-api";
 
@@ -26,5 +27,5 @@ export function LiveLoginForm() {
       setBusy(false);
     }
   }
-  return <form onSubmit={submit} className="mx-auto max-w-md space-y-4 rounded-2xl border border-line bg-panel p-6"><div><h1 className="text-2xl font-semibold">Live sign in</h1><p className="mt-1 text-sm text-ink-3">This is separate from the read-only demo session.</p></div><label className="block text-sm">Email<input name="email" type="email" required className="mt-1 w-full rounded-lg border border-line bg-surface px-3 py-2" /></label><label className="block text-sm">Password<input name="password" type="password" required className="mt-1 w-full rounded-lg border border-line bg-surface px-3 py-2" /></label><label className="block text-sm">Authenticator code <span className="text-ink-4">(if enabled)</span><input name="otp" inputMode="numeric" pattern="[0-9]{6}" maxLength={6} className="mt-1 w-full rounded-lg border border-line bg-surface px-3 py-2" /></label>{error ? <p role="alert" className="rounded-lg bg-rose-500/10 px-3 py-2 text-sm text-rose-700">{error}</p> : null}<button disabled={busy} className="w-full rounded-lg bg-accent px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{busy ? "Signing in…" : "Sign in to live"}</button></form>;
+  return <form onSubmit={submit} className="mx-auto max-w-md space-y-4 rounded-2xl border border-line bg-panel p-6"><div><h1 className="text-2xl font-semibold">Sign in</h1><p className="mt-1 text-sm text-ink-3">Access your merchant recovery workspace.</p></div><label className="block text-sm">Email<input name="email" type="email" required className="mt-1 w-full rounded-lg border border-line bg-surface px-3 py-2" /></label><label className="block text-sm">Password<input name="password" type="password" required className="mt-1 w-full rounded-lg border border-line bg-surface px-3 py-2" /></label><div className="-mt-2 text-right"><Link href="/forgot-password" className="text-xs text-accent hover:underline">Forgot password?</Link></div><label className="block text-sm">Authenticator code <span className="text-ink-4">(if enabled)</span><input name="otp" inputMode="numeric" pattern="[0-9]{6}" maxLength={6} className="mt-1 w-full rounded-lg border border-line bg-surface px-3 py-2" /></label>{error ? <p role="alert" className="rounded-lg bg-rose-500/10 px-3 py-2 text-sm text-rose-700">{error}</p> : null}<button disabled={busy} className="w-full rounded-lg bg-accent px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{busy ? "Signing in…" : "Sign in"}</button></form>;
 }

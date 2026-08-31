@@ -1,18 +1,46 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
 import Link from "next/link";
+import { FormEvent, useEffect, useState } from "react";
 
-import { liveGet, livePost } from "@/lib/live-api";
+import { LiveSignInPrompt } from "@/components/LiveSignInPrompt";
+import { liveDownload, liveGet, liveUpload } from "@/lib/live-api";
 
-type Invoice = { id: string; invoice_number: string; amount_display: string; outstanding_display: string; status: string; customer_name: string };
+type QueueRow = { id: string; invoice_number: string; customer_name: string; outstanding_paise: number; days_overdue: number; status: string; tier_label: string; why: string; next_action: string; dispute_open: boolean };
+type Preview = { dry_run: boolean; parsed: number; would_import: number; duplicates: string[]; problems: { line: number; invoice_number: string; message: string }[]; result?: { ingested: number; skipped_duplicates: number; failed: number } };
+
+function money(paise: number) { return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR" }).format(paise / 100); }
 
 export default function LiveInvoicesPage() {
   const [merchant, setMerchant] = useState("");
-  const [rows, setRows] = useState<Invoice[]>([]);
+  const [rows, setRows] = useState<QueueRow[]>([]);
+  const [file, setFile] = useState<File | null>(null);
+  const [preview, setPreview] = useState<Preview | null>(null);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
-  useEffect(() => { const value = window.localStorage.getItem("vasooli_live_merchant") || ""; Promise.resolve().then(() => setMerchant(value)); if (value) liveGet<Invoice[]>("/api/live/invoices", value).then(setRows).catch((cause) => setError(cause instanceof Error ? cause.message : "Unable to load invoices")); }, []);
-  async function importLedger(event: FormEvent<HTMLFormElement>) { event.preventDefault(); if (!merchant) { setError("Sign in to a live workspace first."); return; } const data = new FormData(event.currentTarget); try { const payload = JSON.parse(String(data.get("payload"))); const result = await livePost<{ accepted: number; duplicates: number }>("/api/live/invoices/batch", merchant, { invoices: payload }); setMessage(`Import accepted: ${result.accepted} new, ${result.duplicates} duplicates.`); const refreshed = await liveGet<Invoice[]>("/api/live/invoices", merchant); setRows(refreshed); } catch (cause) { setError(cause instanceof Error ? cause.message : "Import failed"); } }
-  return <main className="mx-auto max-w-6xl px-4 py-14 sm:px-6"><Link href="/live" className="text-sm text-accent">← Setup</Link><div className="mt-5 flex flex-wrap items-end justify-between gap-4"><div><h1 className="text-3xl font-semibold">Live invoices</h1><p className="mt-2 text-ink-3">Import is entitlement-gated and tenant-scoped.</p></div><Link href="/live/readiness" className="rounded-lg border border-line px-3 py-2 text-sm">Readiness</Link></div><form onSubmit={importLedger} className="mt-8 rounded-2xl border border-line bg-panel p-5"><label className="block text-sm font-medium">Import JSON rows<span className="mt-1 block text-xs font-normal text-ink-4">Use the canonical invoice fields: invoice_number, customer_name, customer_email, amount_inr, issued_at, due_at.</span><textarea name="payload" required className="mt-3 min-h-28 w-full rounded-lg border border-line bg-surface px-3 py-2 font-mono text-xs" placeholder='[{"invoice_number":"INV-001","customer_name":"Buyer","customer_email":"ap@example.com","amount_inr":"1000","issued_at":"2026-01-01","due_at":"2026-02-01"}]' /></label><button className="mt-3 rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white">Import invoices</button></form>{message ? <p className="mt-4 rounded-lg bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700">{message}</p> : null}{error ? <p role="alert" className="mt-4 rounded-lg bg-rose-500/10 px-3 py-2 text-sm text-rose-700">{error}</p> : null}<div className="mt-8 overflow-hidden rounded-2xl border border-line bg-panel"><div className="grid grid-cols-4 gap-3 border-b border-line px-4 py-3 text-xs font-semibold uppercase tracking-wider text-ink-4"><span>Invoice</span><span>Customer</span><span>Outstanding</span><span>Status</span></div>{rows.length ? rows.map((row) => <div key={row.id} className="grid grid-cols-4 gap-3 border-b border-line px-4 py-3 text-sm last:border-0"><span>{row.invoice_number}</span><span>{row.customer_name}</span><span>{row.outstanding_display}</span><span className="capitalize text-ink-3">{row.status.replaceAll("_", " ")}</span></div>) : <p className="px-4 py-8 text-sm text-ink-4">No invoices loaded yet.</p>}</div></main>;
+  const load = (id: string) => liveGet<QueueRow[]>("/api/live/workspace/queue", id).then(setRows);
+  useEffect(() => { const id = window.localStorage.getItem("vasooli_live_merchant") || ""; Promise.resolve().then(() => { setMerchant(id); if (id) liveGet<QueueRow[]>("/api/live/workspace/queue", id).then(setRows).catch((cause) => setError(cause instanceof Error ? cause.message : "Unable to load invoices")); }); }, []);
+
+  async function downloadTemplate() { try { const blob = await liveDownload("/api/live/invoices/csv/template", merchant); const url = URL.createObjectURL(blob); const anchor = document.createElement("a"); anchor.href = url; anchor.download = "vasooli-import-template.csv"; anchor.click(); URL.revokeObjectURL(url); } catch (cause) { setError(cause instanceof Error ? cause.message : "Download failed"); } }
+
+  async function upload(event: FormEvent, dryRun: boolean) {
+    event.preventDefault();
+    if (!file || !merchant) return;
+    setBusy(true); setError(null);
+    const data = new FormData(); data.set("file", file); data.set("dry_run", String(dryRun));
+    try { const result = await liveUpload<Preview>("/api/live/invoices/csv/import", merchant, data); setPreview(result); if (!dryRun) await load(merchant); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : "Import failed"); }
+    finally { setBusy(false); }
+  }
+
+  if (!merchant) return <main className="mx-auto max-w-6xl px-4 py-10 sm:px-6"><LiveSignInPrompt what="Your invoice ledger" /></main>;
+  return <main className="mx-auto max-w-7xl px-4 py-7 sm:px-6 sm:py-9">
+    <div className="flex flex-wrap items-end justify-between gap-4"><div><p className="text-xs font-semibold uppercase tracking-wider text-accent">Recovery queue</p><h1 className="mt-2 text-3xl font-semibold">Invoices that need attention</h1><p className="mt-2 text-sm text-ink-3">Open an invoice for its conversation, payments, promises, disputes, and audit trail.</p></div><button type="button" onClick={downloadTemplate} className="rounded-lg border border-line px-4 py-2 text-sm">Download CSV template</button></div>
+    <section id="import" className="mt-6 rounded-2xl border border-line bg-panel p-5">
+      <form onSubmit={(event) => upload(event, true)} className="flex flex-col gap-4 sm:flex-row sm:items-end"><label className="flex-1 text-sm font-medium">Import invoices from CSV<span className="mt-1 block text-xs font-normal text-ink-4">Preview validates every row and names duplicates before anything is written.</span><input type="file" accept=".csv,text/csv" required onChange={(event) => { setFile(event.target.files?.[0] ?? null); setPreview(null); }} className="mt-3 block w-full rounded-lg border border-line bg-surface px-3 py-2 text-sm" /></label><button disabled={busy || !file} className="rounded-lg bg-accent px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{busy ? "Checking…" : "Preview import"}</button></form>
+      {preview ? <div className="mt-4 rounded-xl border border-line bg-surface p-4 text-sm"><p><strong>{preview.parsed}</strong> valid rows · <strong>{preview.would_import}</strong> new · <strong>{preview.duplicates.length}</strong> duplicates</p>{preview.problems.length ? <ul className="mt-3 space-y-1 text-rose-700">{preview.problems.map((problem) => <li key={`${problem.line}-${problem.invoice_number}`}>Line {problem.line}, {problem.invoice_number}: {problem.message}</li>)}</ul> : <p className="mt-2 text-emerald-700">All parsed rows are valid.</p>}{preview.dry_run && preview.would_import ? <button type="button" disabled={busy} onClick={(event) => upload(event, false)} className="mt-4 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white">Confirm {preview.would_import} invoice{preview.would_import === 1 ? "" : "s"}</button> : null}{preview.result ? <p className="mt-3 text-emerald-700">Imported {preview.result.ingested}; skipped {preview.result.skipped_duplicates}; failed {preview.result.failed}.</p> : null}</div> : null}
+    </section>
+    {error ? <p role="alert" className="mt-4 rounded-xl bg-rose-500/10 p-4 text-sm text-rose-700">{error}</p> : null}
+    <section className="mt-6 overflow-hidden rounded-2xl border border-line bg-panel"><div className="hidden grid-cols-[1fr_1fr_.7fr_.7fr] gap-4 border-b border-line px-5 py-3 text-xs font-semibold uppercase tracking-wider text-ink-4 sm:grid"><span>Invoice</span><span>Why / next</span><span>Outstanding</span><span>Status</span></div>{rows.length ? rows.map((row) => <Link href={`/live/invoices/${row.id}`} key={row.id} className="grid gap-3 border-b border-line px-5 py-4 transition last:border-0 hover:bg-panel-2 sm:grid-cols-[1fr_1fr_.7fr_.7fr]"><div><p className="font-semibold">{row.invoice_number}</p><p className="text-xs text-ink-4">{row.customer_name} · {row.days_overdue} days overdue</p></div><div><p className="text-sm">{row.why}</p><p className="text-xs text-ink-4">{row.next_action}</p></div><p className="text-sm font-semibold">{money(row.outstanding_paise)}</p><div><p className={row.dispute_open ? "text-sm text-amber-600" : "text-sm capitalize"}>{row.dispute_open ? "Dispute open" : row.status.replaceAll("_", " ")}</p><p className="text-xs text-ink-4">{row.tier_label}</p></div></Link>) : <p className="p-8 text-sm text-ink-4">No invoices loaded. Import a CSV or sync your ERP.</p>}</section>
+  </main>;
 }

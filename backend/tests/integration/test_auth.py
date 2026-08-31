@@ -167,7 +167,9 @@ def test_session_gated_endpoints_answer_401_to_a_valid_anonymous_body(api):
     the gate is gone.
     """
     cases = [
-        ("/api/live/auth/mfa/verify?code=123456", None),
+        # The code moved out of the query string and into the body: as a query
+        # parameter the second factor was written verbatim into access and proxy logs.
+        ("/api/live/auth/mfa/verify", {"code": "123456"}),
         ("/api/live/auth/reauth/challenge", {"purpose": "billing", "password": "x" * 12}),
     ]
     wrong = []
@@ -519,3 +521,46 @@ def test_every_endpoint_is_gated_or_deliberately_public(api):
                 unprotected.append(f"{verb} {path} -> {response.status_code}")
 
     assert not unprotected, "endpoints served without a credential:\n  " + "\n  ".join(unprotected)
+
+
+def test_the_reviewer_button_is_hidden_when_its_account_is_missing(api, session, monkeypatch):
+    """The flag alone is not enough to advertise the reviewer door.
+
+    `reviewer_login` requires the configured account to exist and hold the auditor
+    role. A deployment that turned the flag on and forgot the account showed a button
+    that returned 403 to everyone who pressed it — the exact dead end the no-credential
+    path exists to remove.
+    """
+    from app.models import OperatorAccount
+
+    monkeypatch.setattr(settings, "reviewer_access_enabled", True)
+    monkeypatch.setattr(settings, "reviewer_username", "nobody-by-this-name")
+
+    assert api.get("/api/auth/modes").json()["reviewer_access"] is False
+
+    # And it appears once the account is really there.
+    session.add(
+        OperatorAccount(
+            username="nobody-by-this-name",
+            display_name="Read-only reviewer",
+            password_hash="x",
+            role="auditor",
+            is_active=True,
+        )
+    )
+    session.commit()
+    assert api.get("/api/auth/modes").json()["reviewer_access"] is True
+
+
+def test_the_reviewer_button_is_hidden_when_the_account_is_not_an_auditor(
+    api, session, monkeypatch, operator_account
+):
+    """Read-only is the promise. An operator-role account would hand out write access,
+    so `reviewer_login` refuses it — and the page must not offer it either."""
+    monkeypatch.setattr(settings, "reviewer_access_enabled", True)
+    monkeypatch.setattr(settings, "reviewer_username", operator_account.username)
+    operator_account.role = "operator"
+    session.add(operator_account)
+    session.commit()
+
+    assert api.get("/api/auth/modes").json()["reviewer_access"] is False
