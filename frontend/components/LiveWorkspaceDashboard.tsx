@@ -58,9 +58,8 @@ export function LiveWorkspaceDashboard() {
 
   useEffect(() => {
     const id = window.localStorage.getItem("vasooli_live_merchant") || "";
-    setMerchant(id);
-    if (!id) return;
     let alive = true;
+    let interval: number | undefined;
     async function load() {
       const results = await Promise.allSettled([
         liveGet<Overview>("/api/live/workspace/overview", id),
@@ -83,9 +82,14 @@ export function LiveWorkspaceDashboard() {
       if (failures.length) { setError(friendlyError(failures)); setStaleSince((current) => current ?? new Date()); }
       else { setError(null); setStaleSince(null); }
     }
-    void load();
-    const interval = window.setInterval(load, POLL_MS);
-    return () => { alive = false; window.clearInterval(interval); };
+    Promise.resolve().then(() => {
+      if (!alive) return;
+      setMerchant(id);
+      if (!id) return;
+      void load();
+      interval = window.setInterval(load, POLL_MS);
+    });
+    return () => { alive = false; if (interval !== undefined) window.clearInterval(interval); };
   }, []);
 
   const visible = useMemo(() => queue.filter((row) => (!statusFilter || row.status === statusFilter) && (!reasonFilter || row.reason_category === reasonFilter)), [queue, reasonFilter, statusFilter]);
