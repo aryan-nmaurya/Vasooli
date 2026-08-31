@@ -117,7 +117,7 @@
     },
     {
       "path": "frontend/app/globals.css",
-      "sha256": "4b9cdbef376da93a3fceddeba775ce146151db4ba9e62f212e3448aeb1b3a540"
+      "sha256": "177878d187c460cd4fabb8779133a2f4ae719e253e0eb882155555a5a29943a3"
     },
     {
       "path": "frontend/app/guide/page.tsx",
@@ -137,7 +137,7 @@
     },
     {
       "path": "frontend/app/login/page.tsx",
-      "sha256": "86e72634b58dc3be8af2475679b960aaeb3054b1fdd7ff5757efcf139a256033"
+      "sha256": "be8cc31255fad7c4cb7254e06c98159a37f21b904193f49720f01cebbab0d5e2"
     },
     {
       "path": "frontend/app/page.tsx",

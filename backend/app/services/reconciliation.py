@@ -311,8 +311,7 @@ def process_event(session: Session, event: ReconciliationEvent) -> None:
             event_type=event.event_type,
             amount_paise=applied_paise,
             provider_reference=(
-                str(_named_entity(payload, "payment").get("id") or entity.get("id") or "")
-                or None
+                str(_named_entity(payload, "payment").get("id") or entity.get("id") or "") or None
             ),
             payload=event.raw_payload,
         )

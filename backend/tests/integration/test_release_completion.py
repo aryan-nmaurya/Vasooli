@@ -54,9 +54,9 @@ def _import_one(api: TestClient, merchant_id: str) -> str:
         data={"dry_run": "false"},
     )
     assert committed.status_code == 200
-    return api.get(
-        "/api/live/workspace/queue", headers={"X-Merchant-ID": merchant_id}
-    ).json()[0]["id"]
+    return api.get("/api/live/workspace/queue", headers={"X-Merchant-ID": merchant_id}).json()[0][
+        "id"
+    ]
 
 
 def test_live_workspace_exposes_queue_detail_metrics_and_audit(api):
@@ -94,9 +94,7 @@ def test_registration_does_not_enumerate_an_existing_email(api):
 def test_an_expired_trial_is_not_entitled(session, merchant):
     merchant.mode = "live"
     merchant.is_demo = False
-    merchant.onboarding_state = {
-        "trial_ends_at": (utcnow() - timedelta(seconds=1)).isoformat()
-    }
+    merchant.onboarding_state = {"trial_ends_at": (utcnow() - timedelta(seconds=1)).isoformat()}
     session.add(merchant)
     session.commit()
     assert subscription_is_active(session, merchant.id) is False
@@ -138,9 +136,7 @@ def test_erp_cancellation_stops_recovery(session, merchant, connection):
         connection,
         fixture_rows=[_row("erp-1", "ERP-CANCEL", source_version="v2", tombstoned=True)],
     )
-    invoice = session.exec(
-        select(Invoice).where(Invoice.invoice_number == "ERP-CANCEL")
-    ).one()
+    invoice = session.exec(select(Invoice).where(Invoice.invoice_number == "ERP-CANCEL")).one()
     assert invoice.status == InvoiceStatus.WRITTEN_OFF
 
 

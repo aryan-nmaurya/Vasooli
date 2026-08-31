@@ -20,7 +20,7 @@ export function LiveLoginForm() {
       const merchant = result.merchants[0];
       if (!merchant) throw new Error("No active merchant membership found");
       window.localStorage.setItem("vasooli_live_merchant", merchant);
-      router.push(`/live?merchant=${merchant}`);
+      router.push("/live");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Sign in failed");
     } finally {

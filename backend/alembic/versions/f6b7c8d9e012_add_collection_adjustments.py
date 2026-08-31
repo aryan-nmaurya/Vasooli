@@ -29,7 +29,8 @@ def upgrade() -> None:
         "invoices", sa.Column("refunded_paise", sa.BigInteger(), nullable=False, server_default="0")
     )
     op.add_column(
-        "invoices", sa.Column("chargeback_paise", sa.BigInteger(), nullable=False, server_default="0")
+        "invoices",
+        sa.Column("chargeback_paise", sa.BigInteger(), nullable=False, server_default="0"),
     )
     op.create_check_constraint(
         "ck_invoices_refunded_non_negative", "invoices", "refunded_paise >= 0"
@@ -49,17 +50,13 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_constraint(
-        "ck_payment_links_refunded_non_negative", "payment_links", type_="check"
-    )
+    op.drop_constraint("ck_payment_links_refunded_non_negative", "payment_links", type_="check")
     op.drop_column("payment_links", "amount_refunded_paise")
     op.drop_constraint("ck_invoices_chargeback_non_negative", "invoices", type_="check")
     op.drop_constraint("ck_invoices_refunded_non_negative", "invoices", type_="check")
     op.drop_column("invoices", "chargeback_paise")
     op.drop_column("invoices", "refunded_paise")
-    op.drop_constraint(
-        "uq_sending_domains_provider_domain_id", "sending_domains", type_="unique"
-    )
+    op.drop_constraint("uq_sending_domains_provider_domain_id", "sending_domains", type_="unique")
     op.drop_column("sending_domains", "local_part")
     op.drop_column("sending_domains", "provider_domain_id")
     op.drop_column("sending_domains", "provider")

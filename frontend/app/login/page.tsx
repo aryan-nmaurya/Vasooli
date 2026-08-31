@@ -106,7 +106,7 @@ function LiveDoor({ showRegister }: { showRegister: boolean }) {
         return;
       }
       window.localStorage.setItem("vasooli_live_merchant", merchant);
-      router.push(`/live?merchant=${merchant}`);
+      router.push("/live");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Sign in failed.");
     } finally {

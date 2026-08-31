@@ -188,9 +188,7 @@ def sync_erp_adjustment(
             invoice_id=invoice.id,
             actor=AuditActor.SYSTEM,
             action=(
-                AuditAction.ERP_CREDIT_APPLIED
-                if is_credit
-                else AuditAction.ERP_PAYMENT_APPLIED
+                AuditAction.ERP_CREDIT_APPLIED if is_credit else AuditAction.ERP_PAYMENT_APPLIED
             ),
             detail={
                 "provider": provider,

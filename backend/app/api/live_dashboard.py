@@ -58,9 +58,7 @@ router = APIRouter(prefix="/api/live/workspace", tags=["live-workspace"])
 
 
 def _invoice_ids(session: SessionDep, merchant_id: uuid.UUID) -> list[uuid.UUID]:
-    return list(
-        session.exec(select(Invoice.id).where(Invoice.merchant_id == merchant_id)).all()
-    )
+    return list(session.exec(select(Invoice.id).where(Invoice.merchant_id == merchant_id)).all())
 
 
 def _actor(context: LiveContext) -> str:
@@ -135,9 +133,7 @@ def queue(
             days_overdue=invoice.days_overdue,
             status=str(invoice.status),
             tier_label=_tier_label(invoice),
-            reason_category=(
-                str(invoice.reason_category) if invoice.reason_category else None
-            ),
+            reason_category=(str(invoice.reason_category) if invoice.reason_category else None),
             payment_url=links[invoice.id].short_url if invoice.id in links else None,
             next_action=_next_action(invoice),
             dispute_open=invoice.id in disputed,
@@ -190,8 +186,7 @@ def promises(
             customer_name=names.get(invoices[promise.invoice_id].customer_id, "—"),
             promised_date=str(promise.promised_date),
             amount_display=format_inr(
-                promise.promised_amount_paise
-                or invoices[promise.invoice_id].outstanding_paise
+                promise.promised_amount_paise or invoices[promise.invoice_id].outstanding_paise
             ),
             status=str(promise.status),
             confidence=promise.extraction_confidence,
@@ -483,9 +478,7 @@ def resolve_case(
 ) -> dict:
     case = session.get(DisputeCase, case_id)
     invoice = (
-        get_scoped_object(session, Invoice, case.invoice_id, context.merchant.id)
-        if case
-        else None
+        get_scoped_object(session, Invoice, case.invoice_id, context.merchant.id) if case else None
     )
     if case is None or invoice is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Dispute case not found")

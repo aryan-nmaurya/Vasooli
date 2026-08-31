@@ -31,8 +31,8 @@ export function LiveRegistrationForm() {
         await verifyLive(result.verification_token);
         const login = await loginLive(String(data.get("email")), String(data.get("password")));
         window.localStorage.setItem("vasooli_live_merchant", login.merchants[0]);
-        setMessage("Email verified. Your live workspace is ready; continue to billing.");
-        router.push(`/live?merchant=${login.merchants[0]}`);
+        setMessage("Email verified. Opening your live dashboard.");
+        router.push("/live");
       } else {
         setMessage("Check your inbox to verify your email, then return here to continue.");
       }
