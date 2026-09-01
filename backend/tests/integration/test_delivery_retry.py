@@ -420,20 +420,28 @@ def test_a_manual_escalation_stops_a_queued_retry(session, invoice, live_email):
 
 
 def test_tier_three_handover_does_not_strand_its_own_reminder(session, invoice, live_email):
-    """The exemption that keeps the fix honest.
+    """The final notice must survive a failed first attempt, and the handover must
+    follow the message rather than precede it.
 
-    Tier 3 sends and then escalates, so HUMAN_REVIEW/tier_3_reached is a consequence
-    of the very message being retried. Blocking on it would silently drop the final
-    notice whenever its first attempt failed.
+    A Tier 3 attempt that failed has told the customer nothing, so the invoice stays in
+    the cadence and the queued retry is free to run. Only once the message has actually
+    been delivered does the invoice hand over to a human — "tier_3_reached" is rendered
+    to operators as "all three automated reminders have been sent", so claiming it for
+    a send that never left is a lie the dashboard repeats.
     """
     _failed_reminder(session, invoice)
     session.refresh(invoice)
-    assert invoice.status == InvoiceStatus.HUMAN_REVIEW
-    assert invoice.escalation_reason == "tier_3_reached"
+    assert invoice.status != InvoiceStatus.HUMAN_REVIEW
+    assert invoice.escalation_reason != "tier_3_reached"
 
     mailer = Mailer()
     retry_failed_deliveries(session, provider=mailer)
     assert len(mailer.calls) == 1
+
+    # The retry landed, so now the handover is owed.
+    session.refresh(invoice)
+    assert invoice.status == InvoiceStatus.HUMAN_REVIEW
+    assert invoice.escalation_reason == "tier_3_reached"
 
 
 def test_payment_landing_after_the_lease_is_still_caught(session, invoice, live_email):
