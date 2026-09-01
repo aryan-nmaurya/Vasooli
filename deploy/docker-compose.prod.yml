@@ -114,6 +114,22 @@ services:
       PROCESS_ROLE: scheduler
       SCHEDULER_ENABLED: "true"
     command: ["sh", "-c", "python -m app.scheduler_process"]
+    # The image's HEALTHCHECK probes the HTTP port, which only the API serves. This
+    # process serves no HTTP, so the inherited check can never pass: the container is
+    # "unhealthy" by construction. That is worse than having no check at all, because a
+    # genuine failure then looks exactly like the standing noise, and any orchestration
+    # keyed on health has nothing to read. Replaced with the liveness that actually
+    # matters here — the process can still reach its database.
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "from sqlalchemy import text; from app.core.db import engine; engine.connect().execute(text('select 1'))"
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     depends_on:
       db:
         condition: service_healthy
@@ -137,6 +153,22 @@ services:
       SCHEDULER_ENABLED: "false"
       WORKER_KIND: all
     command: ["sh", "-c", "python -m app.worker"]
+    # The image's HEALTHCHECK probes the HTTP port, which only the API serves. This
+    # process serves no HTTP, so the inherited check can never pass: the container is
+    # "unhealthy" by construction. That is worse than having no check at all, because a
+    # genuine failure then looks exactly like the standing noise, and any orchestration
+    # keyed on health has nothing to read. Replaced with the liveness that actually
+    # matters here — the process can still reach its database.
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "from sqlalchemy import text; from app.core.db import engine; engine.connect().execute(text('select 1'))"
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     depends_on:
       db:
         condition: service_healthy
