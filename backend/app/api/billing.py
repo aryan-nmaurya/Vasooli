@@ -17,13 +17,17 @@ from app.services.authorization import (
     set_merchant_context,
 )
 from app.services.billing import (
-    PLAN_CATALOG,
+    BillingEntitlementError,
     apply_subscription_event,
+    cancel_subscription,
+    checkout_url_for,
     create_checkout_subscription,
     create_provider_subscription,
     ensure_plans,
+    subscription_state,
     verify_billing_signature,
 )
+from app.services.plans import PLANS
 
 router = APIRouter(prefix="/api/live/billing", tags=["live-billing"])
 
@@ -34,17 +38,24 @@ class CheckoutRequest(BaseModel):
 
 @router.get("/plans")
 def plans() -> list[dict]:
-    """Published catalog without the idempotent database write checkout performs."""
+    """Published catalog without the idempotent database write checkout performs.
+
+    Served from `services.plans`, the same definition the public pricing page and the
+    entitlement gates read, so the three cannot drift.
+    """
     return [
         {
-            "slug": slug,
+            "slug": plan.slug,
             "version": 1,
-            "name": slug.title(),
-            "amount_paise": values[0],
-            "included_active_invoices": values[1],
-            "included_seats": values[2],
+            "name": plan.name,
+            "description": plan.description,
+            "amount_paise": plan.amount_paise,
+            "included_active_invoices": plan.included_active_invoices,
+            "included_seats": plan.included_seats,
+            "highlights": list(plan.highlights),
+            "features": sorted(str(f) for f in plan.features),
         }
-        for slug, values in PLAN_CATALOG.items()
+        for plan in PLANS
     ]
 
 
@@ -73,9 +84,12 @@ def checkout(
                 "An active checkout already exists; cancel it before changing plans",
             )
         subscription = existing
+        # A checkout already in flight: re-issue a fresh provider link rather than a
+        # stored one, which Razorpay would have expired.
+        checkout_url = checkout_url_for(existing)
     else:
         try:
-            provider_id = create_provider_subscription(plan)
+            provider_id, checkout_url = create_provider_subscription(plan)
         except Exception as exc:
             raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
         subscription = create_checkout_subscription(
@@ -93,6 +107,10 @@ def checkout(
         "amount_paise": plan.amount_paise if plan else None,
         "provider_plan_id": plan.razorpay_plan_id if plan else None,
         "checkout_required": True,
+        # Where the merchant authorises the mandate and pays. None when Razorpay
+        # subscriptions are not configured, which the UI reports rather than
+        # pretending a checkout exists.
+        "checkout_url": checkout_url,
     }
 
 
@@ -100,22 +118,37 @@ def checkout(
 def subscription(
     session: SessionDep,
     context: Annotated[LiveContext, Depends(require_live_permission("billing.read"))],
-) -> dict | None:
-    row = session.exec(
-        select(BillingSubscription)
-        .where(BillingSubscription.merchant_id == context.merchant.id)
-        .order_by(BillingSubscription.updated_at.desc())  # type: ignore[attr-defined]
-    ).first()
-    if row is None:
-        return None
-    return {
-        "id": str(row.id),
-        "plan_id": str(row.plan_id),
-        "provider_subscription_id": row.razorpay_subscription_id,
-        "status": row.status,
-        "grace_until": row.grace_until.isoformat() if row.grace_until else None,
-        "cancel_at_period_end": row.cancel_at_period_end,
-    }
+) -> dict:
+    """Plan, status, days remaining and whether automation is paused.
+
+    Always returns an object. A merchant on trial has no subscription row, and an
+    endpoint that answered `null` there forced every caller to re-derive the trial
+    rules for itself.
+    """
+    state = subscription_state(session, context.merchant.id)
+    body = state.to_dict()
+    if state.subscription is not None:
+        body["id"] = str(state.subscription.id)
+        body["checkout_url"] = checkout_url_for(state.subscription) if not state.is_active else None
+    return body
+
+
+@router.post("/cancel")
+def cancel(
+    session: SessionDep,
+    context: Annotated[LiveContext, Depends(require_live_reauth("billing.manage"))],
+) -> dict:
+    """Stop recurring billing at the end of the paid period.
+
+    Re-authentication is required: cancelling has a financial consequence, and a
+    borrowed session should not be able to end someone's service.
+    """
+    try:
+        state = cancel_subscription(session, context.merchant.id)
+    except BillingEntitlementError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    session.commit()
+    return state.to_dict()
 
 
 @router.post("/webhook")

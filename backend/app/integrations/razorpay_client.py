@@ -279,6 +279,22 @@ class RazorpayClient:
         """Read provider state for the daily billing reconciliation job."""
         return self._call(self._client.subscription.fetch, subscription_id)
 
+    @retry(**_RETRY)
+    def cancel_subscription(
+        self, subscription_id: str, *, cancel_at_cycle_end: bool = True
+    ) -> dict[str, Any]:
+        """Stop recurring billing at the provider.
+
+        Defaults to cycle end: the merchant has paid for the current period and keeps
+        it. Cancelling immediately forfeits time they already bought, so that is only
+        ever done when the caller asks for it explicitly.
+        """
+        return self._call(
+            self._client.subscription.cancel,
+            subscription_id,
+            {"cancel_at_cycle_end": 1 if cancel_at_cycle_end else 0},
+        )
+
 
 class RazorpayOAuthClient:
     """Payment-links client for a Technology Partner OAuth access token.

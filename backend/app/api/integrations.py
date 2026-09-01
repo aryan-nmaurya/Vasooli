@@ -18,7 +18,11 @@ from app.core.middleware import client_ip
 from app.models import ErpConnection, ErpSyncRun, ErpWebhookEvent
 from app.services.auth import audit
 from app.services.authorization import LiveContext, require_live_permission, require_live_reauth
-from app.services.billing import BillingEntitlementError, assert_live_entitled
+from app.services.billing import (
+    BillingEntitlementError,
+    assert_feature_entitled,
+    assert_live_entitled,
+)
 from app.services.erp import sync_connection, validate_connection_credentials
 from app.services.oauth import (
     OAuthConfigurationError,
@@ -30,6 +34,7 @@ from app.services.oauth import (
     zoho_authorization_url,
 )
 from app.services.payment_connections import decrypt_secret, encrypt_secret
+from app.services.plans import Feature
 
 router = APIRouter(prefix="/api/live/integrations", tags=["live-integrations"])
 
@@ -51,6 +56,14 @@ def zoho_oauth_start(
     session: SessionDep,
     context: Annotated[LiveContext, Depends(require_live_permission("erp.configure"))],
 ) -> dict[str, str]:
+    # Tier gate, checked before the OAuth round trip rather than after: sending a
+    # Starter merchant to Zoho only to refuse them on the way back wastes their time
+    # and leaves an authorised app they did not end up using.
+    try:
+        assert_feature_entitled(session, context.merchant.id, Feature.ZOHO_INTEGRATION)
+    except BillingEntitlementError as exc:
+        raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, str(exc)) from exc
+
     redirect_uri = settings.zoho_oauth_redirect_uri or str(request.url_for("zoho_oauth_callback"))
     try:
         state = create_state(
@@ -190,6 +203,15 @@ def connect_integration(
             ErpConnection.provider == payload.provider,
         )
     ).first()
+    # A signed custom ERP feed is a Scale capability; Zoho is Growth and above.
+    required = (
+        Feature.CUSTOM_ERP_WEBHOOKS if payload.provider == "custom" else Feature.ZOHO_INTEGRATION
+    )
+    try:
+        assert_feature_entitled(session, context.merchant.id, required)
+    except BillingEntitlementError as exc:
+        raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, str(exc)) from exc
+
     if row is None:
         row = ErpConnection(merchant_id=context.merchant.id, provider=payload.provider)
     # Validate before storing. A connection saved with an internal endpoint is an SSRF
