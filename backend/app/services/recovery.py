@@ -27,6 +27,7 @@ from app.ai import DiagnosisInputs, DraftInputs, diagnose, draft_reminder
 from app.core.clock import days_overdue as days_overdue_for
 from app.core.clock import today_ist, utcnow
 from app.core.constants import (
+    MAX_AUTOMATED_REMINDERS,
     PROMISE_GRACE_DAYS,
     InvoiceStatus,
     PromiseStatus,
@@ -53,7 +54,11 @@ from app.services.authorization import merchant_scope, service_scope, set_mercha
 from app.services.billing import subscription_is_active
 from app.services.closure import retry_pending_closures
 from app.services.disputes import has_open_dispute
-from app.services.messaging import deliver_reminder, retry_failed_deliveries
+from app.services.messaging import (
+    deliver_reminder,
+    redeliver_reminder,
+    retry_failed_deliveries,
+)
 from app.services.reconciliation import retry_failed_events
 
 log = get_logger("recovery")
@@ -73,6 +78,8 @@ class CycleReport:
     promises_broken: int = 0
     diagnosed: int = 0
     skipped_no_tier: int = 0
+    send_failed: int = 0
+    deliveries_revived: int = 0
     deliveries_retried: int = 0
     deliveries_recovered: int = 0
     closures_retried: int = 0
@@ -91,6 +98,8 @@ class CycleReport:
             "promises_broken": self.promises_broken,
             "diagnosed": self.diagnosed,
             "skipped_no_tier": self.skipped_no_tier,
+            "send_failed": self.send_failed,
+            "deliveries_revived": self.deliveries_revived,
             "deliveries_retried": self.deliveries_retried,
             "deliveries_recovered": self.deliveries_recovered,
             "closures_retried": self.closures_retried,
@@ -459,21 +468,57 @@ def _process_invoice(
     # A tier already attempted and awaiting retry must not be re-drafted as a new
     # send: the customer is owed the message policy already approved, and the unique
     # constraint on (invoice_id, tier) would reject the duplicate anyway.
-    pending_tiers = frozenset(
-        r.tier
-        for r in session.exec(
-            select(Reminder).where(
-                Reminder.invoice_id == invoice.id,
-                Reminder.sent_at.is_(None),  # type: ignore[union-attr]
-            )
-        ).all()
-    )
+    #
+    # A `dead` row is deliberately NOT counted here. It has exhausted its retries, so
+    # nothing is going to deliver it on its own: the retry sweep only picks up
+    # pending/failed. Counting it as pending stranded the tier permanently — the cycle
+    # skipped it as "already in flight" every day thereafter and the customer never
+    # heard anything, with no error surfaced anywhere.
+    unsent = session.exec(
+        select(Reminder).where(
+            Reminder.invoice_id == invoice.id,
+            Reminder.sent_at.is_(None),  # type: ignore[union-attr]
+        )
+    ).all()
+    pending_tiers = frozenset(r.tier for r in unsent if r.delivery_state != "dead")
+    dead_by_tier = {r.tier: r for r in unsent if r.delivery_state == "dead"}
 
     tier = next_tier_for(
         days_overdue=days_overdue, sent_tiers=sent_tiers, tier_offsets=tier_offsets
     )
     if tier is None or tier in pending_tiers:
         report.skipped_no_tier += 1
+        return
+
+    # The tier is still owed and its one approved message died undelivered. Revive that
+    # row rather than drafting a replacement — the unique (invoice_id, tier) constraint
+    # forbids a second row, and re-drafting would re-run the model and send the customer
+    # different copy for the same tier. The daily cycle is the rate limit: a workspace
+    # that is still misconfigured retries once a day, not once a minute.
+    if tier in dead_by_tier:
+        # `dry_run` must stay side-effect free: this branch delivers, and it sits well
+        # above the dry-run guard further down.
+        if dry_run:
+            report.deliveries_revived += 1
+            return
+
+        revived = dead_by_tier[tier]
+        log.info(
+            "recovery.reviving_dead_reminder",
+            invoice_number=invoice.invoice_number,
+            tier=tier,
+            previous_error=revived.send_error,
+        )
+        redelivered = redeliver_reminder(session, revived)
+        if redelivered.sent_at is None:
+            report.send_failed += 1
+        else:
+            report.deliveries_revived += 1
+            report.sent += 1
+            # The handover happens in the delivery path, on the send that actually
+            # left. Counted here only so the cycle report stays accurate.
+            if tier == MAX_AUTOMATED_REMINDERS:
+                report.escalated += 1
         return
 
     customer = session.get(Customer, invoice.customer_id)
@@ -680,7 +725,7 @@ def _process_invoice(
         report.held += 1
         return
 
-    deliver_reminder(
+    reminder = deliver_reminder(
         session,
         invoice=fresh,
         customer=customer,
@@ -688,10 +733,30 @@ def _process_invoice(
         draft=draft,
         decision=decision,
     )
+
+    # Delivery is not a formality, so its outcome decides what happens next.
+    #
+    # `deliver_reminder` records a failed attempt and deliberately leaves the invoice
+    # counters untouched — the tier is still owed. Ignoring the return value undid all
+    # of that: a refused send was counted as sent, and at Tier 3 the invoice was handed
+    # to a human as "tier_3_reached", which the dashboard states as "all three automated
+    # reminders have been sent". A merchant with no verified sending domain therefore
+    # saw every invoice escalate to human review without a single email going out.
+    if reminder.sent_at is None:
+        log.warning(
+            "recovery.delivery_failed",
+            invoice_number=fresh.invoice_number,
+            tier=tier,
+            delivery_state=reminder.delivery_state,
+            error=reminder.send_error,
+        )
+        report.send_failed += 1
+        return
+
     report.sent += 1
 
-    # Tier 3 both sends AND hands over. Doc §3: Vasooli does not escalate beyond this
-    # on its own, so the final notice goes out and a human takes it from there.
-    if tier == 3:
-        escalate_to_human(session, fresh, "tier_3_reached")
+    # Tier 3 both sends AND hands over (Doc §3). `deliver_reminder` performs the
+    # handover as part of the delivery that succeeded, so a send that never left
+    # cannot escalate; the cycle only records it.
+    if tier == MAX_AUTOMATED_REMINDERS:
         report.escalated += 1

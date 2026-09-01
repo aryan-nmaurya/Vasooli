@@ -313,7 +313,9 @@ Two that decide whether this is safe to run:
 
 | Variable | Set it to | Why |
 |---|---|---|
-| `EMAIL_REDIRECT_TO` | your own inbox | The seeded ledger has real-looking customer addresses. With `EMAIL_DRY_RUN=false` and this empty, one cycle emails all of them. |
+| `EMAIL_REDIRECT_TO` | your own inbox | Safety destination for the demo ledger. Keep it set even when live direct delivery is enabled. |
+| `ALLOW_DIRECT_CUSTOMER_EMAIL` | `true` | Live reminders use the customer email stored with each invoice. Demo reminders remain redirected to `EMAIL_REDIRECT_TO`. |
+| `ALLOW_PLATFORM_SENDER_FOR_LIVE` | `true` only with verified `EMAIL_FROM` | Allows live workspaces without a custom domain to send from the verified Vasooli platform identity. |
 | `SCHEDULER_ENABLED` | `true` on exactly one host | Two schedulers means two cycles. The advisory lock would stop the double-send, but do not spend that protection casually. |
 
 ### Vercel

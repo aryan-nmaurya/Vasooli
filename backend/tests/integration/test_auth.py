@@ -45,6 +45,7 @@ PUBLIC_BY_DESIGN = {
     ),
     "/api/live/auth/register": "public live account enrollment; feature-flagged",
     "/api/live/auth/verify-email": "public email verification token exchange",
+    "/api/live/auth/verify-email-code": "public email verification code exchange",
     "/api/live/auth/login": "public live credential exchange",
     "/api/live/auth/refresh": "public live refresh-token exchange",
     "/api/live/auth/logout": "public live cookie clearing",

@@ -47,6 +47,7 @@ def test_live_sending_is_refused_without_a_redirect(monkeypatch):
     """Turning off dry-run must be a deliberate act with a stated destination."""
     monkeypatch.setattr(settings, "email_dry_run", False, raising=False)
     monkeypatch.setattr(settings, "email_redirect_to", None, raising=False)
+    monkeypatch.setattr(settings, "allow_direct_customer_email", False, raising=False)
     with pytest.raises(RuntimeError, match="EMAIL_REDIRECT_TO"):
         settings.assert_safe_to_send()
 
@@ -55,6 +56,26 @@ def test_dry_run_needs_no_redirect(monkeypatch):
     monkeypatch.setattr(settings, "email_dry_run", True, raising=False)
     monkeypatch.setattr(settings, "email_redirect_to", None, raising=False)
     settings.assert_safe_to_send()  # must not raise
+
+
+def test_live_direct_delivery_uses_the_invoice_customer_email(monkeypatch):
+    monkeypatch.setattr(settings, "allow_direct_customer_email", True, raising=False)
+    monkeypatch.setattr(settings, "email_redirect_to", "operator@example.com", raising=False)
+
+    to, intended = resolve_recipient("accounts@customer.example", is_demo=False)
+
+    assert to == "accounts@customer.example"
+    assert intended is None
+
+
+def test_demo_stays_redirected_when_live_direct_delivery_is_enabled(monkeypatch):
+    monkeypatch.setattr(settings, "allow_direct_customer_email", True, raising=False)
+    monkeypatch.setattr(settings, "email_redirect_to", "operator@example.com", raising=False)
+
+    to, intended = resolve_recipient("synthetic@demo.example", is_demo=True)
+
+    assert to == "operator@example.com"
+    assert intended == "synthetic@demo.example"
 
 
 # ===========================================================================

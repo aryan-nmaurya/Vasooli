@@ -26,7 +26,10 @@ def send_auth_email(
 ) -> None:
     if purpose not in {"verify_email", "password_reset"}:
         raise ValueError("Unsupported identity email purpose")
-    if settings.environment in {"local", "test"}:
+    # Local development may intentionally exercise the real identity-email round
+    # trip. Keep tests and ordinary local setups offline through EMAIL_DRY_RUN, but
+    # do not silently discard mail after an operator has explicitly disabled it.
+    if settings.environment in {"local", "test"} and settings.email_dry_run:
         return
     if settings.email_dry_run:
         raise AuthEmailError("Identity email delivery is disabled")
@@ -37,21 +40,32 @@ def send_auth_email(
         url = f"{base}/verify-email?token={quote(token, safe='')}"
         action = "Verify email"
         intro = "Verify this address to activate your Vasooli workspace."
+        code_copy = f"\n\nYour one-time verification code is: {token}"
     else:
         subject = "Reset your Vasooli password"
         url = f"{base}/reset-password?token={quote(token, safe='')}"
         action = "Reset password"
         intro = "A password reset was requested for your Vasooli account."
+        code_copy = ""
 
-    text = f"{intro}\n\n{action}: {url}\n\nIf you did not request this, ignore this email."
+    text = (
+        f"{intro}{code_copy}\n\n{action}: {url}\n\nIf you did not request this, ignore this email."
+    )
     html = (
         "<div style='font-family:-apple-system,Segoe UI,Roboto,sans-serif;"
         "font-size:15px;line-height:1.55;color:#1a1a1a;max-width:560px'>"
         f"<p>{escape(intro)}</p>"
-        f"<p><a href='{escape(url, quote=True)}'>{escape(action)}</a></p>"
-        "<p>If you did not request this, ignore this email.</p></div>"
+        + (
+            f"<p style='font-size:28px;font-weight:700;letter-spacing:8px'>{escape(token)}</p>"
+            if purpose == "verify_email"
+            else ""
+        )
+        + (
+            f"<p><a href='{escape(url, quote=True)}'>{escape(action)}</a></p>"
+            "<p>If you did not request this, ignore this email.</p></div>"
+        )
     )
-    result = (provider or ResendProvider()).send(
+    result = (provider or ResendProvider(from_email=settings.auth_email_from)).send(
         to=email,
         subject=subject,
         html=html,

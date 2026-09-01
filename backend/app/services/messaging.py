@@ -22,7 +22,7 @@ from sqlmodel import Session, select
 from app.ai.drafting import Draft
 from app.core.clock import utcnow
 from app.core.config import settings
-from app.core.constants import TONE_FOR_TIER, InvoiceStatus
+from app.core.constants import MAX_AUTOMATED_REMINDERS, TONE_FOR_TIER, InvoiceStatus
 from app.core.logging import get_logger
 from app.core.runtime import effective_email_redirect
 from app.integrations.email.base import EmailProvider
@@ -210,7 +210,7 @@ def _send_email(
 
 
 def sender_identity(session: Session, merchant: Merchant) -> str:
-    """The verified From identity for one merchant, falling back only for demo."""
+    """Use a merchant sender when verified, otherwise the explicitly enabled platform sender."""
     if merchant.is_demo:
         return settings.email_from
     domain = session.exec(
@@ -222,6 +222,8 @@ def sender_identity(session: Session, merchant: Merchant) -> str:
         .order_by(SendingDomain.verified_at.desc())  # type: ignore[attr-defined]
     ).first()
     if domain is None:
+        if settings.allow_platform_sender_for_live:
+            return settings.email_from
         raise OutboundBlockedError("A verified merchant sending domain is required")
     display = re.sub(r"[\r\n<>]", " ", merchant.legal_name or merchant.name).strip()
     return f"{display} Accounts <{domain.local_part}@{domain.domain}>"
@@ -523,6 +525,19 @@ def _dispatch_reminder(
         invoice.current_tier = max(invoice.current_tier, claimed.tier)
         invoice.last_reminder_at = utcnow()
         session.add(invoice)
+        if claimed.tier == MAX_AUTOMATED_REMINDERS:
+            # Tier 3 sends AND hands over (Doc §3). The handover is anchored to the
+            # DELIVERY, not to the attempt, and lives here rather than in the cycle
+            # because this is the one place every successful send passes through —
+            # first attempt and retry alike.
+            #
+            # Anchored to the attempt, a refused send still parked the invoice in
+            # HUMAN_REVIEW as "tier_3_reached", which the dashboard states as "all
+            # three automated reminders have been sent" when the customer had received
+            # nothing. Imported here because recovery imports this module.
+            from app.services.recovery import escalate_to_human
+
+            escalate_to_human(session, invoice, "tier_3_reached")
     if invoice is not None and customer is not None:
         _audit_attempt(session, invoice, claimed, customer, result)
     session.commit()
@@ -566,6 +581,36 @@ def deliver_reminder(
     # leaves a reclaimable pending row; no provider call can exist without its intent.
     session.commit()
     session.refresh(reminder)
+    delivered, _ = _dispatch_reminder(session, reminder.id, provider=provider)
+    return delivered or reminder
+
+
+def redeliver_reminder(
+    session: Session,
+    reminder: Reminder,
+    *,
+    provider: EmailProvider | None = None,
+) -> Reminder:
+    """Give one already-approved reminder another delivery attempt.
+
+    For a row that died against a blocker outside its own control — an unverified
+    sending domain, a suspended provider account — where the fix is a configuration
+    change rather than anything about this message. The approved copy is reused
+    deliberately: the customer is owed the message policy already passed, and the
+    unique (invoice_id, tier) constraint forbids drafting a replacement anyway.
+
+    The caller owns the rate limit. The recovery cycle calls this once a day, which is
+    why a permanently misconfigured workspace does not hammer the provider.
+    """
+    reminder.delivery_state = "pending"
+    reminder.attempt_count = 0
+    reminder.send_error = None
+    reminder.lease_token = None
+    reminder.lease_expires_at = None
+    reminder.next_retry_at = utcnow()
+    session.add(reminder)
+    session.commit()
+
     delivered, _ = _dispatch_reminder(session, reminder.id, provider=provider)
     return delivered or reminder
 

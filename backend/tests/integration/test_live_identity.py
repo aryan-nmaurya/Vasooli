@@ -10,6 +10,7 @@ from sqlmodel import select
 from app.core.config import settings
 from app.main import create_app
 from app.models import Invoice, Merchant, Role, UserSession
+from app.services.auth_email import AuthEmailError
 from app.services.messaging import reply_address_for
 from app.services.provisioning import reference_id_for
 
@@ -38,7 +39,13 @@ def _live_user(api: TestClient, email: str) -> tuple[str, str]:
     merchant_id = response.json()["merchant_id"]
     token = response.json()["verification_token"]
     assert token
-    assert api.post("/api/live/auth/verify-email", json={"token": token}).status_code == 200
+    assert (
+        api.post(
+            "/api/live/auth/verify-email-code",
+            json={"email": email, "code": token},
+        ).status_code
+        == 200
+    )
     login = api.post(
         "/api/live/auth/login",
         json={"email": email, "password": "CorrectHorse9Battery"},
@@ -56,6 +63,131 @@ def _row(number: str, email: str) -> dict:
         "issued_at": date(2026, 7, 1).isoformat(),
         "due_at": date(2026, 8, 1).isoformat(),
     }
+
+
+def test_pending_registration_can_request_a_fresh_verification_code(api):
+    payload = {
+        "email": "retry-verification@example.com",
+        "password": "CorrectHorse9Battery",
+        "legal_business_name": "Retry Verification Traders",
+        "country": "IN",
+        "timezone": "Asia/Kolkata",
+        "accept_terms": True,
+        "accept_privacy": True,
+    }
+    first = api.post("/api/live/auth/register", json=payload)
+    retry_payload = {**payload, "password": "UpdatedHorse9Battery"}
+    second = api.post("/api/live/auth/register", json=retry_payload)
+
+    assert first.status_code == second.status_code == 201
+    first_code = first.json()["verification_token"]
+    second_code = second.json()["verification_token"]
+    assert first_code and second_code and first_code != second_code
+    assert (
+        api.post(
+            "/api/live/auth/verify-email-code",
+            json={"email": payload["email"], "code": first_code},
+        ).status_code
+        == 400
+    )
+    assert (
+        api.post(
+            "/api/live/auth/verify-email-code",
+            json={"email": payload["email"], "code": second_code},
+        ).status_code
+        == 200
+    )
+    assert (
+        api.post(
+            "/api/live/auth/login",
+            json={"email": payload["email"], "password": payload["password"]},
+        ).status_code
+        == 401
+    )
+    assert (
+        api.post(
+            "/api/live/auth/login",
+            json={"email": payload["email"], "password": retry_payload["password"]},
+        ).status_code
+        == 200
+    )
+
+
+def test_failed_retry_rolls_back_password_and_code_changes(api, monkeypatch):
+    from app.api import live_auth as live_auth_api
+
+    payload = {
+        "email": "retry-rollback@example.com",
+        "password": "OriginalHorse9Battery",
+        "legal_business_name": "Retry Rollback Traders",
+        "country": "IN",
+        "timezone": "Asia/Kolkata",
+        "accept_terms": True,
+        "accept_privacy": True,
+    }
+    first = api.post("/api/live/auth/register", json=payload)
+    assert first.status_code == 201
+    original_code = first.json()["verification_token"]
+    original_sender = live_auth_api.send_auth_email
+
+    def fail_delivery(**_kwargs):
+        raise AuthEmailError("provider unavailable")
+
+    monkeypatch.setattr(live_auth_api, "send_auth_email", fail_delivery)
+    failed_retry = api.post(
+        "/api/live/auth/register",
+        json={**payload, "password": "UncommittedHorse8Battery"},
+    )
+    assert failed_retry.status_code == 503
+    monkeypatch.setattr(live_auth_api, "send_auth_email", original_sender)
+
+    assert (
+        api.post(
+            "/api/live/auth/verify-email-code",
+            json={"email": payload["email"], "code": original_code},
+        ).status_code
+        == 200
+    )
+    assert (
+        api.post(
+            "/api/live/auth/login",
+            json={"email": payload["email"], "password": payload["password"]},
+        ).status_code
+        == 200
+    )
+
+
+def test_password_reset_revokes_sessions_and_replaces_the_password(api):
+    email = "password-reset@example.com"
+    _merchant_id, refresh_token = _live_user(api, email)
+
+    forgot = api.post("/api/live/auth/forgot-password", json={"email": email})
+    assert forgot.status_code == 200
+    reset_token = forgot.json()["reset_token"]
+    assert reset_token
+
+    reset = api.post(
+        "/api/live/auth/reset-password",
+        json={"token": reset_token, "password": "ReplacementHorse8Battery"},
+    )
+    assert reset.status_code == 200
+
+    api.cookies.set("vasooli_live_refresh", refresh_token, path="/api/live/auth")
+    assert api.post("/api/live/auth/refresh").status_code == 401
+    assert (
+        api.post(
+            "/api/live/auth/login",
+            json={"email": email, "password": "CorrectHorse9Battery"},
+        ).status_code
+        == 401
+    )
+    assert (
+        api.post(
+            "/api/live/auth/login",
+            json={"email": email, "password": "ReplacementHorse8Battery"},
+        ).status_code
+        == 200
+    )
 
 
 def test_two_live_merchants_can_import_same_invoice_number_without_crossover(api, session):

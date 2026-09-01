@@ -6,6 +6,8 @@ describe("application shell routing", () => {
   it("never puts live routes in the guided demo shell", () => {
     expect(shellForPath("/live", true)).toBe("live");
     expect(shellForPath("/live/invoices", true)).toBe("live");
+    expect(shellForPath("/live/recovered", true)).toBe("live");
+    expect(shellForPath("/live/settings", false)).toBe("live");
   });
 
   it("keeps live login in the public authentication shell", () => {

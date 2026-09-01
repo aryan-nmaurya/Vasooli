@@ -27,5 +27,18 @@ export function LiveLoginForm() {
       setBusy(false);
     }
   }
-  return <form onSubmit={submit} className="mx-auto max-w-md space-y-4 rounded-2xl border border-line bg-panel p-6"><div><h1 className="text-2xl font-semibold">Sign in</h1><p className="mt-1 text-sm text-ink-3">Access your merchant recovery workspace.</p></div><label className="block text-sm">Email<input name="email" type="email" required className="mt-1 w-full rounded-lg border border-line bg-surface px-3 py-2" /></label><label className="block text-sm">Password<input name="password" type="password" required className="mt-1 w-full rounded-lg border border-line bg-surface px-3 py-2" /></label><div className="-mt-2 text-right"><Link href="/forgot-password" className="text-xs text-accent hover:underline">Forgot password?</Link></div><label className="block text-sm">Authenticator code <span className="text-ink-4">(if enabled)</span><input name="otp" inputMode="numeric" pattern="[0-9]{6}" maxLength={6} className="mt-1 w-full rounded-lg border border-line bg-surface px-3 py-2" /></label>{error ? <p role="alert" className="rounded-lg bg-rose-500/10 px-3 py-2 text-sm text-rose-700">{error}</p> : null}<button disabled={busy} className="w-full rounded-lg bg-accent px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{busy ? "Signing in…" : "Sign in"}</button></form>;
+  return <section className="auth-card" aria-labelledby="login-title">
+    <div className="auth-step">Secure merchant access</div>
+    <h1 id="login-title">Welcome back.</h1>
+    <p className="auth-intro">Sign in to continue recovering receivables from the exact point your team left off.</p>
+    <form onSubmit={submit} className="auth-form">
+      <label>Work email<input name="email" type="email" autoComplete="email" inputMode="email" required /></label>
+      <label>Password<input name="password" type="password" autoComplete="current-password" required /></label>
+      <div className="auth-form-link"><Link href="/forgot-password">Forgot your password?</Link></div>
+      <details className="auth-optional"><summary>Use an authenticator code</summary><label>Authenticator code<input name="otp" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6,8}" maxLength={8} /></label></details>
+      {error ? <p role="alert" className="auth-error">{error === "Invalid credentials" ? "The email, password, or verification status is incorrect." : error}</p> : null}
+      <button disabled={busy}>{busy ? "Signing in securely…" : "Sign in to workspace"}</button>
+      <p className="auth-assurance">Your session uses secure, HTTP-only credentials and expires automatically.</p>
+    </form>
+  </section>;
 }

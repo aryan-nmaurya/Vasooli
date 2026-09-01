@@ -408,6 +408,7 @@ npm run dev
 | `RAZORPAY_WEBHOOK_SECRET` | Signature verification | From the dashboard webhook |
 | `GOOGLE_API_KEY` | Gemini | Free tier is **20 requests/day per model** |
 | `RESEND_API_KEY` | Email | |
+| `AUTH_EMAIL_FROM` | OTP and password-recovery sender | `Vasooli <noreply@vasooli.com>`; domain verified in Resend |
 | `EMAIL_DRY_RUN` | Record without sending | `true` unless demoing |
 | `EMAIL_REDIRECT_TO` | Send everything here instead | **Required** to send live |
 | `ADMIN_API_KEY` | Service credential | Never exposed to the browser |
@@ -477,8 +478,9 @@ below is completed:
   payments and provider-net reconciliation, promises, dispute review, operational
   exceptions, and the append-only audit trail. All reads and actions are permissioned
   and constrained to the authenticated merchant.
-- New workspaces receive a bounded `LIVE_TRIAL_DAYS` trial. When it expires, billable
-  import and recovery operations fail closed until a subscription is active.
+- New workspaces receive a bounded seven-day Starter trial configured by
+  `LIVE_TRIAL_DAYS`. Growth and Scale have no trial. When the Starter trial expires,
+  billable import and recovery operations fail closed until a subscription is active.
 
 - Zoho Books OAuth and invoice reads exist, and a locked scheduler polls connected
   Zoho/Tally sources. Zoho accounts with multiple Books organizations are rejected

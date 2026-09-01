@@ -181,6 +181,8 @@ def assert_can_send(session: Session, merchant_id: uuid.UUID, *, is_demo: bool) 
     """
     if is_demo:
         return
+    if settings.allow_platform_sender_for_live:
+        return
     if not sending_domain_is_verified(session, merchant_id):
         raise OutboundBlockedError(
             "No verified sending domain. Verify one under Settings before sending live "

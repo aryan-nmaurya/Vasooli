@@ -18,6 +18,16 @@ export type LiveRegistration = {
   verification_token?: string | null;
 };
 
+export type LiveRegistrationPayload = {
+  email: string;
+  password: string;
+  legal_business_name: string;
+  country: string;
+  timezone: string;
+  accept_terms: boolean;
+  accept_privacy: boolean;
+};
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   let response: Response;
   try {
@@ -42,15 +52,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return body as T;
 }
 
-export function registerLive(payload: {
-  email: string;
-  password: string;
-  legal_business_name: string;
-  country: string;
-  timezone: string;
-  accept_terms: boolean;
-  accept_privacy: boolean;
-}) {
+export function registerLive(payload: LiveRegistrationPayload) {
   return request<LiveRegistration>("/api/live/auth/register", {
     method: "POST",
     body: JSON.stringify(payload),
@@ -64,8 +66,15 @@ export function verifyLive(token: string) {
   });
 }
 
+export function verifyLiveCode(email: string, code: string) {
+  return request<{ status: string }>("/api/live/auth/verify-email-code", {
+    method: "POST",
+    body: JSON.stringify({ email, code }),
+  });
+}
+
 export function forgotPasswordLive(email: string) {
-  return request<{ status: string; message: string }>("/api/live/auth/forgot-password", {
+  return request<{ status: string; message: string; reset_token?: string | null }>("/api/live/auth/forgot-password", {
     method: "POST",
     body: JSON.stringify({ email }),
   });

@@ -73,6 +73,7 @@ RATE_LIMITS: dict[str, tuple[int, int]] = {
     "/api/live/auth/forgot-password": (5, 300),
     "/api/live/auth/reset-password": (10, 300),
     "/api/live/auth/verify-email": (10, 300),
+    "/api/live/auth/verify-email-code": (10, 300),
     # A second factor is only a second factor if it cannot be brute-forced. Six digits
     # is a million combinations, which 240/minute walks through in under three days.
     "/api/live/auth/mfa/": (10, 300),

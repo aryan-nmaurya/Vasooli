@@ -60,9 +60,24 @@ const SECURITY_HEADERS = [
   { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(), payment=()" },
 ];
 
+/**
+ * The workspace settings pages used to sit at the top level of `/live`, reachable
+ * only through cards on the settings hub. They now live under `/live/settings/*`
+ * behind a shared layout. These redirects keep old links and bookmarks working;
+ * they are permanent because the previous paths are not coming back.
+ */
+const SETTINGS_REDIRECTS = ["integrations", "policy", "billing", "team"].map((section) => ({
+  source: `/live/${section}`,
+  destination: `/live/settings/${section}`,
+  permanent: true,
+}));
+
 const nextConfig: NextConfig = {
   async headers() {
     return [{ source: "/:path*", headers: SECURITY_HEADERS }];
+  },
+  async redirects() {
+    return SETTINGS_REDIRECTS;
   },
 };
 
