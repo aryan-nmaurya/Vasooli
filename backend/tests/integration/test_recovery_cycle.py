@@ -438,26 +438,44 @@ def test_a_refused_tier_3_send_does_not_escalate_as_if_it_had_been_sent(
     assert invoice.reminders_sent == 0
 
 
-def test_the_tier_is_still_owed_after_a_refused_send(session, live_merchant, customer, monkeypatch):
-    """Once sending works again the cadence must resume, not skip the missed tier."""
+def test_the_tier_is_still_owed_after_a_refused_send(
+    session, live_merchant, customer, refuse_sending, monkeypatch
+):
+    """Once sending works again the cadence must resume, not skip the missed tier.
+
+    Sending is repaired the way an operator repairs it — by verifying a domain —
+    rather than by flipping the platform-sender flag. Delivery is gated twice and
+    independently: `assert_can_send` refuses the merchant, and `sender_identity`
+    refuses to choose a From address. Satisfying only the first left the send failing
+    at the second, and because the flag behind `sender_identity` was read from a
+    developer's .env, that surfaced as a test passing locally and failing in CI.
+    """
+    from app.models import SendingDomain
     from app.services import messaging as messaging_module
-    from app.services.outbound_controls import OutboundBlockedError
 
-    def refuse(*_args, **_kwargs):
-        raise OutboundBlockedError("No verified sending domain.")
-
-    monkeypatch.setattr(messaging_module, "assert_can_send", refuse)
     invoice = make_invoice(session, live_merchant, customer, overdue=TIER_1_DAYS_OVERDUE)
     cycle(session)
     session.refresh(invoice)
     assert invoice.reminders_sent == 0
 
-    # Sending is fixed; the same tier must go out rather than being consumed.
     monkeypatch.setattr(messaging_module, "assert_can_send", lambda *a, **k: None)
+    session.add(
+        SendingDomain(
+            merchant_id=live_merchant.id,
+            domain="mail.example",
+            local_part="accounts",
+            status="verified",
+            verification_token="test-verification-token",
+            verified_at=datetime.now(UTC),
+        )
+    )
+    session.commit()
+
     report = cycle(session)
 
     session.refresh(invoice)
     assert report.sent == 1
+    assert report.deliveries_revived == 1, "the dead row is revived, not re-drafted"
     assert invoice.reminders_sent == 1
     assert {r.tier for r in session.exec(select(Reminder)).all() if r.sent_at} == {1}
 
