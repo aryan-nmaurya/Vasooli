@@ -41,3 +41,4 @@ deploy/*.env
 # Local database dumps may contain customer data and credentials in extension
 # objects; they are operational artifacts, never source artifacts.
 deploy/backups/
+.vercel
