@@ -49,22 +49,20 @@ def send_auth_email(
         code_copy = ""
 
     text = (
-        f"{intro}{code_copy}\n\n{action}: {url}\n\n"
-        "If you did not request this, ignore this email."
+        f"{intro}{code_copy}\n\n{action}: {url}\n\nIf you did not request this, ignore this email."
     )
     html = (
         "<div style='font-family:-apple-system,Segoe UI,Roboto,sans-serif;"
         "font-size:15px;line-height:1.55;color:#1a1a1a;max-width:560px'>"
         f"<p>{escape(intro)}</p>"
         + (
-            "<p style='font-size:28px;font-weight:700;letter-spacing:8px'>"
-            f"{escape(token)}</p>"
+            f"<p style='font-size:28px;font-weight:700;letter-spacing:8px'>{escape(token)}</p>"
             if purpose == "verify_email"
             else ""
         )
         + (
-        f"<p><a href='{escape(url, quote=True)}'>{escape(action)}</a></p>"
-        "<p>If you did not request this, ignore this email.</p></div>"
+            f"<p><a href='{escape(url, quote=True)}'>{escape(action)}</a></p>"
+            "<p>If you did not request this, ignore this email.</p></div>"
         )
     )
     result = (provider or ResendProvider(from_email=settings.auth_email_from)).send(

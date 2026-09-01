@@ -374,3 +374,109 @@ def test_reminders_record_how_they_were_written(session, merchant, customer):
     assert reminder.generated_by == "template_fallback"
     assert reminder.provider == "dry_run"
     assert reminder.sent_at is not None
+
+
+# ===========================================================================
+# A failed delivery must not advance the cadence. Regression, 2026-09-01.
+#
+# A live workspace with no verified sending domain had every send refused by
+# `assert_can_send`. The cycle ignored the outcome: it counted the attempt as
+# sent and, at Tier 3, escalated the invoice as "tier_3_reached" — which the
+# dashboard renders as "all three automated reminders have been sent". The
+# customer had received nothing, and HUMAN_REVIEW meant it was never retried.
+# ===========================================================================
+
+
+@pytest.fixture
+def live_merchant(session, merchant):
+    """The gate only applies to live workspaces; the default fixture is a demo one."""
+    merchant.is_demo = False
+    merchant.mode = "live"
+    session.add(merchant)
+    session.commit()
+    session.refresh(merchant)
+    return merchant
+
+
+@pytest.fixture
+def refuse_sending(monkeypatch):
+    """Refuse delivery the way an unverified sending domain does: permanently."""
+    from app.services import messaging as messaging_module
+    from app.services.outbound_controls import OutboundBlockedError
+
+    def refuse(*_args, **_kwargs):
+        raise OutboundBlockedError("No verified sending domain.")
+
+    monkeypatch.setattr(messaging_module, "assert_can_send", refuse)
+
+
+def test_a_refused_send_is_not_counted_as_sent(session, live_merchant, customer, refuse_sending):
+    make_invoice(session, live_merchant, customer, overdue=TIER_1_DAYS_OVERDUE)
+
+    report = cycle(session)
+
+    assert report.sent == 0, "a reminder that never left must not be reported as sent"
+    assert report.send_failed == 1
+    reminder = session.exec(select(Reminder)).one()
+    assert reminder.sent_at is None
+    assert reminder.delivery_state == "dead"
+
+
+def test_a_refused_tier_3_send_does_not_escalate_as_if_it_had_been_sent(
+    session, live_merchant, customer, refuse_sending
+):
+    invoice = make_invoice(session, live_merchant, customer, overdue=TIER_3_DAYS_OVERDUE)
+
+    report = cycle(session)
+
+    session.refresh(invoice)
+    assert invoice.escalation_reason != "tier_3_reached"
+    assert invoice.status != InvoiceStatus.HUMAN_REVIEW, (
+        "parking the invoice for a human implies three reminders went out; none did"
+    )
+    assert report.escalated == 0
+    assert invoice.reminders_sent == 0
+
+
+def test_the_tier_is_still_owed_after_a_refused_send(session, live_merchant, customer, monkeypatch):
+    """Once sending works again the cadence must resume, not skip the missed tier."""
+    from app.services import messaging as messaging_module
+    from app.services.outbound_controls import OutboundBlockedError
+
+    def refuse(*_args, **_kwargs):
+        raise OutboundBlockedError("No verified sending domain.")
+
+    monkeypatch.setattr(messaging_module, "assert_can_send", refuse)
+    invoice = make_invoice(session, live_merchant, customer, overdue=TIER_1_DAYS_OVERDUE)
+    cycle(session)
+    session.refresh(invoice)
+    assert invoice.reminders_sent == 0
+
+    # Sending is fixed; the same tier must go out rather than being consumed.
+    monkeypatch.setattr(messaging_module, "assert_can_send", lambda *a, **k: None)
+    report = cycle(session)
+
+    session.refresh(invoice)
+    assert report.sent == 1
+    assert invoice.reminders_sent == 1
+    assert {r.tier for r in session.exec(select(Reminder)).all() if r.sent_at} == {1}
+
+
+def test_a_dry_run_never_redelivers_a_dead_reminder(
+    session, live_merchant, customer, refuse_sending, monkeypatch
+):
+    """Reviving a dead reminder delivers, and that branch sits above the dry-run guard.
+
+    Patched on `recovery` rather than `messaging`: the cycle imported the name directly,
+    so patching the defining module would not be seen by the code under test.
+    """
+    make_invoice(session, live_merchant, customer, overdue=TIER_1_DAYS_OVERDUE)
+    cycle(session)
+
+    calls: list[object] = []
+    monkeypatch.setattr(recovery_module, "redeliver_reminder", lambda *a, **k: calls.append(a))
+    report = cycle(session, dry_run=True)
+
+    assert calls == [], "a dry run must not deliver anything"
+    assert report.deliveries_revived == 1
+    assert session.exec(select(Reminder)).one().sent_at is None

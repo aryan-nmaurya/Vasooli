@@ -193,9 +193,7 @@ def register(payload: RegisterRequest, request: Request, session: SessionDep) ->
     email = normalize_email(str(payload.email))
     # Serialize retries for the same pending identity. Without the row lock, two
     # resend requests can each issue a usable code from the same stale snapshot.
-    existing_user = session.exec(
-        select(User).where(User.email == email).with_for_update()
-    ).first()
+    existing_user = session.exec(select(User).where(User.email == email).with_for_update()).first()
     if existing_user is not None:
         # A delivery failure or closed browser must not strand a newly registered
         # owner forever. Re-issue a code for a still-pending account while keeping
@@ -339,9 +337,7 @@ def _activate_verified_user(user: User, request: Request, session: SessionDep) -
 
 
 @router.post("/verify-email")
-def verify_email(
-    payload: VerificationTokenRequest, request: Request, session: SessionDep
-) -> dict:
+def verify_email(payload: VerificationTokenRequest, request: Request, session: SessionDep) -> dict:
     try:
         user = consume_auth_token(session, payload.token, "verify_email")
     except LiveAuthError as exc:
