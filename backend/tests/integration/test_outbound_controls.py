@@ -15,6 +15,7 @@ import pytest
 from sqlmodel import select
 
 from app.core.clock import utcnow
+from app.core.config import settings
 from app.models import MerchantUsageBucket, SuppressionEntry
 from app.services.outbound_controls import (
     OutboundBlockedError,
@@ -22,6 +23,12 @@ from app.services.outbound_controls import (
     claim_send_slot,
     is_suppressed,
 )
+
+
+@pytest.fixture(autouse=True)
+def platform_sender_disabled_by_default(monkeypatch):
+    """Individual tests must explicitly opt into the shared platform sender."""
+    monkeypatch.setattr(settings, "allow_platform_sender_for_live", False)
 
 
 def _suppress(session, merchant, *, email=None, customer=None, reason="hard_bounce", **over):
@@ -198,6 +205,18 @@ def test_a_live_merchant_without_a_verified_domain_cannot_send(session, merchant
 
     with pytest.raises(OutboundBlockedError, match="verified sending domain"):
         assert_can_send(session, merchant.id, is_demo=False)
+
+
+def test_explicit_platform_sender_allows_live_delivery_without_custom_domain(
+    session, merchant, monkeypatch
+):
+    monkeypatch.setattr(settings, "allow_platform_sender_for_live", True)
+    merchant.is_demo = False
+    merchant.mode = "live"
+    session.add(merchant)
+    session.commit()
+
+    assert_can_send(session, merchant.id, is_demo=False)
 
 
 def test_a_pending_domain_does_not_count_as_verified(session, merchant):

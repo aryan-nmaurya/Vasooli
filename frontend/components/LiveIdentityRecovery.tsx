@@ -39,6 +39,7 @@ export function ForgotPassword() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [resetLink, setResetLink] = useState("");
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -48,6 +49,7 @@ export function ForgotPassword() {
       const data = new FormData(event.currentTarget);
       const result = await forgotPasswordLive(String(data.get("email")));
       setMessage(result.message);
+      setResetLink(result.reset_token ? `/reset-password?token=${result.reset_token}` : "");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Request failed");
     } finally {
@@ -56,13 +58,15 @@ export function ForgotPassword() {
   }
 
   return (
-    <IdentityCard title="Reset your password">
-      <p className="mb-5 text-sm text-ink-3">Enter your work email. We will send a time-limited reset link if an account exists.</p>
-      <form onSubmit={submit} className="space-y-4">
-        <label className="block text-sm">Work email<input name="email" type="email" required className="mt-1 w-full rounded-lg border border-line bg-surface px-3 py-2" /></label>
-        {message ? <p className="text-sm text-emerald-700">{message}</p> : null}
-        {error ? <p role="alert" className="text-sm text-rose-700">{error}</p> : null}
-        <button disabled={busy} className="w-full rounded-lg bg-accent px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{busy ? "Sending…" : "Send reset link"}</button>
+    <IdentityCard title="Reset your password" eyebrow="Account recovery">
+      <p className="auth-intro">Enter your work email. If an account exists, we will send a secure link that expires in 30 minutes.</p>
+      <form onSubmit={submit} className="auth-form">
+        <label>Work email<input name="email" type="email" autoComplete="email" inputMode="email" required /></label>
+        {message ? <p role="status" className="auth-success">{message}</p> : null}
+        {resetLink ? <Link className="auth-local-link" href={resetLink}>Open the local reset form</Link> : null}
+        {error ? <p role="alert" className="auth-error">{error}</p> : null}
+        <button disabled={busy}>{busy ? "Sending secure link…" : "Send password reset link"}</button>
+        <p className="auth-assurance">For your privacy, we show the same confirmation whether or not the email is registered.</p>
       </form>
     </IdentityCard>
   );
@@ -91,19 +95,19 @@ export function ResetPassword({ token }: { token: string }) {
   }
 
   return (
-    <IdentityCard title="Choose a new password">
-      <form onSubmit={submit} className="space-y-4">
-        <label className="block text-sm">New password<input name="password" type="password" minLength={12} required className="mt-1 w-full rounded-lg border border-line bg-surface px-3 py-2" /></label>
-        <label className="block text-sm">Confirm password<input name="confirm" type="password" minLength={12} required className="mt-1 w-full rounded-lg border border-line bg-surface px-3 py-2" /></label>
-        <p className="text-xs text-ink-4">Use at least 12 characters with uppercase, lowercase, and a number.</p>
-        {message ? <p className="text-sm text-emerald-700">{message} <Link href="/live/login" className="underline">Sign in</Link></p> : null}
-        {error ? <p role="alert" className="text-sm text-rose-700">{error}</p> : null}
-        <button disabled={busy || !token} className="w-full rounded-lg bg-accent px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{busy ? "Saving…" : "Save new password"}</button>
+    <IdentityCard title="Choose a new password" eyebrow="Secure reset">
+      <form onSubmit={submit} className="auth-form">
+        <label>New password<input name="password" type="password" autoComplete="new-password" minLength={12} pattern="(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9]).{12,}" required /></label>
+        <label>Confirm password<input name="confirm" type="password" autoComplete="new-password" minLength={12} required /></label>
+        <p className="auth-helper">Use at least 12 characters with uppercase, lowercase, and a number.</p>
+        {message ? <p className="auth-success">{message} <Link href="/live/login">Sign in</Link></p> : null}
+        {error ? <p role="alert" className="auth-error">{error}</p> : null}
+        <button disabled={busy || !token}>{busy ? "Saving new password…" : "Save new password"}</button>
       </form>
     </IdentityCard>
   );
 }
 
-function IdentityCard({ title, children }: { title: string; children: React.ReactNode }) {
-  return <main className="mx-auto max-w-md px-4 py-14 sm:px-6"><section className="rounded-2xl border border-line bg-panel p-6 shadow-sm"><h1 className="mb-3 text-2xl font-semibold tracking-tight">{title}</h1>{children}</section></main>;
+function IdentityCard({ title, eyebrow = "Email verification", children }: { title: string; eyebrow?: string; children: React.ReactNode }) {
+  return <main className="auth-page"><section className="auth-card auth-recovery-card"><div className="auth-step">{eyebrow}</div><h1>{title}</h1>{children}</section></main>;
 }

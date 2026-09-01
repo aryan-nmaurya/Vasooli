@@ -6,8 +6,8 @@ import { Landing } from "@/components/Landing";
 describe("production landing page", () => {
   it("explains the complete controlled recovery loop", () => {
     const html = renderToStaticMarkup(<Landing />);
-    expect(html).toContain("Stop when they dispute");
-    expect(html).toContain("Close when money lands");
+    expect(html).toContain("Turn overdue invoices");
+    expect(html).toContain("into accountable action");
     expect(html).toContain("Connect your financial system");
     expect(html).toContain("Detect what needs attention");
     expect(html).toContain("Communicate with context");
@@ -64,7 +64,7 @@ describe("production landing page", () => {
   it("gives a credential-less reviewer a way in", () => {
     const html = renderToStaticMarkup(<Landing />);
     expect(html).toContain('href="/login"');
-    expect(html).toContain("Open the demo");
+    expect(html).toContain("Explore the product");
     expect(html).not.toContain('href="/guide"');
   });
 });

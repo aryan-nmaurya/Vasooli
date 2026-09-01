@@ -210,7 +210,7 @@ def _send_email(
 
 
 def sender_identity(session: Session, merchant: Merchant) -> str:
-    """The verified From identity for one merchant, falling back only for demo."""
+    """Use a merchant sender when verified, otherwise the explicitly enabled platform sender."""
     if merchant.is_demo:
         return settings.email_from
     domain = session.exec(
@@ -222,6 +222,8 @@ def sender_identity(session: Session, merchant: Merchant) -> str:
         .order_by(SendingDomain.verified_at.desc())  # type: ignore[attr-defined]
     ).first()
     if domain is None:
+        if settings.allow_platform_sender_for_live:
+            return settings.email_from
         raise OutboundBlockedError("A verified merchant sending domain is required")
     display = re.sub(r"[\r\n<>]", " ", merchant.legal_name or merchant.name).strip()
     return f"{display} Accounts <{domain.local_part}@{domain.domain}>"

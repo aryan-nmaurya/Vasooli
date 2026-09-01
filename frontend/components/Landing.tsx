@@ -26,23 +26,23 @@ export function Landing() {
       <div className="landing-progress" aria-hidden />
       <section className="landing-hero landing-grid" aria-labelledby="landing-title">
         <div className="landing-glow" aria-hidden />
-        <div className="landing-kicker landing-reveal" data-reveal><span className="landing-pulse" />Automated B2B receivables recovery</div>
-        <h1 id="landing-title" className="landing-display landing-reveal" data-reveal>Stop when they dispute.<br /><span>Close when money lands.</span></h1>
+        <div className="landing-kicker landing-reveal" data-reveal><span className="landing-pulse" />The operating system for B2B receivables</div>
+        <h1 id="landing-title" className="landing-display landing-reveal" data-reveal>Turn overdue invoices<br /><span>into accountable action.</span></h1>
         <div className="landing-hero-copy landing-reveal" data-reveal>
-          <p>Vasooli pauses when a customer promises or disputes, keeps follow-up inside a bounded policy, and closes recovery when trusted financial records confirm the money. Your team sees the reason, owner, and next action throughout.</p>
+          <p>Vasooli gives every overdue invoice a next action, every promise an owner, and every payment a verified close. Recover revenue faster without sacrificing customer trust or financial control.</p>
           {/* Three audiences reach this page: a merchant who wants an account, a merchant
           who already has one, with a seeded read-only demo available separately.
           The third had no route in at all for a while — every link led to register or
           sign-in — which made a working product look like a locked door. */}
-          <div className="landing-actions"><Link href="/register" className="landing-button landing-button-primary">Start your workspace <Arrow /></Link><Link href="/login" className="landing-button landing-button-quiet">Open the demo — no sign-up</Link><Link href="/live/login" className="landing-button landing-button-quiet">Sign in</Link></div>
+          <div className="landing-actions"><Link href="/register" className="landing-button landing-button-primary">Start free for 7 days <Arrow /></Link><Link href="/login" className="landing-button landing-button-quiet">Explore the product</Link><Link href="/live/login" className="landing-button landing-button-quiet">Sign in</Link></div>
         </div>
-        <div className="landing-proof-strip landing-reveal" data-reveal><span>Tenant-scoped records</span><span>ERP synchronization</span><span>Razorpay reconciliation</span><span>Audited decisions</span></div>
+        <div className="landing-proof-strip landing-reveal" data-reveal><span>No card required</span><span>ERP-connected context</span><span>Razorpay reconciliation</span><span>Every action audited</span></div>
         <a href="#how" className="landing-scroll-cue"><span>Follow the recovery loop</span><i aria-hidden /></a>
       </section>
 
       <section className="landing-statement landing-grid" aria-labelledby="problem-title">
         <span className="landing-section-number landing-reveal" data-reveal>00</span>
-        <div className="landing-statement-copy"><p className="landing-eyebrow landing-reveal" data-reveal>The operating problem</p><h2 id="problem-title" className="landing-big-copy landing-reveal" data-reveal>A reminder is easy.<br /><em>A trustworthy recovery loop is not.</em></h2><p className="landing-explainer landing-reveal" data-reveal>Finance teams need current invoice state, consistent follow-up, clear ownership of disputes, and proof of why contact stopped. Vasooli brings those steps into one controlled workflow without making AI the source of financial truth.</p></div>
+        <div className="landing-statement-copy"><p className="landing-eyebrow landing-reveal" data-reveal>The cost of fragmented follow-up</p><h2 id="problem-title" className="landing-big-copy landing-reveal" data-reveal>Cash should not disappear<br /><em>between spreadsheets and inboxes.</em></h2><p className="landing-explainer landing-reveal" data-reveal>Finance teams lose time deciding who to contact, what was promised, and whether money actually arrived. Vasooli turns that uncertainty into one controlled recovery loop—without making AI the source of financial truth.</p></div>
       </section>
 
       <section id="how" className="landing-story landing-grid" aria-labelledby="how-title">
@@ -71,7 +71,7 @@ export function Landing() {
         <p className="landing-proof-note landing-reveal" data-reveal>Payment state is derived from integer minor-unit records. Sensitive connector secrets are encrypted at rest, and high-impact actions require explicit permission with recent re-authentication where configured.</p>
       </section>
 
-      <section className="landing-final landing-grid"><p className="landing-eyebrow landing-reveal" data-reveal>Receivables recovery with financial discipline</p><h2 className="landing-final-title landing-reveal" data-reveal>Stop when they dispute.<br />Pause when they promise.<br />Close when money lands.</h2><div className="landing-actions landing-reveal" data-reveal><Link href="/register" className="landing-button landing-button-primary">Start your workspace <Arrow /></Link><Link href="/login" className="landing-button landing-button-quiet">Open the demo</Link><Link href="/pricing" className="landing-button landing-button-quiet">View plans</Link></div></section>
+      <section className="landing-final landing-grid"><p className="landing-eyebrow landing-reveal" data-reveal>Your receivables deserve an operating system</p><h2 className="landing-final-title landing-reveal" data-reveal>Make every invoice visible.<br />Every follow-up accountable.<br />Every payment final.</h2><div className="landing-actions landing-reveal" data-reveal><Link href="/register" className="landing-button landing-button-primary">Start free for 7 days <Arrow /></Link><Link href="/login" className="landing-button landing-button-quiet">Explore the product</Link><Link href="/pricing" className="landing-button landing-button-quiet">Compare plans</Link></div></section>
     </div>
   );
 }

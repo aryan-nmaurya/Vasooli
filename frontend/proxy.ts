@@ -23,6 +23,9 @@ export function proxy(request: NextRequest) {
     pathname === "/login" ||
     pathname === "/register" ||
     pathname === "/pricing" ||
+    pathname === "/privacy" ||
+    pathname === "/terms" ||
+    pathname === "/dpa" ||
     pathname === "/verify-email" ||
     pathname === "/forgot-password" ||
     pathname === "/reset-password" ||
@@ -47,6 +50,8 @@ export function proxy(request: NextRequest) {
     // explicit X-Merchant-ID, and a membership behind it.
     pathname.startsWith("/api/live") ||
     pathname.startsWith("/_next") ||
+    pathname === "/vasooli-logo.png" ||
+    pathname === "/vasooli-favicon-rounded.png" ||
     pathname === "/favicon.ico";
 
   if (isPublic) return NextResponse.next();

@@ -29,6 +29,8 @@ from app.core.money import format_inr
 from app.models import (
     AuditActor,
     AuditLog,
+    BillingPlan,
+    BillingSubscription,
     Customer,
     DisputeCase,
     ExternalPayment,
@@ -63,6 +65,30 @@ def _invoice_ids(session: SessionDep, merchant_id: uuid.UUID) -> list[uuid.UUID]
 
 def _actor(context: LiveContext) -> str:
     return AuditActor.human(context.user.email)
+
+
+@router.get("/profile")
+def workspace_profile(
+    session: SessionDep,
+    context: Annotated[LiveContext, Depends(require_live_permission("invoice.read"))],
+) -> dict:
+    """Return the authenticated tenant identity and its current commercial plan."""
+    subscription = session.exec(
+        select(BillingSubscription)
+        .where(BillingSubscription.merchant_id == context.merchant.id)
+        .order_by(BillingSubscription.updated_at.desc())  # type: ignore[attr-defined]
+    ).first()
+    plan = session.get(BillingPlan, subscription.plan_id) if subscription else None
+    trial_ends_at = (context.merchant.onboarding_state or {}).get("trial_ends_at")
+    return {
+        "business_name": context.merchant.legal_name or context.merchant.name,
+        "subscription": {
+            "label": plan.name if plan else "Free trial",
+            "slug": plan.slug if plan else "trial",
+            "status": subscription.status if subscription else "trialing",
+            "trial_ends_at": trial_ends_at if subscription is None else None,
+        },
+    }
 
 
 @router.get("/overview")

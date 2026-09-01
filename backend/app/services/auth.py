@@ -26,7 +26,7 @@ from app.models import (
 
 ACCESS_TTL_SECONDS = 15 * 60
 REFRESH_TTL_DAYS = 30
-VERIFY_TTL_HOURS = 24
+VERIFY_TTL_MINUTES = 15
 RESET_TTL_MINUTES = 30
 
 PERMISSIONS: dict[str, str] = {
@@ -154,9 +154,23 @@ def create_auth_token(session: Session, user: User, purpose: str) -> str:
         current.used_at = now
         session.add(current)
 
-    raw = new_opaque_token()
+    # Email verification is intentionally a short, human-entered code. Keep its
+    # hash globally unique so the existing token lookup remains unambiguous, and
+    # retain high-entropy opaque tokens for password reset links.
+    if purpose == "verify_email":
+        while True:
+            raw = f"{secrets.randbelow(1_000_000):06d}"
+            if (
+                session.exec(
+                    select(AuthToken.id).where(AuthToken.token_hash == token_hash(raw))
+                ).first()
+                is None
+            ):
+                break
+    else:
+        raw = new_opaque_token()
     ttl = (
-        timedelta(hours=VERIFY_TTL_HOURS)
+        timedelta(minutes=VERIFY_TTL_MINUTES)
         if purpose == "verify_email"
         else timedelta(minutes=RESET_TTL_MINUTES)
     )

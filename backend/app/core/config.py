@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     razorpay_plan_id_growth: str | None = None
     razorpay_plan_id_scale: str | None = None
     razorpay_subscriptions_enabled: bool = False
-    live_trial_days: int = Field(default=14, ge=1, le=90)
+    live_trial_days: int = Field(default=7, ge=1, le=90)
     razorpay_oauth_client_id: str | None = None
     razorpay_oauth_client_secret: str | None = None
     razorpay_oauth_redirect_uri: str | None = None
@@ -75,6 +75,9 @@ class Settings(BaseSettings):
     #: deliver to the address the account was registered with, which is exactly the
     #: behaviour we want while the customer list is synthetic.
     email_from: str = "Vasooli <onboarding@resend.dev>"
+    #: Account lifecycle mail has a stable platform identity and must never inherit a
+    #: merchant's collections sender. The domain must be verified in Resend.
+    auth_email_from: str = "Vasooli <noreply@vasooli.com>"
     email_reply_to_domain: str = "example.com"
     resend_inbound_webhook_secret: str = ""
     #: Each Resend webhook endpoint is issued its own signing secret — Resend does not
@@ -94,6 +97,9 @@ class Settings(BaseSettings):
     email_provider_timeout_seconds: float = 10.0
     email_dry_run: bool = True
     allow_direct_customer_email: bool = False
+    # Explicit SaaS fallback: live merchants without a custom verified domain may
+    # send through the platform's verified EMAIL_FROM identity.
+    allow_platform_sender_for_live: bool = False
     global_send_kill_switch: bool = False
     global_daily_send_quota: int = 100000
 

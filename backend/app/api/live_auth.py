@@ -89,6 +89,15 @@ class RegisterRequest(BaseModel):
         return self
 
 
+class VerificationTokenRequest(BaseModel):
+    token: str = Field(min_length=6, max_length=200)
+
+
+class VerificationCodeRequest(BaseModel):
+    email: EmailStr
+    code: str = Field(pattern=r"^[0-9]{6}$")
+
+
 class TokenRequest(BaseModel):
     token: str = Field(min_length=20, max_length=200)
 
@@ -182,13 +191,57 @@ def register(payload: RegisterRequest, request: Request, session: SessionDep) ->
     if not settings.live_registration_enabled:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
     email = normalize_email(str(payload.email))
-    if session.exec(select(User.id).where(User.email == email)).first() is not None:
+    # Serialize retries for the same pending identity. Without the row lock, two
+    # resend requests can each issue a usable code from the same stale snapshot.
+    existing_user = session.exec(
+        select(User).where(User.email == email).with_for_update()
+    ).first()
+    if existing_user is not None:
+        # A delivery failure or closed browser must not strand a newly registered
+        # owner forever. Re-issue a code for a still-pending account while keeping
+        # the same public response shape used for every existing address.
+        verification_token = None
+        if not existing_user.is_email_verified and existing_user.status not in {
+            "deleted",
+            "suspended",
+        }:
+            # A registration retry is also recovery from an interrupted first
+            # attempt. Keep the credentials the browser is about to use in sync
+            # with the pending account; otherwise verification succeeds but the
+            # automatic login uses a password that was never persisted.
+            now = utcnow()
+            existing_user.password_hash = hash_live_password(payload.password)
+            existing_user.password_changed_at = now
+            existing_user.display_name = payload.display_name
+            existing_user.failed_login_attempts = 0
+            existing_user.locked_until = None
+            session.add(existing_user)
+            raw_token = create_auth_token(session, existing_user, "verify_email")
+            session.add(
+                AuthEvent(
+                    user_id=existing_user.id,
+                    email=email,
+                    event_type="email_verification_resent",
+                    success=True,
+                    ip_address=_client_ip(request),
+                )
+            )
+            try:
+                send_auth_email(purpose="verify_email", email=email, token=raw_token)
+            except AuthEmailError as exc:
+                session.rollback()
+                raise HTTPException(
+                    status.HTTP_503_SERVICE_UNAVAILABLE,
+                    "We could not send the verification email. Please try again.",
+                ) from exc
+            session.commit()
+            verification_token = _public_token(raw_token)
         # Same status and shape as a new registration. Revealing that the address is
         # already present turns this public endpoint into an account directory.
         return {
             "status": "verification_required",
             "merchant_id": str(uuid.uuid4()),
-            "verification_token": None,
+            "verification_token": verification_token,
         }
 
     now = utcnow()
@@ -257,12 +310,8 @@ def register(payload: RegisterRequest, request: Request, session: SessionDep) ->
     }
 
 
-@router.post("/verify-email")
-def verify_email(payload: TokenRequest, request: Request, session: SessionDep) -> dict:
-    try:
-        user = consume_auth_token(session, payload.token, "verify_email")
-    except LiveAuthError as exc:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+def _activate_verified_user(user: User, request: Request, session: SessionDep) -> dict:
+    """Apply the single email-verification state transition for links and OTPs."""
     now = utcnow()
     user.is_email_verified = True
     user.email_verified_at = now
@@ -287,6 +336,31 @@ def verify_email(payload: TokenRequest, request: Request, session: SessionDep) -
     )
     session.commit()
     return {"status": "verified"}
+
+
+@router.post("/verify-email")
+def verify_email(
+    payload: VerificationTokenRequest, request: Request, session: SessionDep
+) -> dict:
+    try:
+        user = consume_auth_token(session, payload.token, "verify_email")
+    except LiveAuthError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    return _activate_verified_user(user, request, session)
+
+
+@router.post("/verify-email-code")
+def verify_email_code(
+    payload: VerificationCodeRequest, request: Request, session: SessionDep
+) -> dict:
+    try:
+        user = consume_auth_token(session, payload.code, "verify_email")
+    except LiveAuthError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Code is invalid or expired") from exc
+    if user.email != normalize_email(str(payload.email)):
+        session.rollback()
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Code is invalid or expired")
+    return _activate_verified_user(user, request, session)
 
 
 @router.post("/login")
