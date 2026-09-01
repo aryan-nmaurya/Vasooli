@@ -228,10 +228,12 @@ def test_a_closure_failure_leaves_the_payment_intact(api, session, invoice, link
     reach back and undo a payment that genuinely arrived."""
     import app.services.closure as closure_mod
 
+    # Patched on the resolver, not the old platform-client factory: closure now picks
+    # the Razorpay account that actually issued the link.
     monkeypatch.setattr(
         closure_mod,
-        "get_razorpay_client",
-        lambda: FakeRazorpay(raise_on_cancel=RazorpayTransientError("gateway timeout")),
+        "razorpay_client_for_merchant",
+        lambda *a, **k: FakeRazorpay(raise_on_cancel=RazorpayTransientError("gateway timeout")),
     )
 
     resp = pay(api, invoice, link, amount_paid=invoice.amount_paise)
@@ -350,7 +352,7 @@ def test_a_replayed_webhook_does_not_close_twice(api, session, invoice, link, mo
     import app.services.closure as closure_mod
 
     fake = FakeRazorpay()
-    monkeypatch.setattr(closure_mod, "get_razorpay_client", lambda: fake)
+    monkeypatch.setattr(closure_mod, "razorpay_client_for_merchant", lambda *a, **k: fake)
 
     for _ in range(4):
         pay(api, invoice, link, amount_paid=invoice.amount_paise, event_id="evt_same")
@@ -529,7 +531,9 @@ def test_writing_off_closes_the_payment_link(session, invoice, monkeypatch):
                 raw={},
             )
 
-    monkeypatch.setattr("app.services.closure.get_razorpay_client", lambda: FakeClient())
+    monkeypatch.setattr(
+        "app.services.closure.razorpay_client_for_merchant", lambda *a, **k: FakeClient()
+    )
 
     with TestClient(create_app()) as client:
         client.headers.update({"X-Admin-Key": app_settings.admin_api_key})

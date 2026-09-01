@@ -15,7 +15,7 @@ from app.integrations.razorpay_client import (
     RazorpayOAuthClient,
     get_razorpay_client,
 )
-from app.models import PaymentConnection
+from app.models import Merchant, PaymentConnection
 
 
 def _fernet() -> Fernet:
@@ -110,3 +110,55 @@ def save_connection(
     session.add(row)
     session.flush()
     return row
+
+
+class PaymentConnectionRequiredError(RuntimeError):
+    """A live merchant has no usable Razorpay collection account.
+
+    Distinct from a transient provider error: nothing will retry its way out of this,
+    a human has to connect an account.
+    """
+
+
+def active_connection(session: Session, merchant_id: uuid.UUID) -> PaymentConnection | None:
+    return session.exec(
+        select(PaymentConnection).where(
+            PaymentConnection.merchant_id == merchant_id,
+            PaymentConnection.status == "connected",
+            PaymentConnection.revoked_at.is_(None),  # type: ignore[union-attr]
+        )
+    ).first()
+
+
+def razorpay_client_for_merchant(
+    session: Session, merchant_id: uuid.UUID
+) -> RazorpayClient | RazorpayOAuthClient:
+    """The Razorpay account that owns this merchant's payment links.
+
+    This resolver exists because the account a link is created on is the account it
+    can be read from. A link created on a merchant's own Razorpay and later fetched
+    with platform credentials does not come back as "unpaid" — it comes back as a
+    permanent error, and the reconciliation job counts that as a failure and moves
+    on. The customer's money has arrived, the invoice still says overdue, and the
+    merchant keeps chasing someone who has already paid. Every place that creates,
+    fetches or cancels a link therefore has to route through here.
+
+    Demo merchants deliberately use the platform account: the demo has no merchant
+    credentials to connect and its Razorpay is test mode by construction.
+    """
+    merchant = session.get(Merchant, merchant_id)
+    if merchant is None:
+        raise PaymentConnectionRequiredError(f"Unknown merchant {merchant_id}")
+    if merchant.is_demo:
+        return get_razorpay_client()
+
+    connection = active_connection(session, merchant_id)
+    if connection is None:
+        raise PaymentConnectionRequiredError(
+            "Connect a Razorpay collection account before issuing payment links. "
+            "Settings → Integrations → Razorpay collections."
+        )
+    try:
+        return client_for_connection(connection)
+    except ValueError as exc:
+        raise PaymentConnectionRequiredError(str(exc)) from exc

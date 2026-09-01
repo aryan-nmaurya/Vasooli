@@ -22,10 +22,10 @@ from app.integrations.razorpay_client import (
     RazorpayClient,
     RazorpayPermanentError,
     RazorpayTransientError,
-    get_razorpay_client,
 )
 from app.models import AuditAction, AuditActor, AuditLog, Invoice, PaymentLink
 from app.models.payment_link import MAX_CLOSURE_ATTEMPTS, PaymentLinkStatus
+from app.services.payment_connections import razorpay_client_for_merchant
 
 log = get_logger("closure")
 
@@ -63,6 +63,10 @@ def _record_closed(session: Session, link: PaymentLink, status: str, note: str) 
     )
 
 
+class ProvisioningLookupError(RuntimeError):
+    """A link row exists without the invoice it belongs to."""
+
+
 def close_payment_link(
     session: Session,
     link: PaymentLink,
@@ -74,7 +78,14 @@ def close_payment_link(
     Called outside any open transaction, and commits its own result. A failure here
     leaves the invoice recovered and the link flagged for retry — never the reverse.
     """
-    client = client or get_razorpay_client()
+    # Cancel on the account that issued the link. With platform credentials this call
+    # fails permanently against a merchant's link, and the retry sweep would keep
+    # re-attempting a cancellation that can never succeed.
+    if client is None:
+        invoice = session.get(Invoice, link.invoice_id)
+        if invoice is None:
+            raise ProvisioningLookupError(f"Payment link {link.id} has no invoice")
+        client = razorpay_client_for_merchant(session, invoice.merchant_id)
     link.closure_attempts += 1
 
     try:

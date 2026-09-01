@@ -167,11 +167,22 @@ export default function LiveIntegrationsPage() {
             <h3 className="text-sm font-semibold text-ink">Razorpay collections</h3>
             <StatusPill connected={Boolean(payment)}>{payment?.status || "Not connected"}</StatusPill>
           </div>
-          <p className="mt-2 text-sm leading-6 text-ink-3">
-            {payment
-              ? `Account ${payment.provider_account_id}`
-              : "Required before live payment links can be issued."}
-          </p>
+          {payment ? (
+            <p className="mt-2 text-sm leading-6 text-ink-3">
+              Payment links are issued on your Razorpay account{" "}
+              <span className="font-mono text-xs text-ink-2">{payment.provider_account_id}</span>,
+              so customer payments settle directly to you.
+            </p>
+          ) : (
+            <div className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-800 dark:text-amber-200">
+              <p className="font-semibold">Required before Vasooli can collect for you.</p>
+              <p className="mt-1">
+                Every payment link is created on your own Razorpay account, so money reaches you
+                directly and Vasooli never holds it. Until this is connected, live invoices cannot
+                be issued a link and reminders go out without one.
+              </p>
+            </div>
+          )}
           <form onSubmit={connectRazorpay} className="mt-4 flex flex-wrap items-end gap-2">
             <label className={`min-w-52 flex-1 ${labelClass}`}>
               Confirm current password
