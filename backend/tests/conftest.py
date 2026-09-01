@@ -46,6 +46,13 @@ os.environ["SCHEDULER_ENABLED"] = "false"
 # credentials above: a developer enabling either of these locally would otherwise flip
 # `/api/auth/modes`, and the frozen-demo fixture would fail on their machine and pass
 # in CI. A test that depends on someone's .env is not a test.
+# Sending is gated twice and independently: assert_can_send checks the merchant,
+# and sender_identity picks the From address. With no verified sending domain,
+# sender_identity falls back to the platform sender only when this flag is on, and
+# otherwise refuses. Left unpinned it is read from a developer's .env, so a live
+# merchant's send succeeded locally and failed in CI for the same test.
+os.environ["ALLOW_PLATFORM_SENDER_FOR_LIVE"] = "false"
+os.environ["ALLOW_DIRECT_CUSTOMER_EMAIL"] = "false"
 os.environ["REVIEWER_ACCESS_ENABLED"] = "false"
 os.environ["LIVE_REGISTRATION_ENABLED"] = "false"
 os.environ["DEMO_TIME_OFFSET_DAYS"] = "0"
@@ -88,6 +95,10 @@ def _no_live_integrations() -> None:
     assert settings.email_dry_run is True, "tests must never send live email"
     assert "PLACEHOLDER" in settings.google_api_key, "tests must not call a live LLM"
     assert settings.scheduler_enabled is False, "tests must not run the scheduler"
+    assert settings.allow_platform_sender_for_live is False, (
+        "tests must not inherit a developer's platform-sender flag; a live merchant "
+        "with no verified domain must be refused here exactly as it is in CI"
+    )
 
 
 @pytest.fixture(scope="session")
