@@ -95,7 +95,8 @@ export default function LiveIntegrationsPage() {
     setBusy("connect");
     setError(null);
     try {
-      const result = await livePost<{ authorization_url: string }>(
+      // GET: the endpoint only builds an authorization URL, it changes nothing.
+      const result = await liveGet<{ authorization_url: string }>(
         "/api/live/integrations/zoho/oauth/start",
         merchant,
       );
@@ -136,10 +137,9 @@ export default function LiveIntegrationsPage() {
     setError(null);
     try {
       const proof = await reauthLive(password);
-      const result = await livePost<{ authorization_url: string }>(
+      const result = await liveGet<{ authorization_url: string }>(
         "/api/live/payment-connections/oauth/start",
         merchant,
-        undefined,
         { "X-Reauth-Token": proof.reauth_token },
       );
       window.location.assign(result.authorization_url);

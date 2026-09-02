@@ -105,8 +105,14 @@ export function logoutLive() {
   return request<{ status: string }>("/api/live/auth/logout", { method: "POST" });
 }
 
-export function liveGet<T>(path: string, merchantId: string) {
-  return request<T>(path, { headers: { "X-Merchant-ID": merchantId } });
+export function liveGet<T>(
+  path: string,
+  merchantId: string,
+  extraHeaders: Record<string, string> = {},
+) {
+  // Takes extra headers like the other verbs: the OAuth start endpoints are GETs
+  // that still require a re-authentication token.
+  return request<T>(path, { headers: { "X-Merchant-ID": merchantId, ...extraHeaders } });
 }
 
 export function livePut<T>(path: string, merchantId: string, payload: unknown, extraHeaders: Record<string, string> = {}) {
