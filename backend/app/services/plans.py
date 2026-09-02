@@ -55,13 +55,14 @@ STARTER = Plan(
     description="For lean finance teams replacing manual follow-up.",
     highlights=(
         "Policy-controlled recovery",
+        "Zoho Books integration",
         "CSV ledger import",
         "Payment links and reconciliation",
         "Promises and disputes",
         "Complete audit log",
         "Email support",
     ),
-    features=frozenset(),
+    features=frozenset({Feature.ZOHO_INTEGRATION}),
 )
 
 GROWTH = Plan(
@@ -73,7 +74,6 @@ GROWTH = Plan(
     description="For growing teams that need connected, repeatable collections.",
     highlights=(
         "Everything in Starter",
-        "Zoho Books integration",
         "Custom recovery policies",
         "Role-based access",
         "Operational exceptions queue",

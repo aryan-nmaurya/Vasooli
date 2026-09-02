@@ -166,10 +166,16 @@ def test_a_cancelled_subscription_says_so_rather_than_blaming_the_trial(session,
 # ===========================================================================
 
 
+def test_starter_includes_zoho(session, live_merchant):
+    """Zoho is how invoices get in, so every paying plan has it — Starter included."""
+    subscribe(session, live_merchant, "starter")
+    assert_feature_entitled(session, live_merchant.id, Feature.ZOHO_INTEGRATION)
+
+
 def test_starter_cannot_use_growth_features(session, live_merchant):
     subscribe(session, live_merchant, "starter")
     with pytest.raises(BillingEntitlementError) as exc:
-        assert_feature_entitled(session, live_merchant.id, Feature.ZOHO_INTEGRATION)
+        assert_feature_entitled(session, live_merchant.id, Feature.CUSTOM_POLICIES)
 
     message = str(exc.value)
     assert "Starter" in message and "Growth" in message, (
