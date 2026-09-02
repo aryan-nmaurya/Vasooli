@@ -8,8 +8,11 @@ from sqlmodel import Session, select
 
 from app.core.clock import utcnow
 from app.core.constants import InvoiceStatus
+from app.core.logging import get_logger
 from app.integrations.erp import (
     CanonicalInvoice,
+    ErpAuthExpiredError,
+    SyncPage,
     adapter_for,
     adapter_for_credentials,
     json_safe,
@@ -31,6 +34,9 @@ from app.schemas.invoice import InvoiceIngestRow
 from app.services.billing import assert_live_entitled
 from app.services.ingestion import ingest_batch
 from app.services.manual_payments import sync_erp_adjustment
+from app.services.oauth import refresh_zoho_token
+
+log = get_logger("erp")
 
 
 def sync_connection(
@@ -50,16 +56,12 @@ def sync_connection(
     session.flush()
     try:
         assert_live_entitled(session, connection.merchant_id)
-        if fixture_rows is not None or connection.provider == "custom":
+        bounded_limit = min(max(limit, 1), 500)
+        if fixture_rows is not None:
             adapter = adapter_for(connection.provider, fixture_rows)
+            page = adapter.fetch_invoices(cursor=connection.cursor, limit=bounded_limit)
         else:
-            from app.services.payment_connections import decrypt_secret
-
-            credentials = json.loads(decrypt_secret(connection.credentials_encrypted or ""))
-            adapter = adapter_for_credentials(
-                connection.provider, credentials, source_tenant=connection.source_tenant
-            )
-        page = adapter.fetch_invoices(cursor=connection.cursor, limit=min(max(limit, 1), 500))
+            page = _fetch_with_refresh(session, connection, limit=bounded_limit)
         ledger_rows = [
             InvoiceIngestRow(
                 invoice_number=record.invoice_number,
@@ -88,7 +90,11 @@ def sync_connection(
         run.finished_at = utcnow()
     except Exception as exc:
         run.status = "failed"
-        run.error = str(exc)[:1000]
+        # Some exceptions carry no message at all — cryptography's InvalidToken is
+        # the one that bit here, raised when a connection has no stored credentials.
+        # An empty `error` tells the merchant nothing and tells whoever debugs it
+        # less, so fall back to the type name.
+        run.error = (str(exc) or exc.__class__.__name__)[:1000]
         run.finished_at = utcnow()
         connection.status = "error"
         session.add(
@@ -98,7 +104,7 @@ def sync_connection(
                 sync_run_id=run.id,
                 category="sync",
                 payload={},
-                error=str(exc)[:1000],
+                error=(str(exc) or exc.__class__.__name__)[:1000],
                 next_retry_at=utcnow() + timedelta(minutes=15),
             )
         )
@@ -107,6 +113,58 @@ def sync_connection(
     session.commit()
     session.refresh(run)
     return run
+
+
+def _fetch_with_refresh(session: Session, connection: ErpConnection, *, limit: int) -> SyncPage:
+    """Fetch one page, refreshing the OAuth token once if it has expired.
+
+    Zoho access tokens last about an hour, so a scheduled sync running every half
+    hour spends most of its life holding a token that is about to die. Without this
+    the first expiry turned the connection to `error` and stayed there until somebody
+    noticed and pressed Refresh by hand — automation that silently stops being
+    automatic. The refresh token is long-lived and is what makes the recovery
+    possible without the merchant re-authorising.
+
+    Exactly one retry. If a freshly minted token is also rejected the problem is not
+    expiry — the grant was revoked in Zoho, or the scopes changed — and retrying is
+    just a slower way to fail.
+    """
+    from app.services.payment_connections import decrypt_secret, encrypt_secret
+
+    credentials = json.loads(decrypt_secret(connection.credentials_encrypted or ""))
+    adapter = adapter_for_credentials(
+        connection.provider, credentials, source_tenant=connection.source_tenant
+    )
+    try:
+        return adapter.fetch_invoices(cursor=connection.cursor, limit=limit)
+    except ErpAuthExpiredError:
+        refresh_token = credentials.get("refresh_token")
+        if not refresh_token:
+            # Nothing to refresh with. Surfaced as-is so the merchant is told to
+            # reconnect rather than left watching a connection retry forever.
+            raise
+        log.info(
+            "erp.token_refresh",
+            provider=connection.provider,
+            merchant_id=str(connection.merchant_id),
+        )
+        tokens = refresh_zoho_token(refresh_token)
+        credentials["access_token"] = tokens.access_token
+        # Zoho does not reissue the refresh token on every refresh; keep the existing
+        # one when it does not, or the connection becomes unrefreshable next time.
+        if tokens.refresh_token:
+            credentials["refresh_token"] = tokens.refresh_token
+        if tokens.api_domain:
+            credentials["api_domain"] = tokens.api_domain
+        connection.credentials_encrypted = encrypt_secret(json.dumps(credentials, sort_keys=True))
+        session.add(connection)
+        # Committed before the retry: a crash mid-retry must not lose the new token
+        # and leave the stored one already invalidated at Zoho.
+        session.commit()
+        adapter = adapter_for_credentials(
+            connection.provider, credentials, source_tenant=connection.source_tenant
+        )
+        return adapter.fetch_invoices(cursor=connection.cursor, limit=limit)
 
 
 def _apply_invoice_record(

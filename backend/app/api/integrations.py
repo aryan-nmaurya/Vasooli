@@ -1,12 +1,10 @@
 """Merchant-scoped ERP connection and synchronization endpoints."""
 
-import hashlib
-import hmac
 import json
 import uuid
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 from sqlmodel import select
@@ -15,7 +13,7 @@ from app.core.clock import utcnow
 from app.core.config import settings
 from app.core.db import SessionDep
 from app.core.middleware import client_ip
-from app.models import ErpConnection, ErpSyncRun, ErpWebhookEvent
+from app.models import ErpConnection, ErpSyncRun
 from app.services.auth import audit
 from app.services.authorization import LiveContext, require_live_permission, require_live_reauth
 from app.services.billing import (
@@ -40,7 +38,7 @@ router = APIRouter(prefix="/api/live/integrations", tags=["live-integrations"])
 
 
 class ErpConnectionRequest(BaseModel):
-    provider: str = Field(pattern=r"^(custom|zoho|tally)$")
+    provider: str = Field(pattern=r"^zoho$")
     source_tenant: str | None = Field(default=None, max_length=160)
     credentials: dict[str, Any] = Field(default_factory=dict)
 
@@ -203,12 +201,8 @@ def connect_integration(
             ErpConnection.provider == payload.provider,
         )
     ).first()
-    # A signed custom ERP feed is a Scale capability; Zoho is Growth and above.
-    required = (
-        Feature.CUSTOM_ERP_WEBHOOKS if payload.provider == "custom" else Feature.ZOHO_INTEGRATION
-    )
     try:
-        assert_feature_entitled(session, context.merchant.id, required)
+        assert_feature_entitled(session, context.merchant.id, Feature.ZOHO_INTEGRATION)
     except BillingEntitlementError as exc:
         raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, str(exc)) from exc
 
@@ -294,86 +288,3 @@ def sync_runs(
         }
         for row in rows
     ]
-
-
-@router.post("/custom/{connection_id}/webhook", status_code=status.HTTP_202_ACCEPTED)
-async def custom_webhook(
-    connection_id: uuid.UUID,
-    request: Request,
-    session: SessionDep,
-    x_merchant_id: Annotated[str | None, Header(alias="X-Merchant-ID")] = None,
-    x_erp_signature: Annotated[str | None, Header(alias="X-ERP-Signature")] = None,
-    x_erp_event_id: Annotated[str | None, Header(alias="X-ERP-Event-ID")] = None,
-) -> dict[str, str]:
-    """Accept a signed custom-ERP invoice feed with deterministic replay handling.
-
-    The merchant header is part of the signed integration configuration and is needed
-    to establish the Postgres RLS context before loading the connection. It is not an
-    authorization shortcut: the HMAC secret remains the trust boundary.
-    """
-    if not x_merchant_id or not x_erp_signature:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST, "Merchant and signature headers are required"
-        )
-    try:
-        merchant_id = uuid.UUID(x_merchant_id)
-    except ValueError as exc:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid merchant context") from exc
-    from app.services.authorization import set_merchant_context
-
-    set_merchant_context(session, merchant_id)
-    connection = session.exec(
-        select(ErpConnection).where(
-            ErpConnection.id == connection_id,
-            ErpConnection.merchant_id == merchant_id,
-            ErpConnection.provider == "custom",
-        )
-    ).first()
-    if connection is None or not connection.credentials_encrypted:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Integration not found")
-    try:
-        credentials = json.loads(decrypt_secret(connection.credentials_encrypted))
-    except (ValueError, json.JSONDecodeError) as exc:
-        raise HTTPException(
-            status.HTTP_500_INTERNAL_SERVER_ERROR, "Invalid integration credentials"
-        ) from exc
-    secret = str(credentials.get("signing_secret") or "")
-    raw = await request.body()
-    expected = hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()
-    if not secret or not hmac.compare_digest(expected, x_erp_signature):
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid ERP signature")
-    try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid JSON payload") from exc
-    event_id = x_erp_event_id or str(payload.get("event_id") or payload.get("id") or "")
-    if not event_id:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "ERP event id is required")
-    existing = session.exec(
-        select(ErpWebhookEvent).where(
-            ErpWebhookEvent.connection_id == connection_id,
-            ErpWebhookEvent.provider_event_id == event_id,
-        )
-    ).first()
-    if existing is not None:
-        return {"status": "duplicate"}
-    event = ErpWebhookEvent(
-        merchant_id=merchant_id,
-        connection_id=connection_id,
-        provider_event_id=event_id,
-        payload_hash=hashlib.sha256(raw).hexdigest(),
-        raw_payload=payload,
-        signature_verified=True,
-    )
-    session.add(event)
-    session.commit()
-    rows = payload.get("invoices") if isinstance(payload, dict) else None
-    if not isinstance(rows, list):
-        rows = [payload] if isinstance(payload, dict) and payload.get("invoice_number") else []
-    run = sync_connection(session, connection, fixture_rows=rows, limit=min(len(rows) or 1, 500))
-    event.status = "processed" if run.status == "completed" else "failed"
-    event.processing_error = run.error
-    event.processed_at = utcnow()
-    session.add(event)
-    session.commit()
-    return {"status": event.status, "run_id": str(run.id)}

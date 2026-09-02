@@ -25,7 +25,6 @@ class Feature(StrEnum):
     CUSTOM_POLICIES = "custom_policies"
     ROLE_BASED_ACCESS = "role_based_access"
     EXCEPTIONS_QUEUE = "exceptions_queue"
-    CUSTOM_ERP_WEBHOOKS = "custom_erp_webhooks"
     BILLING_RECONCILIATION = "billing_reconciliation"
 
 
@@ -99,7 +98,6 @@ SCALE = Plan(
     description="For high-volume operations with deeper controls and oversight.",
     highlights=(
         "Everything in Growth",
-        "Signed custom ERP webhooks",
         "Advanced team controls",
         "Audit and ledger exports",
         "Billing reconciliation",
@@ -111,7 +109,6 @@ SCALE = Plan(
             Feature.CUSTOM_POLICIES,
             Feature.ROLE_BASED_ACCESS,
             Feature.EXCEPTIONS_QUEUE,
-            Feature.CUSTOM_ERP_WEBHOOKS,
             Feature.BILLING_RECONCILIATION,
         }
     ),

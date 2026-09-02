@@ -38,7 +38,7 @@ def _row(source_id: str, number: str, *, email: str = "ap@buyer.example.com", **
 
 @pytest.fixture
 def connection(session, merchant) -> ErpConnection:
-    row = ErpConnection(merchant_id=merchant.id, provider="custom", status="connected")
+    row = ErpConnection(merchant_id=merchant.id, provider="zoho", status="connected")
     session.add(row)
     session.commit()
     session.refresh(row)
@@ -128,16 +128,22 @@ def test_the_cursor_clears_when_the_feed_is_exhausted(session, merchant, connect
 
 
 def test_a_failing_provider_records_a_retryable_failure(session, merchant, connection):
-    """Zoho and Tally raise until a credentialled worker exists. That path must leave
-    a retryable trail rather than a silent no-op."""
+    """A provider failure must leave a retryable trail rather than a silent no-op.
+
+    Triggered by a connection with no stored credentials, which is the real shape of
+    this: a merchant who started the OAuth flow and never finished it, or whose grant
+    was revoked in Zoho.
+    """
     connection.provider = "zoho"
+    connection.credentials_encrypted = None
     session.add(connection)
     session.commit()
 
-    run = sync_connection(session, connection, fixture_rows=[])
+    # No fixture_rows, so the real credentialled path runs and fails.
+    run = sync_connection(session, connection)
 
     assert run.status == "failed"
-    assert "zoho" in (run.error or "")
+    assert run.error
     assert connection.status == "error"
 
     failures = session.exec(
@@ -209,7 +215,7 @@ def test_two_merchants_can_hold_the_same_invoice_number(session, merchant, conne
     session.add(other)
     session.commit()
     session.refresh(other)
-    other_conn = ErpConnection(merchant_id=other.id, provider="custom", status="connected")
+    other_conn = ErpConnection(merchant_id=other.id, provider="zoho", status="connected")
     session.add(other_conn)
     session.commit()
     session.refresh(other_conn)

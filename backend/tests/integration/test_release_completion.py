@@ -28,7 +28,7 @@ def api(session, monkeypatch):
 
 @pytest.fixture
 def connection(session, merchant) -> ErpConnection:
-    row = ErpConnection(merchant_id=merchant.id, provider="custom", status="connected")
+    row = ErpConnection(merchant_id=merchant.id, provider="zoho", status="connected")
     session.add(row)
     session.commit()
     return row

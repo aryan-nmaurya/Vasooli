@@ -113,14 +113,22 @@ def test_an_unresolvable_host_fails_closed(resolves):
         assert_safe_outbound_url("https://nowhere.invalid/feed")
 
 
-def test_the_tally_adapter_validates_at_construction(resolves):
+def test_the_zoho_adapter_validates_at_construction(resolves):
     """Re-checked before every fetch, not only when the connection was saved.
 
     A stored connection is validated once; DNS can be repointed afterwards, and the
-    scheduler re-fetches it every half hour.
+    scheduler re-fetches it every half hour. Zoho returns its API domain during OAuth,
+    so that value is merchant-influenced and this process would request it with its
+    own network position.
     """
-    from app.integrations.erp import TallyAgentAdapter
+    from app.integrations.erp import ZohoBooksAdapter
 
     resolves({REBIND_HOST: ["169.254.169.254"]})
     with pytest.raises(UnsafeOutboundURLError):
-        TallyAgentAdapter({"endpoint": f"https://{REBIND_HOST}", "agent_token": "t"})
+        ZohoBooksAdapter(
+            {
+                "access_token": "tok",
+                "organization_id": "org",
+                "api_domain": f"https://{REBIND_HOST}",
+            }
+        )

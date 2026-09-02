@@ -183,7 +183,7 @@ def test_growth_unlocks_its_advertised_features(session, live_merchant):
         assert_feature_entitled(session, live_merchant.id, feature)
 
     with pytest.raises(BillingEntitlementError):
-        assert_feature_entitled(session, live_merchant.id, Feature.CUSTOM_ERP_WEBHOOKS)
+        assert_feature_entitled(session, live_merchant.id, Feature.BILLING_RECONCILIATION)
 
 
 def test_scale_unlocks_everything(session, live_merchant):

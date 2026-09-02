@@ -21,7 +21,7 @@ def test_policy_preset_cadence_is_valid():
 
 def test_custom_adapter_cursor_is_incremental_and_deterministic():
     adapter = adapter_for(
-        "custom",
+        "zoho",
         [
             {
                 "source_id": "inv-1",
