@@ -44,15 +44,22 @@ class FakeClient:
     def __init__(self, refund_id="rfnd_1"):
         self.created: list[dict] = []
         self.refunded: list[tuple] = []
+        self.cancelled: list[tuple] = []
         self.refund_id = refund_id
 
     def create_subscription(self, **kwargs):
         self.created.append(kwargs)
-        return {"id": "sub_test", "short_url": "https://rzp.io/s/x"}
+        # Unique per call, as Razorpay's are: `razorpay_subscription_id` is uniquely
+        # indexed, so a constant id makes a second checkout collide in the fake only.
+        return {"id": f"sub_test_{len(self.created)}", "short_url": "https://rzp.io/s/x"}
 
     def refund_payment(self, payment_id, *, amount_paise=None, notes=None):
         self.refunded.append((payment_id, amount_paise))
         return {"id": self.refund_id, "status": "processed"}
+
+    def cancel_subscription(self, subscription_id, *, cancel_at_cycle_end=True):
+        self.cancelled.append((subscription_id, cancel_at_cycle_end))
+        return {"id": subscription_id, "status": "cancelled"}
 
 
 @pytest.fixture
@@ -101,7 +108,7 @@ def _subscription(session, merchant, plan, **kw):
     row = BillingSubscription(
         merchant_id=merchant.id,
         plan_id=plan.id,
-        status="authenticated",
+        status=kw.pop("status", "authenticated"),
         auth_payment_id="pay_1",
         auth_amount_paise=200,
         **kw,
@@ -164,3 +171,116 @@ def test_nothing_is_refunded_when_no_verification_was_taken(session, live_mercha
 
     assert refund_mandate_verification(session, row) is None
     assert fake.refunded == []
+
+
+@pytest.fixture
+def plan_ids_match_config(monkeypatch):
+    """Keep configured plan ids in step with what the `plan` fixture writes.
+
+    `checkout` calls `ensure_plans`, which refuses to re-point an immutable plan — so
+    without this the endpoint answers 503 before reaching the decision under test.
+    """
+    for slug in ("starter", "growth", "scale"):
+        monkeypatch.setattr(settings, f"razorpay_plan_id_{slug}", f"plan_{slug}", raising=False)
+
+
+def _context(session, merchant):
+    """A LiveContext for calling the endpoint function directly.
+
+    The checkout route is guarded by `require_live_reauth`, which needs a session, a
+    membership and a burnt challenge. Building all of that here would test FastAPI's
+    dependency wiring rather than the billing decision, which is where both defects
+    were — so the guard is supplied already-satisfied and the decision is exercised
+    for real.
+    """
+    from app.services.authorization import LiveContext, set_merchant_context
+
+    set_merchant_context(session, merchant.id)
+    return LiveContext(
+        user=None,
+        merchant=merchant,
+        membership=None,
+        session=None,
+        permission="billing.manage",
+    )
+
+
+# --- What checkout actually decides -------------------------------------------------
+#
+# Everything above proves the mandate works once `create_provider_subscription` is
+# given `trial_days`. Nothing proved the endpoint ever gives it, and no test in the
+# suite called `/api/live/billing/checkout` at all — so the decision shipped inverted:
+# the trial was offered on the condition `subscription_state(...).on_trial`, which only
+# becomes true after the mandate is authenticated, and is therefore false for exactly
+# the merchant signing up. They were sent to authorise the full plan amount.
+
+
+def test_a_merchant_who_has_never_subscribed_is_offered_the_trial(session, live_merchant, fake):
+    assert billing_mod.trial_is_available(session, live_merchant.id) is True
+    assert billing_mod.mandate_verification_paise(session, live_merchant.id) == 200
+
+
+def test_a_returning_merchant_does_not_collect_a_second_trial(session, live_merchant, plan, fake):
+    row = _subscription(session, live_merchant, plan, status="cancelled")
+    assert row.status == "cancelled"
+    # Cancelled is a dead state, so `subscription_state` reports no live subscription —
+    # but the merchant is returning, not new, and a fresh trial on every resubscribe
+    # would be a free tier with extra steps.
+    assert billing_mod.trial_is_available(session, live_merchant.id) is False
+    assert billing_mod.mandate_verification_paise(session, live_merchant.id) is None
+
+
+def test_signup_checkout_asks_for_the_trial_and_the_verification_charge(
+    session, live_merchant, plan, fake, plan_ids_match_config
+):
+    """The regression itself, at the endpoint that had no coverage."""
+    from app.api import billing as billing_api
+
+    context = _context(session, live_merchant)
+    body = billing_api.checkout(billing_api.CheckoutRequest(plan_slug="starter"), session, context)
+
+    assert body["checkout_required"] is True
+    sent = fake.created[-1]
+    assert sent["auth_amount_paise"] == 200, (
+        "a signing-up merchant must authorise ₹2, not the full plan amount"
+    )
+    assert sent["start_at"] is not None, "the first billing cycle must be pushed past the trial"
+
+
+def test_an_abandoned_checkout_does_not_trap_the_merchant_on_that_plan(
+    session, live_merchant, plan, fake, plan_ids_match_config
+):
+    """Picking a different plan after walking away from a checkout must work.
+
+    A `created` row was treated as an active subscription, so a second choice returned
+    409 "cancel it before changing plans" — while the billing page only offers Cancel
+    for an ACTIVE subscription. There was nothing to cancel and no way forward.
+    """
+    from app.api import billing as billing_api
+
+    context = _context(session, live_merchant)
+    billing_api.checkout(billing_api.CheckoutRequest(plan_slug="starter"), session, context)
+
+    body = billing_api.checkout(billing_api.CheckoutRequest(plan_slug="growth"), session, context)
+    assert body["plan"] == "growth"
+
+    rows = session.exec(
+        select(BillingSubscription).where(BillingSubscription.merchant_id == live_merchant.id)
+    ).all()
+    starter_rows = [r for r in rows if r.status == "cancelled"]
+    assert starter_rows, "the abandoned checkout should be retired, not left in `created`"
+
+
+def test_a_live_subscription_still_requires_an_explicit_cancellation(
+    session, live_merchant, plan, fake, plan_ids_match_config
+):
+    """The dead-end fix must not let anyone silently replace a paid subscription."""
+    import fastapi
+
+    from app.api import billing as billing_api
+
+    _subscription(session, live_merchant, plan, status="active")
+    context = _context(session, live_merchant)
+    with pytest.raises(fastapi.HTTPException) as caught:
+        billing_api.checkout(billing_api.CheckoutRequest(plan_slug="growth"), session, context)
+    assert caught.value.status_code == 409

@@ -117,15 +117,31 @@ describe("live registration", () => {
     // A brand-new workspace has no subscription, so signing in must not drop the
     // merchant on a dashboard that would bounce them back on the first write.
     expect(await screen.findByRole("heading", { name: /choose your plan/i })).toBeInTheDocument();
-    const cta = screen.getByRole("link", { name: /continue to payment/i });
-    expect(cta).toHaveAttribute("aria-disabled", "true");
+    // A real disabled button, so it looks inert and cannot be activated by keyboard
+    // either — as a styled link it stayed full-strength and `pointerEvents: none`
+    // stopped only the mouse.
+    const cta = screen.getByRole("button", { name: /continue to payment/i });
+    expect(cta).toBeDisabled();
+
+    const assign = vi.fn();
+    Object.defineProperty(window, "location", {
+      value: { ...window.location, assign },
+      writable: true,
+    });
 
     fireEvent.click(await screen.findByRole("button", { name: /Growth/ }));
-    expect(cta).toHaveAttribute("aria-disabled", "false");
+    expect(cta).toBeEnabled();
     // Checkout needs an authenticated session, so the choice is carried in storage
     // and the billing page pre-selects it rather than asking twice.
     fireEvent.click(cta);
     expect(window.localStorage.getItem("vasooli_pending_plan")).toBe("growth");
-    expect(cta).toHaveAttribute("href", "/live/settings/billing?reason=new_signup");
+    expect(assign).toHaveBeenCalledWith("/live/settings/billing?reason=new_signup");
+  });
+
+  it("does not promise a free trial while telling the merchant no card is needed", () => {
+    render(<LiveRegistrationForm />);
+    // The mandate makes a payment instrument mandatory to start the trial, so the
+    // old "No card required" line was a promise the flow no longer keeps.
+    expect(screen.queryByText(/no card required/i)).not.toBeInTheDocument();
   });
 });

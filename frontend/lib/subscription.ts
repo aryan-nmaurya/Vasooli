@@ -30,6 +30,18 @@ export type SubscriptionState = {
   provider_subscription_id: string | null;
   checkout_url?: string | null;
   id?: string;
+  /**
+   * What the next checkout takes up front, or null when it takes nothing.
+   *
+   * Answered by the server rather than inferred from `on_trial`, which is only true
+   * once the mandate is authenticated — so the ₹2 explanation never rendered for the
+   * merchant it was written for. Stating this amount is a promise about someone's
+   * money, so it comes from the same place that decides what to send Razorpay.
+   */
+  mandate_verification_paise?: number | null;
+  /** Whether this merchant's next checkout still carries the free trial. */
+  trial_available?: boolean;
+  trial_days?: number;
 };
 
 /**

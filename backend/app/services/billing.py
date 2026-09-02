@@ -470,6 +470,71 @@ class SubscriptionState:
         }
 
 
+def discard_abandoned_checkout(session: Session, row: BillingSubscription) -> None:
+    """Retire a `created` subscription the merchant walked away from.
+
+    Only ever called for a row still in `created`, which means Razorpay never reported
+    an authorised mandate: no instrument was confirmed and no money moved, so there is
+    nothing to refund and nobody to notify.
+
+    A provider-side failure is logged, not raised. The local row must still be retired
+    or the merchant stays stuck on the plan they abandoned — and an orphan left in
+    `created` at Razorpay never charges anyone, which is the same state it was already
+    in. That is the safe direction to fail in.
+    """
+    if row.razorpay_subscription_id and settings.razorpay_subscriptions_enabled:
+        try:
+            get_billing_client().cancel_subscription(
+                row.razorpay_subscription_id, cancel_at_cycle_end=False
+            )
+        except Exception as exc:
+            log.warning(
+                "billing.abandoned_checkout_not_cancelled",
+                subscription_id=row.razorpay_subscription_id,
+                error=str(exc),
+            )
+    row.status = "cancelled"
+    row.updated_at = utcnow()
+    session.add(row)
+    session.flush()
+
+
+def trial_is_available(session: Session, merchant_id: uuid.UUID) -> bool:
+    """Whether the next checkout should carry the trial and the mandate charge.
+
+    The trial belongs to a merchant's FIRST subscription, and nothing else. Checkout
+    used to ask `subscription_state(...).on_trial` instead, which is exactly backwards:
+    `on_trial` is true only once Razorpay reports the mandate `authenticated`, so it is
+    false for precisely the merchant who has never subscribed. The result was that a
+    new merchant got no trial and no ₹2 verification — they were sent to authorise the
+    full plan amount immediately, on the very screen that promises a free trial.
+
+    "Has ever had a row" rather than "has one now": a merchant whose subscription was
+    cancelled is returning, not new, and must not collect a fresh trial each time they
+    resubscribe. Rows in dead states therefore still count.
+    """
+    return (
+        session.exec(
+            select(BillingSubscription.id).where(BillingSubscription.merchant_id == merchant_id)
+        ).first()
+        is None
+    )
+
+
+def mandate_verification_paise(session: Session, merchant_id: uuid.UUID) -> int | None:
+    """What the next checkout will actually take now, or None if it takes nothing.
+
+    The billing page states this amount to the merchant before they authorise it, and
+    stating it wrongly is a promise about their money. Derived here so the UI cannot
+    drift from what `create_provider_subscription` really sends.
+    """
+    if not trial_is_available(session, merchant_id):
+        return None
+    if not settings.razorpay_subscriptions_enabled:
+        return None
+    return settings.trial_auth_amount_paise
+
+
 def trial_ends_at(merchant: Merchant) -> datetime:
     """When this merchant's free trial expires.
 

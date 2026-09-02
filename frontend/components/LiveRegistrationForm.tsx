@@ -17,6 +17,10 @@ type PlanChoice = {
 /** Matches LIVE_TRIAL_DAYS on the server; the pricing page promises the same. */
 const TRIAL_DAYS = 7;
 
+/** Matches `trial_auth_amount_paise`. Billing states the server's own figure; this
+ *  screen runs before a session exists, so it cannot ask and names the amount here. */
+const MANDATE_LABEL = "₹2";
+
 export function LiveRegistrationForm() {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -151,7 +155,7 @@ export function LiveRegistrationForm() {
   if (phase === "verified") {
     return (
       <section className="auth-card" aria-labelledby="verified-title">
-        <div className="auth-step">Email verified</div>
+        <div className="auth-step">Step 3 of 3 · Email verified</div>
         <h1 id="verified-title">Choose your plan.</h1>
         <p className="auth-intro">
           Every plan starts with a {TRIAL_DAYS}-day free trial. Your card is not charged
@@ -194,28 +198,44 @@ export function LiveRegistrationForm() {
           })}
         </div>
 
-        <p role="status" className="auth-success" style={{ marginTop: "1.25rem" }}>
+        {/*
+          `auth-helper`, not `auth-success`: this is an instruction and, once a plan is
+          picked, a statement about a charge. The success style is green, which read as
+          a confirmation of something that had not happened yet.
+        */}
+        <p role="status" className="auth-helper" style={{ marginTop: "1.25rem" }}>
           {chosenPlan
-            ? "A ₹2 charge confirms your Autopay mandate and is refunded automatically. Your plan is not charged until the trial ends."
+            ? `A ${MANDATE_LABEL} charge confirms your Autopay mandate and is refunded automatically. Your plan is not charged until the ${TRIAL_DAYS}-day trial ends.`
             : signedIn
               ? "Pick a plan to open your workspace."
               : "Pick a plan to continue. You confirm payment right after signing in."}
         </p>
 
-        <Link
-          className="auth-primary-link"
-          // Checkout needs a session. When auto sign-in worked we already have one,
-          // so go straight to billing; otherwise the choice rides through the login
-          // page in storage and billing pre-selects it on arrival.
-          href={signedIn ? "/live/settings/billing?reason=new_signup" : "/live/login"}
+        {/*
+          A real <button>, not a styled link. As a link it stayed full-strength teal
+          while inert, so it looked clickable and did nothing; `pointerEvents: none`
+          also only stops the mouse, leaving a keyboard user able to press Enter and
+          reach billing with no plan chosen. `disabled` closes both, and `w-full`
+          matches the plan cards it sits under — the auth forms already size their
+          primary action this way.
+        */}
+        <button
+          type="button"
+          disabled={!chosenPlan}
           onClick={() => {
-            if (chosenPlan) window.localStorage.setItem("vasooli_pending_plan", chosenPlan);
+            if (!chosenPlan) return;
+            // Checkout needs a session. When auto sign-in worked we already have one,
+            // so go straight to billing; otherwise the choice rides through the login
+            // page in storage and billing pre-selects it on arrival.
+            window.localStorage.setItem("vasooli_pending_plan", chosenPlan);
+            window.location.assign(
+              signedIn ? "/live/settings/billing?reason=new_signup" : "/live/login",
+            );
           }}
-          aria-disabled={!chosenPlan}
-          style={chosenPlan ? undefined : { opacity: 0.45, pointerEvents: "none" }}
+          className="auth-primary-link w-full disabled:cursor-not-allowed disabled:opacity-[.42] disabled:hover:translate-y-0 disabled:hover:bg-[#55c7d6]"
         >
           {signedIn ? "Continue to payment" : "Continue to secure sign in"}
-        </Link>
+        </button>
       </section>
     );
   }
@@ -223,7 +243,7 @@ export function LiveRegistrationForm() {
   if (phase === "verify") {
     return (
       <section className="auth-card" aria-labelledby="verify-title">
-        <div className="auth-step">Step 2 of 2</div>
+        <div className="auth-step">Step 2 of 3</div>
         <h1 id="verify-title">Verify your work email</h1>
         <p className="auth-intro">Enter the one-time code sent to <strong>{pendingRegistration?.email}</strong>. It expires after 15 minutes and can only be used once.</p>
         <form onSubmit={verify} className="auth-form">
@@ -248,9 +268,20 @@ export function LiveRegistrationForm() {
 
   return (
     <section className="auth-card" aria-labelledby="register-title">
-      <div className="auth-step">Step 1 of 2 · Starter · 7-day trial</div>
+      {/*
+        Three steps, not two, since the plan is now chosen here rather than assumed —
+        and the plan is no longer named, because the merchant picks it. "No card
+        required" has gone for the same reason: starting the trial authorises an
+        Autopay mandate, so an instrument is needed, and saying otherwise sets the
+        merchant up to feel misled at the one moment money is mentioned.
+      */}
+      <div className="auth-step">Step 1 of 3 · {TRIAL_DAYS}-day free trial</div>
       <h1 id="register-title">Put overdue revenue back in motion.</h1>
-      <p className="auth-intro">Create your merchant workspace. No card required; your email must be verified before sign-in.</p>
+      <p className="auth-intro">
+        Create your merchant workspace. You will verify your email, then choose a plan —
+        the {TRIAL_DAYS}-day trial starts once a {MANDATE_LABEL} refundable charge confirms your
+        Autopay mandate.
+      </p>
       <form onSubmit={submit} className="auth-form">
         <label>Business name<input name="business" autoComplete="organization" required minLength={2} /></label>
         <label>Work email<input name="email" type="email" autoComplete="email" inputMode="email" required /></label>

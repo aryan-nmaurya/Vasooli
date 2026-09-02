@@ -58,6 +58,9 @@ export default function LiveBillingPage() {
   }, []);
 
   const { subscription, loaded, refresh } = useSubscription(merchant);
+  // What the next checkout actually takes now. Null once the merchant has subscribed
+  // before, because the trial and its verification charge belong to the first one.
+  const mandatePaise = subscription?.mandate_verification_paise ?? null;
 
   useEffect(() => {
     if (!merchant) return;
@@ -280,14 +283,17 @@ export default function LiveBillingPage() {
           title={`Continue with ${plans.find((p) => p.slug === selected)?.name ?? selected}`}
           hint="Re-entering your password authorises the subscription. You will be taken to Razorpay to complete it."
         >
-          {subscription?.on_trial ? (
+          {mandatePaise ? (
             <div className="mb-4 rounded-lg border border-line bg-surface px-3 py-2.5 text-xs leading-5 text-ink-3">
-              <p className="font-semibold text-ink">A ₹2 charge confirms your Autopay mandate.</p>
+              <p className="font-semibold text-ink">
+                A {formatInr(mandatePaise)} charge confirms your Autopay mandate.
+              </p>
               <p className="mt-1">
                 Your bank or UPI app needs a real payment to confirm you approved recurring
-                debits, so ₹2 is taken now and <strong className="font-semibold text-ink">refunded
-                automatically</strong> once the mandate is confirmed. Your plan itself is not
-                charged until the trial ends, and you can cancel at any time.
+                debits, so {formatInr(mandatePaise)} is taken now and{" "}
+                <strong className="font-semibold text-ink">refunded automatically</strong> once
+                the mandate is confirmed. Your plan itself is not charged until your{" "}
+                {subscription?.trial_days ?? 7}-day trial ends, and you can cancel at any time.
               </p>
             </div>
           ) : null}
