@@ -11,7 +11,7 @@ import {
   primaryButtonClass,
   secondaryButtonClass,
 } from "@/components/LiveSettingsSection";
-import { liveGet, livePost, reauthLive } from "@/lib/live-api";
+import { liveGet, livePost, livePut, reauthLive } from "@/lib/live-api";
 
 type Integration = {
   id: string;
@@ -25,6 +25,7 @@ type PaymentConnection = {
   provider_account_id: string;
   status: string;
   credentials_present: boolean;
+  webhook_secret_present?: boolean;
 } | null;
 
 type SyncRun = {
@@ -61,6 +62,7 @@ export default function LiveIntegrationsPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
+  const [showKeys, setShowKeys] = useState(false);
 
   useEffect(() => {
     const value =
@@ -145,6 +147,38 @@ export default function LiveIntegrationsPage() {
       window.location.assign(result.authorization_url);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Unable to connect Razorpay");
+      setBusy(null);
+    }
+  }
+
+  async function connectWithKeys(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    setBusy("keys");
+    setError(null);
+    setMessage(null);
+    try {
+      const proof = await reauthLive(String(data.get("password")));
+      await livePut(
+        "/api/live/payment-connections",
+        merchant,
+        {
+          mode: "byok",
+          provider_account_id: String(data.get("provider_account_id")),
+          api_key_id: String(data.get("api_key_id")),
+          api_key_secret: String(data.get("api_key_secret")),
+          webhook_secret: String(data.get("webhook_secret")) || null,
+        },
+        { "X-Reauth-Token": proof.reauth_token },
+      );
+      form.reset();
+      setShowKeys(false);
+      setMessage("Razorpay connected. Payment links will be issued on your account.");
+      setNonce((n) => n + 1);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Razorpay could not be connected");
+    } finally {
       setBusy(null);
     }
   }
@@ -273,6 +307,17 @@ export default function LiveIntegrationsPage() {
           </div>
         )}
 
+        {payment && payment.webhook_secret_present === false ? (
+          <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-800 dark:text-amber-200">
+            <p className="font-semibold">Payments will confirm slowly.</p>
+            <p className="mt-1">
+              No webhook secret is stored, so Razorpay&apos;s instant confirmations cannot be
+              verified and payments are only picked up by the hourly reconciliation sweep.
+              Add your webhook secret below to confirm in seconds.
+            </p>
+          </div>
+        ) : null}
+
         <form onSubmit={connectRazorpay} className="mt-4 flex flex-wrap items-end gap-2">
           <label className={`min-w-52 flex-1 ${labelClass}`}>
             Confirm current password
@@ -288,6 +333,59 @@ export default function LiveIntegrationsPage() {
             {busy === "razorpay" ? "Redirecting…" : payment ? "Reconnect" : "Connect securely"}
           </button>
         </form>
+
+        <div className="mt-4 border-t border-line-2 pt-4">
+          {showKeys ? (
+            <form onSubmit={connectWithKeys} className="space-y-3">
+              <p className="text-xs leading-5 text-ink-4">
+                From your Razorpay dashboard. Everything here is encrypted before storage and
+                never returned by the API.
+              </p>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className={labelClass}>
+                  Account ID
+                  <input name="provider_account_id" required placeholder="acc_XXXXXXXX" className={fieldClass} />
+                </label>
+                <label className={labelClass}>
+                  Key ID
+                  <input name="api_key_id" required placeholder="rzp_live_XXXXXXXX" className={fieldClass} />
+                </label>
+                <label className={labelClass}>
+                  Key secret
+                  <input name="api_key_secret" type="password" required className={fieldClass} />
+                </label>
+                <label className={labelClass}>
+                  Webhook secret
+                  <input name="webhook_secret" type="password" className={fieldClass} />
+                  <span className="mt-1 block text-xs font-normal text-ink-4">
+                    Settings → Webhooks. Without it, payments confirm on the hourly sweep
+                    instead of instantly.
+                  </span>
+                </label>
+                <label className={`sm:col-span-2 ${labelClass}`}>
+                  Confirm current password
+                  <input name="password" type="password" required autoComplete="current-password" className={fieldClass} />
+                </label>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button disabled={busy !== null} className={primaryButtonClass}>
+                  {busy === "keys" ? "Connecting…" : "Save Razorpay keys"}
+                </button>
+                <button type="button" onClick={() => setShowKeys(false)} className={secondaryButtonClass}>
+                  Cancel
+                </button>
+              </div>
+            </form>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setShowKeys(true)}
+              className="text-xs font-medium text-ink-3 underline underline-offset-4 hover:text-ink"
+            >
+              Or connect with an API key and secret instead
+            </button>
+          )}
+        </div>
       </section>
 
       {message ? <SettingsAlert tone="success">{message}</SettingsAlert> : null}

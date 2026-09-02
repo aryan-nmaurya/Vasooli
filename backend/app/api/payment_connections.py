@@ -164,6 +164,10 @@ def get_connection(
         "last_verified_at": row.last_verified_at.isoformat() if row.last_verified_at else None,
         "revoked_at": row.revoked_at.isoformat() if row.revoked_at else None,
         "credentials_present": bool(row.access_token_encrypted or row.api_key_secret_encrypted),
+        # Presence only — the secret itself is never returned. Without it the
+        # merchant's payment confirmations fail verification and only reconcile on
+        # the hourly sweep, so the UI has to be able to say so.
+        "webhook_secret_present": bool(row.webhook_secret_encrypted),
     }
 
 
