@@ -109,8 +109,18 @@ export function LiveRegistrationForm() {
       <section className="auth-card" aria-labelledby="verified-title">
         <div className="auth-step">Email verified</div>
         <h1 id="verified-title">Your workspace is ready.</h1>
-        <p role="status" className="auth-success">{message}</p>
-        <Link className="auth-primary-link" href="/live/login">Continue to secure sign in</Link>
+        {/*
+          .auth-success sets margin:0, and the h1 runs at line-height .98, so on the
+          two-line heading the descender of "ready." collided with the box. Spaced
+          here rather than in globals.css: that file is a frozen demo source, and
+          this is a live-auth screen the demo never renders.
+        */}
+        <p role="status" className="auth-success" style={{ marginTop: "1.5rem" }}>
+          {message}
+        </p>
+        <Link className="auth-primary-link" href="/live/login">
+          Continue to secure sign in
+        </Link>
       </section>
     );
   }

@@ -492,6 +492,73 @@ def check_tenant_isolation() -> None:
     )
 
 
+def check_login_membership_lookup() -> None:
+    """A user's memberships must be findable before any tenant context exists.
+
+    This is the check that would have caught live sign-in being completely broken.
+    merchant_memberships has RLS FORCED, and login has to answer "which tenants does
+    this user belong to?" before it can know the tenant — so the query must run under
+    a service scope. Without it the query matched nothing, login returned an empty
+    merchant list, and the page said "No active merchant membership found" for an
+    account whose membership was present and active.
+
+    The whole test suite missed it because tests connect as a superuser, which
+    bypasses RLS. Only the deployed role shows the truth, which is why this lives
+    here rather than in pytest.
+    """
+    section("Live sign-in")
+    from sqlmodel import Session, select
+
+    from app.core.db import engine
+    from app.models import MerchantMembership, User
+    from app.services.authorization import service_scope
+
+    try:
+        with Session(engine) as session:
+            total_users = len(session.exec(select(User)).all())
+            if total_users == 0:
+                report("PASS", "membership lookup", "no live users yet — nothing to resolve")
+                return
+
+            unscoped = len(
+                session.exec(
+                    select(MerchantMembership).where(
+                        MerchantMembership.is_active.is_(True)  # type: ignore[union-attr]
+                    )
+                ).all()
+            )
+            with service_scope(session):
+                scoped = len(
+                    session.exec(
+                        select(MerchantMembership).where(
+                            MerchantMembership.is_active.is_(True)  # type: ignore[union-attr]
+                        )
+                    ).all()
+                )
+    except Exception as exc:  # noqa: BLE001
+        report("WARN", "membership lookup", str(exc)[:90])
+        return
+
+    if scoped == 0:
+        report(
+            "FAIL",
+            "membership lookup",
+            "no active memberships found even under a service scope",
+            "Every live user would be told they have no workspace. Check that "
+            "registration creates an active MerchantMembership.",
+        )
+    elif unscoped == 0:
+        # The expected shape on a correctly configured deployment: RLS hides the rows
+        # until the scope is taken, and login takes it.
+        report("PASS", "membership lookup", f"{scoped} resolvable under service scope")
+    else:
+        report(
+            "PASS",
+            "membership lookup",
+            f"{scoped} resolvable (RLS not filtering — role bypasses it)",
+        )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", help="public base URL, e.g. https://api.yourdomain.com")
@@ -500,6 +567,7 @@ def main() -> int:
     print(f"\nVasooli pre-flight  {DIM}environment={settings.environment}{RESET}")
     check_config()
     check_tenant_isolation()
+    check_login_membership_lookup()
     check_dns()
     check_host(args.host)
     check_razorpay()

@@ -51,6 +51,7 @@ from app.services.authorization import (
     LIVE_REFRESH_COOKIE,
     live_access_subject,
     parse_live_access,
+    service_scope,
     set_merchant_context,
 )
 from app.services.mfa import new_secret, provisioning_uri, verify_code
@@ -315,9 +316,13 @@ def _activate_verified_user(user: User, request: Request, session: SessionDep) -
     user.email_verified_at = now
     user.status = "active"
     session.add(user)
-    memberships = session.exec(
-        select(MerchantMembership).where(MerchantMembership.user_id == user.id)
-    ).all()
+    # Same reason as login: no tenant context exists on a verification link. Without
+    # the scope this found no memberships, so `onboarding_state.identity` was never
+    # advanced and the merchant stayed in `onboarding` forever.
+    with service_scope(session):
+        memberships = session.exec(
+            select(MerchantMembership).where(MerchantMembership.user_id == user.id)
+        ).all()
     for membership in memberships:
         merchant = session.get(Merchant, membership.merchant_id)
         if merchant is not None and merchant.onboarding_state.get("identity") != "verified":
@@ -435,12 +440,18 @@ def login(payload: LoginRequest, request: Request, response: Response, session: 
     )
     session.commit()
     _set_session_cookies(response, user, issued)
-    memberships = session.exec(
-        select(MerchantMembership).where(
-            MerchantMembership.user_id == user.id,
-            MerchantMembership.is_active.is_(True),  # type: ignore[union-attr]
-        )
-    ).all()
+    # merchant_memberships has RLS FORCED, and at login there is no tenant context
+    # yet — finding which tenants this user belongs to is the whole point. Without
+    # the service scope this returns zero rows, the response carries an empty
+    # `merchants` list, and the sign-in page reports "No active merchant membership
+    # found" for an account whose membership is present and active.
+    with service_scope(session):
+        memberships = session.exec(
+            select(MerchantMembership).where(
+                MerchantMembership.user_id == user.id,
+                MerchantMembership.is_active.is_(True),  # type: ignore[union-attr]
+            )
+        ).all()
     return {
         "status": "ok",
         "user_id": str(user.id),

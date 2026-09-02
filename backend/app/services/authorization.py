@@ -197,13 +197,23 @@ def require_live_permission(codename: str):
         ):
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Live session is not active")
 
-        membership = session.exec(
-            select(MerchantMembership).where(
-                MerchantMembership.user_id == user.id,
-                MerchantMembership.merchant_id == merchant_id,
-                MerchantMembership.is_active.is_(True),  # type: ignore[union-attr]
-            )
-        ).first()
+        # This runs BEFORE set_merchant_context below — it is the check that decides
+        # whether this user may act as that tenant at all, so it cannot assume the
+        # context it is about to establish. merchant_memberships has RLS FORCED, so
+        # without the service scope it matches nothing and every authenticated live
+        # request 404s as "Merchant not found".
+        #
+        # Reading across tenants here is safe and necessary: the row is then required
+        # to name this exact user AND this exact merchant, so a membership belonging
+        # to anyone else cannot satisfy it.
+        with service_scope(session):
+            membership = session.exec(
+                select(MerchantMembership).where(
+                    MerchantMembership.user_id == user.id,
+                    MerchantMembership.merchant_id == merchant_id,
+                    MerchantMembership.is_active.is_(True),  # type: ignore[union-attr]
+                )
+            ).first()
         merchant = session.get(Merchant, merchant_id)
         # The same 404 covers an unknown merchant and another tenant's merchant.
         if membership is None or merchant is None or merchant.is_demo or merchant.mode != "live":
