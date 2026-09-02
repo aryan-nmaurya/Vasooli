@@ -4,6 +4,7 @@ from datetime import timedelta
 
 from fastapi import APIRouter, HTTPException, Response, status
 from pydantic import BaseModel, Field
+from sqlalchemy import func
 from sqlmodel import select
 
 from app.core.clock import utcnow
@@ -17,6 +18,8 @@ from app.core.security import (
     create_session_token,
 )
 from app.models import OperatorAccount
+from app.services.authorization import service_scope
+from app.services.demo_scope import demo_invoice_ids
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 log = get_logger("auth")
@@ -85,8 +88,25 @@ def login(payload: LoginRequest, response: Response, session: SessionDep) -> dic
     }
 
 
+def _demo_invoice_count(session) -> int | None:
+    """Size of the seeded demo ledger, or None if it cannot be determined.
+
+    None rather than 0 on failure: the guide renders a neutral sentence for None, and
+    reporting "0 seeded invoices" to a reviewer because a query failed is worse than
+    saying nothing about the number at all.
+    """
+    try:
+        with service_scope(session):
+            return session.exec(
+                select(func.count()).select_from(demo_invoice_ids().subquery())
+            ).one()
+    except Exception as exc:
+        log.warning("auth.demo_invoice_count_unavailable", error=str(exc))
+        return None
+
+
 @router.get("/modes")
-def auth_modes(session: SessionDep) -> dict[str, bool]:
+def auth_modes(session: SessionDep) -> dict[str, bool | int | None]:
     """What sign-in routes exist. Public, and deliberately carries no secret.
 
     The login page is unauthenticated by definition, so it cannot ask a gated endpoint
@@ -113,6 +133,16 @@ def auth_modes(session: SessionDep) -> dict[str, bool]:
     return {
         "reviewer_access": reviewer_ready,
         "live_registration": settings.live_registration_enabled,
+        # Same question for the demo controls. The reviewer guide has a whole section
+        # telling a judge to move the clock; where the controls are off that section
+        # walks them into a button that does nothing, which is the dead end this
+        # endpoint exists to prevent.
+        "demo_controls": settings.demo_controls_enabled,
+        # How big the seeded ledger actually is. The guide used to say "eight", which
+        # is wrong the moment the seed changes. Counted under service scope because
+        # this endpoint has no tenant context and would otherwise always report zero
+        # under the deployed role; it is a demo row count, not tenant data.
+        "demo_invoice_count": _demo_invoice_count(session),
     }
 
 

@@ -470,6 +470,14 @@ deployment must connect as `vasooli_app` (`backend/scripts/create_app_role.sql`)
 compose files and `deploy/README.md` now do this, and run migrations separately as the
 owner. Connected as the owner, every policy in this repository is inert.
 
+Isolation covers both merchant-owned tables and the eight that hang off `invoices` by
+`invoice_id` and carry no `merchant_id` (`reminders`, `promises`, `payment_links`,
+`dispute_cases`, `inbound_messages`, `email_events`, `external_payments`,
+`audit_logs`). Those inherit ownership from the parent invoice, which is self-scoping
+because `invoices` is itself under forced RLS. The test suite connects as a superuser
+and therefore proves none of this — `tests/integration/test_rls_under_restricted_role.py`
+is the only test that runs as a role the policies actually apply to.
+
 The live system is code-complete for a private pilot, but is still **not approved for
 an unrestricted production launch** until the external provider and operational work
 below is completed:

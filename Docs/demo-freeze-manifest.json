@@ -5,7 +5,7 @@
   "backend_goldens": [
     {
       "path": "backend/tests/golden/demo/api_responses.json",
-      "sha256": "32862fd32b0cbb187482440bd0b1779e0b76fdc0e6c62521196fbcfdc58f5ea3"
+      "sha256": "9543ceab5a56741df31ef975e066a32bda559aeb26c2817da68642f7aca961ea"
     },
     {
       "path": "backend/tests/golden/demo/ledger.json",
@@ -121,7 +121,7 @@
     },
     {
       "path": "frontend/app/guide/page.tsx",
-      "sha256": "dcda2f7f87abe9ffb73483c1e8de6aa8f9fedd8413ccd9188fb6ab63e5bab90c"
+      "sha256": "5d9a4dbfabbd373bcffdcde9e215c9b6eb88544887a8fd3c85313cab9e0b4df1"
     },
     {
       "path": "frontend/app/invoices/[id]/page.tsx",
@@ -213,7 +213,7 @@
     },
     {
       "path": "frontend/components/RuntimeBanner.tsx",
-      "sha256": "4fde8498c1500d626540c6d4ca977a733d78951d16cd65f66bc5e2b269a26851"
+      "sha256": "f115a1b197e40004fe626b3058f2175238366adaa2750847e6c94178464a745e"
     },
     {
       "path": "frontend/components/SignOutButton.tsx",
@@ -237,7 +237,7 @@
     },
     {
       "path": "frontend/lib/api.ts",
-      "sha256": "7ae273551efe503cc50ffa4e1d5b79362501bc8e8351303570b25c4d581caf71"
+      "sha256": "b87402824dc7bbbd282bebf70f16899667aebfcb5ff05c3f27d04cf1f7268b7a"
     },
     {
       "path": "frontend/lib/money.ts",

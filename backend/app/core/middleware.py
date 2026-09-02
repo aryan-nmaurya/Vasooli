@@ -54,6 +54,13 @@ def body_limit_for(path: str) -> int:
 
 #: Per-path-group limits, as (requests, seconds).
 #:
+#: ⚠️ Counted PER PROCESS, in memory. The effective limit is therefore this number
+#: multiplied by the number of API replicas, and it resets on every deploy. Correct
+#: today because production runs a single `api` container; the moment a second one is
+#: added, every limit here silently doubles. Moving the counter to Redis is the fix,
+#: and is not worth its operational cost at one container — but the assumption has to
+#: be stated where the numbers are, not discovered during an incident.
+#:
 #: Login is far tighter than everything else: it is the one endpoint where guessing is
 #: the attack, and a human typing a password needs a handful of attempts, not hundreds.
 #: Longest prefix wins, so the specific live-auth routes below are not swallowed by

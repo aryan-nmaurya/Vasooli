@@ -19,10 +19,23 @@ Two credential types are accepted:
 | `X-Admin-Key` header | service scripts and deployment smoke checks | long-lived, never configured in the frontend |
 | `vasooli_session` cookie | a named human who has logged in | 12 hours, httpOnly, SameSite=Lax, independently revocable |
 
-**There is no resource-ownership check, and there should not be.** Every invoice belongs
-to the one merchant; an ownership check over a single-tenant dataset would be a
-comparison that always passes, which is worse than none because it looks like
-protection.
+**This document describes the single-tenant operator console only** (`/api/dashboard`,
+`/api/invoices`, `/api/demo`), which is reached with the credentials above. The
+multi-tenant live routes under `/api/live/*` are a different surface with a different
+model — merchant session, role and permission, plus per-request tenant scoping — and
+nothing in this file describes them.
+
+**Within the operator console there is no resource-ownership check, and there should
+not be.** Its dataset is the seeded demo ledger belonging to one merchant; an ownership
+check over a single-tenant dataset is a comparison that always passes, which is worse
+than none because it looks like protection.
+
+**Do not carry that sentence over to a live route.** There, ownership is checked twice:
+in the application, where every route taking a child id re-loads the parent through
+`get_scoped_object(..., context.merchant.id)`; and in the database, where row-level
+security is forced on every merchant-owned table and on the eight tables that hang off
+`invoices` by `invoice_id`. The application check is the one that produces a good error
+message. The database check is the one that still holds when somebody forgets the first.
 
 ## What is deliberately NOT gated
 
