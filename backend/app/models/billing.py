@@ -66,6 +66,12 @@ class BillingSubscription(SQLModel, table=True):
     current_period_end: datetime | None = Field(sa_column=timestamp_column(nullable=True))
     grace_until: datetime | None = Field(sa_column=timestamp_column(nullable=True))
     cancel_at_period_end: bool = Field(default=False, sa_column=bool_column(default=False))
+    #: The mandate-verification payment taken at authorisation, and its refund.
+    #: Both recorded so the refund is issued exactly once: the authenticated webhook
+    #: can arrive more than once, and refunding twice would return real money twice.
+    auth_payment_id: str | None = Field(default=None, sa_column=Column(String(120), nullable=True))
+    auth_refund_id: str | None = Field(default=None, sa_column=Column(String(120), nullable=True))
+    auth_amount_paise: int = Field(default=0)
     created_at: datetime = Field(sa_column=timestamp_column(default_now=True))
     updated_at: datetime = Field(sa_column=timestamp_column(default_now=True))
 

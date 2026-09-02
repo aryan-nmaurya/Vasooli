@@ -15,12 +15,14 @@ from sqlmodel import Session, select
 from app.core.clock import utcnow
 from app.core.config import settings
 from app.core.constants import TERMINAL_STATUSES
+from app.core.logging import get_logger
 from app.integrations.razorpay_client import get_billing_client
 from app.integrations.razorpay_signature import verify_signature
 from app.models import (
     BillingEntitlement,
     BillingEvent,
     BillingPlan,
+    BillingRefund,
     BillingSubscription,
     Invoice,
     Merchant,
@@ -35,6 +37,8 @@ PLAN_CATALOG = {
     plan.slug: (plan.amount_paise, plan.included_active_invoices, plan.included_seats)
     for plan in PLANS
 }
+
+log = get_logger("billing")
 
 ACTIVE_STATES = {"active", "authenticated"}
 PROVIDER_STATUS_MAP = {
@@ -220,20 +224,95 @@ def create_checkout_subscription(
     return row
 
 
-def create_provider_subscription(plan: BillingPlan) -> tuple[str | None, str | None]:
+def create_provider_subscription(
+    plan: BillingPlan, *, trial_days: int | None = None
+) -> tuple[str | None, str | None]:
     """Create the provider subscription, returning its id and hosted checkout URL.
 
-    `short_url` is where the merchant actually authorises the mandate and pays. It is
-    returned rather than stored: Razorpay expires these, so a link persisted now and
-    opened next week sends the merchant to a dead page.
+    `short_url` is where the merchant authorises the mandate and pays. It is returned
+    rather than stored: Razorpay expires these, so a link persisted now and opened
+    next week sends the merchant to a dead page.
+
+    When `trial_days` is given the first billing cycle is pushed that far out, so the
+    plan amount is not charged during the trial, and a small verification amount is
+    added to the authorisation instead. That charge is what makes the mandate real —
+    a bank or UPI app will not confirm a recurring debit approval without one — and
+    it is refunded as soon as the subscription reports itself authenticated.
+
+    Doing it this way means the first post-trial charge runs against an instrument
+    that has already been proven to work, rather than discovering on day eight that
+    the mandate was never valid.
     """
     if not settings.razorpay_subscriptions_enabled or not plan.razorpay_plan_id:
         return None, None
-    payload = get_billing_client().create_subscription(plan_id=plan.razorpay_plan_id)
+
+    start_at = None
+    auth_amount = None
+    if trial_days:
+        start_at = int((utcnow() + timedelta(days=trial_days)).timestamp())
+        auth_amount = settings.trial_auth_amount_paise
+
+    payload = get_billing_client().create_subscription(
+        plan_id=plan.razorpay_plan_id, start_at=start_at, auth_amount_paise=auth_amount
+    )
     provider_id = payload.get("id")
     if not provider_id:
         raise ValueError("Razorpay did not return a subscription ID")
     return str(provider_id), payload.get("short_url")
+
+
+def refund_mandate_verification(session: Session, subscription: BillingSubscription) -> str | None:
+    """Return the mandate-verification charge, exactly once.
+
+    Called when a subscription reports itself authenticated. That webhook can be
+    delivered more than once, and Razorpay will happily issue a second refund for the
+    same payment — which returns real money twice. The stored refund id is what makes
+    this safe to call repeatedly.
+
+    A failure here is logged and left for the next delivery rather than raised: the
+    merchant's subscription is validly authenticated either way, and refusing the
+    webhook over an unrefunded two rupees would leave their billing state stuck.
+    """
+    if subscription.auth_refund_id:
+        return subscription.auth_refund_id
+    if not subscription.auth_payment_id or subscription.auth_amount_paise <= 0:
+        return None
+
+    try:
+        result = get_billing_client().refund_payment(
+            subscription.auth_payment_id,
+            amount_paise=subscription.auth_amount_paise,
+            notes={"reason": "mandate verification refund", "subscription": str(subscription.id)},
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning(
+            "billing.auth_refund_failed",
+            subscription_id=str(subscription.id),
+            payment_id=subscription.auth_payment_id,
+            error=str(exc)[:200],
+        )
+        return None
+
+    refund_id = str(result.get("id") or "")
+    if not refund_id:
+        return None
+
+    subscription.auth_refund_id = refund_id
+    session.add(subscription)
+    session.add(
+        BillingRefund(
+            merchant_id=subscription.merchant_id,
+            provider_refund_id=refund_id,
+            amount_paise=subscription.auth_amount_paise,
+            status=str(result.get("status") or "processed"),
+        )
+    )
+    log.info(
+        "billing.auth_refunded",
+        subscription_id=str(subscription.id),
+        amount_paise=subscription.auth_amount_paise,
+    )
+    return refund_id
 
 
 def apply_subscription_event(
@@ -281,6 +360,23 @@ def apply_subscription_event(
         subscription.updated_at = utcnow()
         if status_value == "past_due":
             subscription.grace_until = utcnow() + timedelta(days=7)
+
+        # The mandate is now proven. Record the payment that proved it, then give it
+        # back — the merchant agreed to a free trial, so the verification charge must
+        # not stay taken. `refund_mandate_verification` is safe to reach more than
+        # once; this webhook can be redelivered and a second refund would return real
+        # money twice.
+        if status_value in _LIVE_STATES:
+            payment_id = entity.get("payment_id") or (
+                payload.get("payload", {}).get("payment", {}).get("entity", {}).get("id")
+            )
+            if payment_id and not subscription.auth_payment_id:
+                subscription.auth_payment_id = str(payment_id)
+                if subscription.auth_amount_paise <= 0:
+                    subscription.auth_amount_paise = settings.trial_auth_amount_paise
+            session.add(subscription)
+            refund_mandate_verification(session, subscription)
+
         session.add(subscription)
         merchant = session.get(Merchant, subscription.merchant_id)
         if merchant is not None:

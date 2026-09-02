@@ -245,8 +245,19 @@ export default function LiveBillingPage() {
       {selected ? (
         <SettingsCard
           title={`Continue with ${plans.find((p) => p.slug === selected)?.name ?? selected}`}
-          hint="Re-entering your password authorises the subscription. You will be taken to Razorpay to complete payment."
+          hint="Re-entering your password authorises the subscription. You will be taken to Razorpay to complete it."
         >
+          {subscription?.on_trial ? (
+            <div className="mb-4 rounded-lg border border-line bg-surface px-3 py-2.5 text-xs leading-5 text-ink-3">
+              <p className="font-semibold text-ink">A ₹2 charge confirms your Autopay mandate.</p>
+              <p className="mt-1">
+                Your bank or UPI app needs a real payment to confirm you approved recurring
+                debits, so ₹2 is taken now and <strong className="font-semibold text-ink">refunded
+                automatically</strong> once the mandate is confirmed. Your plan itself is not
+                charged until the trial ends, and you can cancel at any time.
+              </p>
+            </div>
+          ) : null}
           <form onSubmit={startCheckout} className="flex flex-wrap items-end gap-3">
             <label className={`min-w-56 flex-1 ${labelClass}`}>
               Confirm current password

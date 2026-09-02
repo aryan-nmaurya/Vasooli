@@ -56,6 +56,14 @@ class Settings(BaseSettings):
     razorpay_plan_id_scale: str | None = None
     razorpay_subscriptions_enabled: bool = False
     live_trial_days: int = Field(default=7, ge=1, le=90)
+    #: Charged when the merchant authorises the Autopay mandate, then refunded once
+    #: the subscription reports itself authenticated.
+    #:
+    #: A mandate cannot be validated for nothing: the payment is how the bank or UPI
+    #: app confirms the customer genuinely approved recurring debits. Keeping it small
+    #: and refunding it means the trial stays free in substance while the mandate is
+    #: real, so the first post-trial charge does not fail on an unverified instrument.
+    trial_auth_amount_paise: int = Field(default=200, ge=100, le=10_000)
     razorpay_oauth_client_id: str | None = None
     razorpay_oauth_client_secret: str | None = None
     razorpay_oauth_redirect_uri: str | None = None

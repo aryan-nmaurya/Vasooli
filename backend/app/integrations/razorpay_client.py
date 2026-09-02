@@ -262,17 +262,61 @@ class RazorpayClient:
 
     @retry(**_RETRY)
     def create_subscription(
-        self, *, plan_id: str, total_count: int = 12, customer_notify: bool = True
+        self,
+        *,
+        plan_id: str,
+        total_count: int = 12,
+        customer_notify: bool = True,
+        start_at: int | None = None,
+        auth_amount_paise: int | None = None,
     ) -> dict[str, Any]:
-        """Create a Vasooli subscription against the platform Razorpay account."""
-        return self._call(
-            self._client.subscription.create,
-            {
-                "plan_id": plan_id,
-                "total_count": total_count,
-                "customer_notify": 1 if customer_notify else 0,
-            },
-        )
+        """Create a subscription, optionally after a trial and behind a mandate check.
+
+        `start_at` is when the first real billing cycle begins. Setting it in the
+        future is what makes the trial free: Razorpay does not charge the plan amount
+        until then.
+
+        `auth_amount_paise` adds a one-time line item that the customer pays when
+        they authorise the mandate. A mandate cannot be validated for nothing — the
+        payment is how the bank or UPI app confirms the customer really approved
+        recurring debits — so this small amount is charged now and refunded once the
+        subscription reports itself authenticated.
+        """
+        payload: dict[str, Any] = {
+            "plan_id": plan_id,
+            "total_count": total_count,
+            "customer_notify": 1 if customer_notify else 0,
+        }
+        if start_at is not None:
+            payload["start_at"] = start_at
+        if auth_amount_paise:
+            payload["addons"] = [
+                {
+                    "item": {
+                        "name": "Mandate verification",
+                        "amount": auth_amount_paise,
+                        "currency": "INR",
+                    }
+                }
+            ]
+        return self._call(self._client.subscription.create, payload)
+
+    @retry(**_RETRY)
+    def refund_payment(
+        self, payment_id: str, *, amount_paise: int | None = None, notes: dict | None = None
+    ) -> dict[str, Any]:
+        """Refund a payment, in full unless an amount is given.
+
+        Used to return the mandate-verification charge. Idempotent at the provider by
+        `speed`/amount semantics only, so the caller records the refund locally and
+        does not re-issue one it has already seen.
+        """
+        data: dict[str, Any] = {}
+        if amount_paise is not None:
+            data["amount"] = amount_paise
+        if notes:
+            data["notes"] = notes
+        return self._call(self._client.payment.refund, payment_id, data)
 
     @retry(**_RETRY)
     def fetch_subscription(self, subscription_id: str) -> dict[str, Any]:

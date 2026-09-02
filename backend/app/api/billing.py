@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlmodel import select
 
+from app.core.config import settings
 from app.core.db import SessionDep
 from app.models import BillingPlan, BillingSubscription
 from app.services.authorization import (
@@ -89,7 +90,13 @@ def checkout(
         checkout_url = checkout_url_for(existing)
     else:
         try:
-            provider_id, checkout_url = create_provider_subscription(plan)
+            # A merchant who has never subscribed gets the trial, so the first
+            # billing cycle starts after it and only the refundable verification
+            # amount is taken now. Someone who already had a subscription is
+            # upgrading and is charged from the start.
+            state = subscription_state(session, context.merchant.id)
+            trial_days = settings.live_trial_days if state.on_trial else None
+            provider_id, checkout_url = create_provider_subscription(plan, trial_days=trial_days)
         except Exception as exc:
             raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
         subscription = create_checkout_subscription(
