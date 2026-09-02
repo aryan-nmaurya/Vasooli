@@ -138,3 +138,54 @@ def test_production_refuses_insecure_identity_links(monkeypatch):
     )
     with pytest.raises(RuntimeError, match="https://"):
         build().assert_production_safe()
+
+
+# --- Demo controls in production -------------------------------------------------
+#
+# The demo clock is process-global: advancing it shifts `utcnow()` for every tenant,
+# not only the demo's. Production therefore refuses it unless a second, separate flag
+# says the operator has accepted that. These pin both halves, because a guard that can
+# be satisfied by the flag it guards is not a guard.
+
+_PROD = {
+    "ENVIRONMENT": "production",
+    "ADMIN_API_KEY": "a-real-admin-secret",
+    "SESSION_SECRET": "x" * 40,
+    "CREDENTIAL_ENCRYPTION_KEY": "k" * 44,
+}
+
+
+def test_production_refuses_demo_controls_without_the_override(monkeypatch):
+    build = _isolated_env(monkeypatch, {**_PROD, "DEMO_CONTROLS_ENABLED": "true"})
+    with pytest.raises(RuntimeError, match="DEMO_CONTROLS_ENABLED must be false"):
+        build().assert_production_safe()
+
+
+def test_production_allows_demo_controls_with_the_deliberate_override(monkeypatch):
+    build = _isolated_env(
+        monkeypatch,
+        {
+            **_PROD,
+            "DEMO_CONTROLS_ENABLED": "true",
+            "ALLOW_DEMO_CONTROLS_IN_PRODUCTION": "true",
+        },
+    )
+    build().assert_production_safe()  # must not raise
+
+
+def test_the_override_does_not_also_unlock_simulated_replies(monkeypatch):
+    """Fabricated customer statements stay banned however the demo clock is set.
+
+    Moving time runs the real code against a later date. A simulated reply invents
+    evidence, which no deployment flag should be able to buy.
+    """
+    build = _isolated_env(
+        monkeypatch,
+        {
+            **_PROD,
+            "ALLOW_SIMULATED_REPLIES": "true",
+            "ALLOW_DEMO_CONTROLS_IN_PRODUCTION": "true",
+        },
+    )
+    with pytest.raises(RuntimeError, match="ALLOW_SIMULATED_REPLIES"):
+        build().assert_production_safe()

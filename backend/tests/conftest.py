@@ -58,6 +58,15 @@ os.environ["LIVE_TRIAL_DAYS"] = "7"
 os.environ["ALLOW_PLATFORM_SENDER_FOR_LIVE"] = "false"
 os.environ["ALLOW_DIRECT_CUSTOMER_EMAIL"] = "false"
 os.environ["REVIEWER_ACCESS_ENABLED"] = "false"
+# Billing credentials are pinned for the same reason as the flags above. A developer
+# with live billing keys in their .env would otherwise flip `effective_billing_key_id`
+# to an `rzp_live_` value, and every production-safety assertion that refuses live
+# credentials without ALLOW_LIVE_RAZORPAY would fail on their machine and pass in CI.
+os.environ["RAZORPAY_BILLING_KEY_ID"] = ""
+os.environ["RAZORPAY_BILLING_KEY_SECRET"] = ""
+os.environ["RAZORPAY_BILLING_WEBHOOK_SECRET"] = ""
+os.environ["RAZORPAY_SUBSCRIPTIONS_ENABLED"] = "false"
+os.environ["ALLOW_LIVE_RAZORPAY"] = "false"
 os.environ["LIVE_REGISTRATION_ENABLED"] = "false"
 os.environ["DEMO_TIME_OFFSET_DAYS"] = "0"
 os.environ["ENVIRONMENT"] = "test"

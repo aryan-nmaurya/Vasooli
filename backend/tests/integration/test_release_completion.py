@@ -16,7 +16,7 @@ from app.models import DisputeCase, ErpConnection, ExternalPayment, Invoice, Pay
 from app.services.billing import subscription_is_active
 from app.services.erp import sync_connection
 from tests.integration.test_erp_sync import _row
-from tests.integration.test_live_identity import _live_user
+from tests.integration.test_live_identity import _live_user, _subscribe
 
 
 @pytest.fixture
@@ -59,8 +59,11 @@ def _import_one(api: TestClient, merchant_id: str) -> str:
     ]
 
 
-def test_live_workspace_exposes_queue_detail_metrics_and_audit(api):
+def test_live_workspace_exposes_queue_detail_metrics_and_audit(api, session):
     merchant_id, _ = _live_user(api, "workspace-owner@example.com")
+    # The workspace is gated on a live subscription: registration alone no longer
+    # opens it, so this has to get past billing before it can assert on the queue.
+    _subscribe(session, merchant_id, "starter")
     invoice_id = _import_one(api, merchant_id)
     headers = {"X-Merchant-ID": merchant_id}
 

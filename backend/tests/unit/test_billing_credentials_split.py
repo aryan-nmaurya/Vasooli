@@ -14,7 +14,12 @@ from app.core.config import Settings, settings
 
 def test_billing_falls_back_to_the_platform_key_when_not_split():
     """A deployment that has not split them yet must behave exactly as before."""
-    assert settings.razorpay_billing_key_id is None
+    # Falsy rather than `is None`: "not configured" is the behaviour under test, and
+    # it arrives as an empty string when the test environment pins the variable and as
+    # None when it is simply absent. Asserting the exact spelling made this fail on any
+    # machine whose .env carried real billing keys, which is a property of that
+    # developer's laptop rather than of the code.
+    assert not settings.razorpay_billing_key_id
     assert settings.effective_billing_key_id == settings.razorpay_key_id
     assert settings.effective_billing_key_secret == settings.razorpay_key_secret
     assert settings.effective_billing_webhook_secret == settings.razorpay_webhook_secret

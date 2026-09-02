@@ -264,3 +264,37 @@ def get_scoped_object(session, model, object_id: uuid.UUID, merchant_id: uuid.UU
     return session.exec(
         select(model).where(model.id == object_id, model.merchant_id == merchant_id)
     ).first()
+
+
+def require_active_subscription(
+    session: SessionDep,
+    context: Annotated[LiveContext, Depends(require_live_permission("merchant.read"))],
+) -> LiveContext:
+    """Refuse the workspace until the merchant's subscription is live.
+
+    Registration used to hand out a fully working workspace before any payment
+    instrument had been seen, so the first time a card was tested was the day the
+    trial ended and the first real charge failed. A trial is now something a merchant
+    enters by confirming a mandate, and this is the gate that makes that true for
+    reads as well as writes.
+
+    Deliberately not applied to `/api/live/auth` or `/api/live/billing`: a merchant
+    who cannot reach billing can never pay, which would make the gate permanent.
+
+    The seeded demo is exempt inside `subscription_state` — it has no subscription
+    and never will, and gating it would lock a reviewer out of the one workspace that
+    exists to be looked at.
+
+    402 rather than 403: this is not a permission the merchant lacks, it is a payment
+    the workspace is waiting for, and the client uses that distinction to route them
+    to plan selection instead of showing an access error.
+    """
+    from app.services.billing import subscription_state
+
+    state = subscription_state(session, context.merchant.id)
+    if not state.is_active:
+        raise HTTPException(
+            status.HTTP_402_PAYMENT_REQUIRED,
+            state.paused_reason or "This workspace has no active subscription.",
+        )
+    return context

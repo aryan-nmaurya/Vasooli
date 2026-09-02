@@ -81,8 +81,26 @@ def set_trial(session, merchant, *, days_from_now: float):
 # ===========================================================================
 
 
-def test_a_new_merchant_is_on_a_starter_trial(session, live_merchant):
+def test_a_merchant_who_has_not_paid_gets_nothing(session, live_merchant):
+    """Registration alone must not open a workspace.
+
+    It used to: signing up granted a fully active trial before any payment instrument
+    had been seen, so the first time a card was tested was the day the trial ended and
+    the first real charge failed. The trial now begins when the mandate is confirmed.
+    """
     set_trial(session, live_merchant, days_from_now=settings.live_trial_days)
+    state = subscription_state(session, live_merchant.id)
+
+    assert state.is_active is False
+    assert state.on_trial is False
+    assert state.status == "awaiting_payment"
+    assert "confirm payment" in (state.paused_reason or "")
+
+
+def test_confirming_the_mandate_starts_the_trial(session, live_merchant):
+    """`authenticated` is Razorpay's "mandate confirmed, plan not yet charged"."""
+    set_trial(session, live_merchant, days_from_now=settings.live_trial_days)
+    subscribe(session, live_merchant, "starter", status="authenticated")
     state = subscription_state(session, live_merchant.id)
 
     assert state.on_trial is True
@@ -95,16 +113,32 @@ def test_a_new_merchant_is_on_a_starter_trial(session, live_merchant):
 
 def test_the_trial_counts_down(session, live_merchant):
     set_trial(session, live_merchant, days_from_now=2.5)
+    subscribe(session, live_merchant, "starter", status="authenticated")
     assert subscription_state(session, live_merchant.id).days_remaining == 3
 
 
-def test_an_expired_trial_pauses_automation(session, live_merchant):
+def test_an_expired_trial_stops_being_a_trial(session, live_merchant):
+    """Past the window the merchant is billed, not trialing.
+
+    `authenticated` still counts as live: Razorpay charges the first cycle at trial
+    end, and refusing service in the gap between "trial over" and "first charge
+    settled" would suspend a merchant who has done nothing wrong.
+    """
+    set_trial(session, live_merchant, days_from_now=-1)
+    subscribe(session, live_merchant, "starter", status="authenticated")
+    state = subscription_state(session, live_merchant.id)
+
+    assert state.on_trial is False
+    assert state.status == "authenticated"
+
+
+def test_an_unpaid_merchant_past_the_window_is_still_refused(session, live_merchant):
     set_trial(session, live_merchant, days_from_now=-1)
     state = subscription_state(session, live_merchant.id)
 
     assert state.is_active is False
     assert state.days_remaining == 0
-    assert "trial has ended" in (state.paused_reason or "")
+    assert "confirm payment" in (state.paused_reason or "")
 
 
 # ===========================================================================
@@ -112,11 +146,11 @@ def test_an_expired_trial_pauses_automation(session, live_merchant):
 # ===========================================================================
 
 
-def test_writes_are_refused_once_the_trial_ends(session, live_merchant):
+def test_writes_are_refused_before_the_mandate_is_confirmed(session, live_merchant):
     set_trial(session, live_merchant, days_from_now=-1)
     with pytest.raises(BillingEntitlementError) as exc:
         assert_write_allowed(session, live_merchant.id)
-    assert "trial has ended" in str(exc.value)
+    assert "confirm payment" in str(exc.value)
 
 
 def test_writes_are_allowed_on_an_active_subscription(session, live_merchant):
@@ -265,6 +299,7 @@ def test_the_published_trial_is_seven_days(session, live_merchant):
     start_trial(live_merchant)
     session.add(live_merchant)
     session.commit()
+    subscribe(session, live_merchant, "starter", status="authenticated")
 
     state = subscription_state(session, live_merchant.id)
     assert state.on_trial is True
@@ -279,4 +314,5 @@ def test_an_existing_trial_stamp_is_honoured_over_the_default(session, live_merc
     would revoke an extension the moment the default changed.
     """
     set_trial(session, live_merchant, days_from_now=30)
+    subscribe(session, live_merchant, "starter", status="authenticated")
     assert subscription_state(session, live_merchant.id).days_remaining == 30

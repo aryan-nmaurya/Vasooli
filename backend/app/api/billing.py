@@ -10,6 +10,7 @@ from sqlmodel import select
 
 from app.core.config import settings
 from app.core.db import SessionDep
+from app.core.logging import get_logger
 from app.models import BillingPlan, BillingSubscription
 from app.services.authorization import (
     LiveContext,
@@ -31,6 +32,7 @@ from app.services.billing import (
 from app.services.plans import PLANS
 
 router = APIRouter(prefix="/api/live/billing", tags=["live-billing"])
+log = get_logger("billing")
 
 
 class CheckoutRequest(BaseModel):
@@ -66,8 +68,26 @@ def checkout(
     session: SessionDep,
     context: Annotated[LiveContext, Depends(require_live_reauth("billing.manage"))],
 ) -> dict:
-    plans = ensure_plans(session)
-    plan = next((item for item in plans if item.slug == payload.plan_slug), None)
+    try:
+        plans = ensure_plans(session)
+    except ValueError as exc:
+        # `ensure_plans` refuses to silently re-point an immutable plan at a different
+        # Razorpay id, which is correct — but it is called before any guarded block,
+        # so the refusal reached the merchant as a bare 500 with nothing actionable in
+        # it. This is an operator misconfiguration, not something the merchant did, so
+        # it is reported as such and logged rather than dressed up as a client error.
+        session.rollback()
+        log.error("billing.plan_configuration_invalid", error=str(exc))
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Billing is not correctly configured on this deployment. Please contact support.",
+        ) from exc
+    # `is_active` matters here as well as in the catalog. Without it a retired plan
+    # is accepted at this point and then rejected inside
+    # `create_checkout_subscription`, which raises ValueError from outside the guarded
+    # block below — surfacing to the merchant as an unexplained 500 rather than a
+    # readable "unknown plan".
+    plan = next((item for item in plans if item.slug == payload.plan_slug and item.is_active), None)
     if plan is None:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown billing plan")
     existing = session.exec(
@@ -99,12 +119,18 @@ def checkout(
             provider_id, checkout_url = create_provider_subscription(plan, trial_days=trial_days)
         except Exception as exc:
             raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
-        subscription = create_checkout_subscription(
-            session,
-            context.merchant,
-            payload.plan_slug,
-            provider_subscription_id=provider_id,
-        )
+        try:
+            subscription = create_checkout_subscription(
+                session,
+                context.merchant,
+                payload.plan_slug,
+                provider_subscription_id=provider_id,
+            )
+        except ValueError as exc:
+            # Reachable if the plan is retired between the lookup above and here.
+            # A 500 tells the merchant nothing and looks like an outage.
+            session.rollback()
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
     session.commit()
     plan = session.get(BillingPlan, subscription.plan_id)
     return {
