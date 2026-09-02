@@ -20,8 +20,8 @@ into request-scoped access or lets a write land in the wrong tenant.
 
 import pytest
 from sqlalchemy import create_engine, text
-from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ProgrammingError
 from sqlmodel import Session, select
 
 from app.core.clock import utcnow

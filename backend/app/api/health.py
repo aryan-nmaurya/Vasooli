@@ -62,7 +62,7 @@ def health(response: Response) -> HealthResponse:
     db_ok, error = check_database()
     if not db_ok:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
-    revision, current = (_schema_state() if db_ok else (None, None))
+    revision, current = _schema_state() if db_ok else (None, None)
     # A stale schema degrades the reported status but never the HTTP code: it must be
     # visible without SSH, and it must not take a working instance out of rotation.
     healthy = db_ok and current is not False

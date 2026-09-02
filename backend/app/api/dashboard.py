@@ -24,7 +24,6 @@ from app.core.constants import DisputeStatus, InvoiceStatus, PromiseStatus
 from app.core.db import SessionDep
 from app.core.logging import get_logger
 from app.core.money import format_inr
-from app.services.runtime_status import ai_health, scheduler_health
 from app.models import (
     AuditAction,
     AuditActor,
@@ -60,6 +59,7 @@ from app.services.metrics import compute_metrics
 from app.services.reconciliation import reprocess_event
 from app.services.recovery import escalate_to_human
 from app.services.replies import retry_failed_inbound
+from app.services.runtime_status import ai_health, scheduler_health
 
 # Every endpoint here is gated. These reads expose customer names, email
 # addresses, amounts owed and the audit trail — that is a breach if it is
