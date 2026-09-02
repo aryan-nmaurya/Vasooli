@@ -261,6 +261,75 @@ def check_razorpay() -> None:
         )
 
 
+def check_billing_plans() -> None:
+    """Every plan id must point at a plan charging what the catalogue advertises.
+
+    This exists because the ids were once configured swapped — STARTER pointed at
+    the Rs14,999 plan and SCALE at the Rs1,999 one. Nothing detected it: the ids
+    were valid, they resolved, and Razorpay had no opinion about which of our plans
+    they were meant to be. A Starter merchant would have been charged 7.5x the
+    advertised price, and the first sign would have been the customer's bank alert.
+
+    Comparing the amount is the only check that can catch it, because the id itself
+    carries no meaning we can verify.
+    """
+    section("Billing plans")
+    if not settings.razorpay_subscriptions_enabled:
+        report("PASS", "subscriptions", "disabled — plan ids not in use")
+        return
+
+    import razorpay
+
+    from app.services.plans import PLANS_BY_SLUG
+
+    configured = {
+        "starter": settings.razorpay_plan_id_starter,
+        "growth": settings.razorpay_plan_id_growth,
+        "scale": settings.razorpay_plan_id_scale,
+    }
+    missing = [slug for slug, pid in configured.items() if not pid]
+    if missing:
+        report(
+            "FAIL",
+            "plan ids configured",
+            f"missing: {', '.join(missing)}",
+            "Subscriptions are enabled, so every plan needs RAZORPAY_PLAN_ID_<PLAN>.",
+        )
+        return
+
+    try:
+        client = razorpay.Client(
+            auth=(settings.effective_billing_key_id, settings.effective_billing_key_secret)
+        )
+    except Exception as exc:
+        report("FAIL", "billing credentials", type(exc).__name__, "Check RAZORPAY_BILLING_KEY_*.")
+        return
+
+    for slug, plan_id in configured.items():
+        expected = PLANS_BY_SLUG[slug].amount_paise
+        try:
+            remote = client.plan.fetch(plan_id)
+        except Exception as exc:
+            report(
+                "FAIL",
+                f"{slug} plan resolves",
+                f"{type(exc).__name__}",
+                "A plan id created in test mode does not resolve against live keys.",
+            )
+            continue
+        amount = int((remote.get("item") or {}).get("amount") or 0)
+        if amount == expected:
+            report("PASS", f"{slug} plan amount", f"Rs{amount / 100:,.0f}")
+        else:
+            report(
+                "FAIL",
+                f"{slug} plan amount",
+                f"Rs{amount / 100:,.0f}, expected Rs{expected / 100:,.0f}",
+                f"RAZORPAY_PLAN_ID_{slug.upper()} points at the wrong plan. "
+                "Merchants would be charged an amount the pricing page never showed.",
+            )
+
+
 def check_resend() -> None:
     section("Email — Resend")
     if not settings.resend_api_key:
@@ -434,6 +503,7 @@ def main() -> int:
     check_dns()
     check_host(args.host)
     check_razorpay()
+    check_billing_plans()
     check_resend()
     check_ai()
 
