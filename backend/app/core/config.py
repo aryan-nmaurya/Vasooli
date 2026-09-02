@@ -242,10 +242,25 @@ class Settings(BaseSettings):
         #   * reviewer access is a shared credential to the operator console.
         # Scope checks now stop each of them crossing into live data on their own, but
         # a production process should not be offering them at all.
+        # REVIEWER_ACCESS_ENABLED is deliberately NOT in this list.
+        #
+        # The other two write: a simulated reply fabricates a customer statement in
+        # the audit trail, and demo controls move a clock the live recovery cycle
+        # reads. Neither has any business running in production.
+        #
+        # Reviewer access only reads. The account must be an `auditor`, and
+        # app.api.deps rejects every non-GET/HEAD/OPTIONS request from an auditor,
+        # so the read-only property is enforced by the request path rather than
+        # promised here. Demo/live isolation is separately enforced and covered by
+        # tests. Forbidding it outright also forbade a public product demo, which is
+        # a real need and not a security win.
+        #
+        # What this cannot check is whether the reviewer ACCOUNT is actually an
+        # auditor — that needs a database. `verify_reviewer_account` does it at
+        # startup, and the app refuses to serve if it is wrong.
         for flag, name in (
             (self.allow_simulated_replies, "ALLOW_SIMULATED_REPLIES"),
             (self.demo_controls_enabled, "DEMO_CONTROLS_ENABLED"),
-            (self.reviewer_access_enabled, "REVIEWER_ACCESS_ENABLED"),
         ):
             if flag:
                 raise RuntimeError(f"{name} must be false in production")

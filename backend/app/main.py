@@ -39,6 +39,7 @@ from app.core.middleware import (
     SecurityHeadersMiddleware,
 )
 from app.scheduler.setup import shutdown_scheduler, start_scheduler
+from app.services.auth import verify_reviewer_account
 from app.services.demo_control import load_into_clock
 
 log = get_logger("app")
@@ -83,6 +84,22 @@ async def lifespan(app: FastAPI):
             raise RuntimeError(
                 "No active operator account exists. Run scripts.manage_operator before startup."
             )
+
+        # Reviewer access is a public, credential-less door, and its read-only
+        # property rests on the account behind it being an `auditor`. Checked here so
+        # a misconfiguration is visible at deploy time rather than on someone's first
+        # click.
+        #
+        # Logged, not raised. The request path already fails closed twice — the modes
+        # endpoint hides the button unless the account is a live auditor, and
+        # app.api.deps refuses writes from one — so a bad reviewer account cannot
+        # grant anything. Refusing to boot would take live merchants offline over a
+        # broken demo door, which trades a real outage for a risk already covered.
+        if settings.reviewer_access_enabled:
+            try:
+                verify_reviewer_account()
+            except RuntimeError as exc:
+                log.error("startup.reviewer_access_misconfigured", error=str(exc))
     else:
         # Don't refuse to boot: /health reports 503 and the platform retries. Crashing
         # here turns a transient DB blip into a redeploy loop.

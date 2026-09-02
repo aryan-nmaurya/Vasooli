@@ -330,3 +330,46 @@ def create_live_user(email: str, password: str, display_name: str | None = None)
         display_name=display_name,
         password_hash=hash_live_password(password),
     )
+
+
+def verify_reviewer_account() -> None:
+    """Refuse to serve if the reviewer door would not be read-only.
+
+    `REVIEWER_ACCESS_ENABLED` hands a session to anyone who clicks, without a
+    credential. That is safe only because the account behind it is an `auditor`, and
+    `app.api.deps` rejects every non-GET/HEAD/OPTIONS request from an auditor. If the
+    account were given a writing role — by hand, by a seed script, by a mistake — the
+    button would still say "read-only demo" while granting write access to the
+    operator console.
+
+    Checked at startup rather than trusted, because the failure is silent and the
+    button is public.
+    """
+    from sqlmodel import Session, select
+
+    from app.core.config import settings
+    from app.core.db import engine
+    from app.models import OperatorAccount
+
+    with Session(engine) as session:
+        account = session.exec(
+            select(OperatorAccount).where(OperatorAccount.username == settings.reviewer_username)
+        ).first()
+
+    if account is None:
+        raise RuntimeError(
+            f"REVIEWER_ACCESS_ENABLED is true but no operator account named "
+            f"'{settings.reviewer_username}' exists. Create it with scripts.manage_operator, "
+            "or disable reviewer access."
+        )
+    if not account.is_active:
+        raise RuntimeError(
+            f"Reviewer account '{settings.reviewer_username}' is inactive. "
+            "Reactivate it or disable REVIEWER_ACCESS_ENABLED."
+        )
+    if account.role != "auditor":
+        raise RuntimeError(
+            f"Reviewer account '{settings.reviewer_username}' has role '{account.role}', not "
+            "'auditor'. Reviewer access is a public door and must be read-only; refusing to "
+            "start rather than grant write access behind a button labelled as a demo."
+        )
