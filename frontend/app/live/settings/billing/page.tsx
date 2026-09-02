@@ -17,6 +17,9 @@ import { PlanSummary, SubscriptionState, formatInr, useSubscription } from "@/li
 
 type CheckoutResult = { checkout_url: string | null; plan: string; status: string };
 
+/** Matches LIVE_TRIAL_DAYS on the server; the signup plan step promises the same. */
+const TRIAL_DAYS = 7;
+
 /** Reads as a sentence in the UI, so the singular case has to be right. */
 function days(n: number) {
   return `${n} ${n === 1 ? "day" : "days"}`;
@@ -35,11 +38,23 @@ export default function LiveBillingPage() {
   const [busy, setBusy] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [confirmCancel, setConfirmCancel] = useState(false);
+  const [sentHere, setSentHere] = useState<"gate" | "signup" | null>(null);
 
   useEffect(() => {
-    Promise.resolve().then(() =>
-      setMerchant(window.localStorage.getItem("vasooli_live_merchant") || ""),
-    );
+    Promise.resolve().then(() => {
+      setMerchant(window.localStorage.getItem("vasooli_live_merchant") || "");
+      // PaymentGate redirects here on a 402. Saying so beats dropping someone on a
+      // pricing page with no explanation of why their workspace closed.
+      const reason = new URLSearchParams(window.location.search).get("reason");
+      setSentHere(reason === "payment_required" ? "gate" : reason === "new_signup" ? "signup" : null);
+      // Carried from the signup plan step. Consumed on read so a later visit does
+      // not silently re-select a plan the merchant has since changed their mind about.
+      const pending = window.localStorage.getItem("vasooli_pending_plan");
+      if (pending) {
+        setSelected(pending);
+        window.localStorage.removeItem("vasooli_pending_plan");
+      }
+    });
   }, []);
 
   const { subscription, loaded, refresh } = useSubscription(merchant);
@@ -112,6 +127,24 @@ export default function LiveBillingPage() {
         title="Billing"
         description="Your plan, what it includes, and when it renews. Prices exclude applicable taxes."
       />
+
+      {sentHere !== null ? (
+        <div
+          role="status"
+          className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm leading-6 text-amber-900 dark:text-amber-200"
+        >
+          <p className="font-semibold">
+            {sentHere === "signup"
+              ? "One step left: confirm your plan."
+              : "Choose a plan to open your workspace."}
+          </p>
+          <p className="mt-1">
+            {sentHere === "signup"
+              ? `Your ${TRIAL_DAYS}-day free trial starts as soon as you confirm. A ₹2 charge verifies your Autopay mandate and is refunded automatically.`
+              : "Your subscription is not active yet, so the workspace is closed. Your data is safe and nothing has been deleted — pick a plan below and it opens again."}
+          </p>
+        </div>
+      ) : null}
 
       {subscription ? (
         <section className="rounded-xl border border-line bg-panel p-5">

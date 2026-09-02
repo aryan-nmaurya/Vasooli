@@ -28,6 +28,29 @@ export type LiveRegistrationPayload = {
   accept_privacy: boolean;
 };
 
+/**
+ * An API failure that still knows what the server said.
+ *
+ * The status was previously discarded, so a 402 from the payment gate arrived as an
+ * anonymous red toast with no way to act on it — the merchant was told to choose a
+ * plan and given nothing to click. Callers that care about a specific status can now
+ * branch on it; everything else keeps treating this as an ordinary Error.
+ */
+export class LiveApiError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "LiveApiError";
+    this.status = status;
+  }
+}
+
+/** HTTP 402: the workspace has no active subscription. */
+export function isPaymentRequired(cause: unknown): boolean {
+  return cause instanceof LiveApiError && cause.status === 402;
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   let response: Response;
   try {
@@ -47,7 +70,10 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(body.detail || body.error || `Request failed (${response.status})`);
+    throw new LiveApiError(
+      body.detail || body.error || `Request failed (${response.status})`,
+      response.status,
+    );
   }
   return body as T;
 }
