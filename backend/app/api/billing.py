@@ -26,8 +26,11 @@ from app.services.billing import (
     checkout_url_for,
     create_checkout_subscription,
     create_provider_subscription,
+    discard_abandoned_checkout,
     ensure_plans,
+    mandate_verification_paise,
     subscription_state,
+    trial_is_available,
     verify_billing_signature,
 )
 from app.services.plans import PLANS
@@ -99,24 +102,49 @@ def checkout(
         )
         .order_by(BillingSubscription.updated_at.desc())  # type: ignore[attr-defined]
     ).first()
+    # An `existing` row in `created` has never been authorised: no mandate was
+    # confirmed and no money moved. It is an abandoned checkout, not a subscription.
+    # Treating it as one dead-ended the merchant — picking a different plan returned
+    # "cancel it before changing plans", while the UI only offers Cancel for an ACTIVE
+    # subscription, so there was nothing to cancel and no way forward.
+    superseded = None
+    if existing is not None and existing.plan_id != plan.id and existing.status == "created":
+        superseded = existing
+        existing = None
+
     if existing is not None:
         if existing.plan_id != plan.id:
+            # A live subscription is a different matter: changing its plan has billing
+            # consequences, so it still goes through an explicit cancellation.
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
-                "An active checkout already exists; cancel it before changing plans",
+                "An active subscription already exists; cancel it before changing plans",
             )
         subscription = existing
         # A checkout already in flight: re-issue a fresh provider link rather than a
         # stored one, which Razorpay would have expired.
         checkout_url = checkout_url_for(existing)
     else:
+        if superseded is not None:
+            # Abandon it at the provider too, or the merchant accumulates half-finished
+            # subscriptions on their Razorpay account for every plan they looked at.
+            discard_abandoned_checkout(session, superseded)
         try:
-            # A merchant who has never subscribed gets the trial, so the first
-            # billing cycle starts after it and only the refundable verification
-            # amount is taken now. Someone who already had a subscription is
-            # upgrading and is charged from the start.
-            state = subscription_state(session, context.merchant.id)
-            trial_days = settings.live_trial_days if state.on_trial else None
+            # A merchant who has never subscribed gets the trial, so the first billing
+            # cycle starts after it and only the refundable verification amount is
+            # taken now. Someone who already had a subscription is returning, and is
+            # charged from the start.
+            #
+            # This asks whether a trial is available, NOT whether one is running.
+            # `subscription_state(...).on_trial` only becomes true once the mandate is
+            # authenticated, so using it here gave the trial to everyone except the
+            # merchant signing up — who was sent to pay the full plan amount instead
+            # of ₹2, on the screen that had just promised them a free trial.
+            trial_days = (
+                settings.live_trial_days
+                if trial_is_available(session, context.merchant.id)
+                else None
+            )
             provider_id, checkout_url = create_provider_subscription(plan, trial_days=trial_days)
         except Exception as exc:
             raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
@@ -173,6 +201,15 @@ def subscription(
     """
     state = subscription_state(session, context.merchant.id)
     body = state.to_dict()
+    # What the next checkout will actually take up front, and whether it carries the
+    # trial. The billing page states both to the merchant before they authorise
+    # anything, and it used to infer them from `on_trial` — which is false until the
+    # mandate is confirmed, so the ₹2 explanation never appeared for the one merchant
+    # it was written for. Answered by the server so the promise cannot drift from what
+    # the provider call really sends.
+    body["mandate_verification_paise"] = mandate_verification_paise(session, context.merchant.id)
+    body["trial_available"] = trial_is_available(session, context.merchant.id)
+    body["trial_days"] = settings.live_trial_days
     if state.subscription is not None:
         body["id"] = str(state.subscription.id)
         body["checkout_url"] = checkout_url_for(state.subscription) if not state.is_active else None

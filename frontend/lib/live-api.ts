@@ -46,6 +46,34 @@ export class LiveApiError extends Error {
   }
 }
 
+/**
+ * Turn a FastAPI error body into a sentence a person can act on.
+ *
+ * A 422 answers with `detail` as an ARRAY of validation objects, which went into the
+ * error message unchanged and reached the merchant as the literal text
+ * "[object Object]" — most visibly on the signup form, where a rejected email address
+ * is the single most likely thing to go wrong.
+ */
+function detailToMessage(detail: unknown, status: number): string {
+  const fallback = `Request failed (${status})`;
+  if (typeof detail === "string" && detail.trim()) return detail;
+  if (Array.isArray(detail)) {
+    const messages = detail
+      .map((item) =>
+        item && typeof item === "object" && typeof (item as { msg?: unknown }).msg === "string"
+          ? (item as { msg: string }).msg
+          : null,
+      )
+      .filter((msg): msg is string => Boolean(msg));
+    if (messages.length) return messages.join(". ");
+  }
+  if (detail && typeof detail === "object") {
+    const msg = (detail as { msg?: unknown }).msg;
+    if (typeof msg === "string" && msg.trim()) return msg;
+  }
+  return fallback;
+}
+
 /** HTTP 402: the workspace has no active subscription. */
 export function isPaymentRequired(cause: unknown): boolean {
   return cause instanceof LiveApiError && cause.status === 402;
@@ -71,7 +99,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
     throw new LiveApiError(
-      body.detail || body.error || `Request failed (${response.status})`,
+      detailToMessage(body.detail ?? body.error, response.status),
       response.status,
     );
   }
