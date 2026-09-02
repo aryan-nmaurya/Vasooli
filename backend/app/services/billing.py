@@ -518,13 +518,39 @@ def subscription_state(session: Session, merchant_id: uuid.UUID) -> Subscription
         .order_by(BillingSubscription.updated_at.desc())  # type: ignore[attr-defined]
     ).first()
 
+    # The seeded demo is never billed. It has no subscription and never will, and
+    # every gate below would otherwise lock a reviewer out of the one workspace that
+    # exists to be looked at.
+    if merchant is not None and merchant.is_demo:
+        end = trial_ends_at(merchant)
+        return SubscriptionState(
+            subscription=None,
+            plan=TRIAL_PLAN,
+            status="trialing",
+            is_active=True,
+            on_trial=True,
+            days_remaining=_days_between(now, end),
+            period_end=end,
+            cancel_at_period_end=False,
+            paused_reason=None,
+        )
+
     if row is None or row.status in _DEAD_STATES:
         # No live subscription: the merchant is on trial, or the trial has run out.
         # A cancelled subscription still shows its plan so the UI can offer that tier
         # back, but grants nothing.
         plan = plan_for(_plan_slug(session, row)) if row is not None else TRIAL_PLAN
         end = trial_ends_at(merchant) if merchant is not None else None
-        on_trial = row is None and end is not None and end > now
+        # The trial is something a merchant enters by confirming a payment mandate,
+        # not something registration hands out. Signing up used to grant a fully
+        # active workspace before any card was seen, so the trial was really an
+        # unauthenticated free tier — and the first time a payment instrument was
+        # tested was the day the trial ended and the first real charge failed.
+        #
+        # `authenticated` is the status Razorpay reports once the mandate is
+        # confirmed, so a merchant inside their trial window reaches the branch below
+        # rather than this one. Landing here with no row means they have not paid.
+        on_trial = False
         days = _days_between(now, end) if on_trial else 0
         if on_trial:
             reason = None
@@ -533,11 +559,14 @@ def subscription_state(session: Session, merchant_id: uuid.UUID) -> Subscription
         elif row is not None:
             reason = "Your subscription has expired. Renew to resume automation."
         else:
-            reason = "Your free trial has ended. Choose a plan to resume automation."
+            reason = (
+                "Choose a plan and confirm payment to activate your workspace. "
+                "Your trial starts once the mandate is confirmed."
+            )
         return SubscriptionState(
             subscription=row,
             plan=TRIAL_PLAN if on_trial else plan,
-            status="trialing" if on_trial else (row.status if row else "trial_expired"),
+            status="trialing" if on_trial else (row.status if row else "awaiting_payment"),
             is_active=on_trial,
             on_trial=on_trial,
             days_remaining=days,
@@ -549,6 +578,31 @@ def subscription_state(session: Session, merchant_id: uuid.UUID) -> Subscription
     plan = plan_for(_plan_slug(session, row))
     in_grace = row.status == "past_due" and row.grace_until is not None and row.grace_until > now
     is_active = row.status in _LIVE_STATES or in_grace
+
+    # The trial lives here rather than in the no-subscription branch above. Razorpay
+    # reports `authenticated` once the mandate is confirmed and before the first plan
+    # charge, which is exactly the trial window: the merchant has proven an instrument
+    # works, and has not yet been billed for the plan.
+    #
+    # Keeping it here is what lets the trial be a real trial. Previously it hung off
+    # having no subscription at all, so it was an unauthenticated free tier and the
+    # first time a card was tested was the day it ended — the worst possible moment to
+    # discover the mandate was never valid.
+    trial_end = trial_ends_at(merchant) if merchant is not None else None
+    on_trial = row.status == "authenticated" and trial_end is not None and trial_end > now
+    if on_trial:
+        return SubscriptionState(
+            subscription=row,
+            plan=plan,
+            status="trialing",
+            is_active=True,
+            on_trial=True,
+            days_remaining=_days_between(now, trial_end),
+            period_end=trial_end,
+            cancel_at_period_end=bool(row.cancel_at_period_end),
+            paused_reason=None,
+        )
+
     end = row.grace_until if in_grace else row.current_period_end
     warning = None
     if row.status in _LIVE_STATES:

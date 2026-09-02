@@ -192,6 +192,9 @@ def test_password_reset_revokes_sessions_and_replaces_the_password(api):
 
 def test_two_live_merchants_can_import_same_invoice_number_without_crossover(api, session):
     first, _ = _live_user(api, "owner-one@example.com")
+    # The workspace is gated on a live subscription now: registration alone no longer
+    # opens it, so a test about tenancy has to get past billing first.
+    _subscribe(session, first, "starter")
     first_import = api.post(
         "/api/live/invoices/batch",
         headers={"X-Merchant-ID": first},
@@ -200,6 +203,7 @@ def test_two_live_merchants_can_import_same_invoice_number_without_crossover(api
     assert first_import.status_code == 202
 
     second, _ = _live_user(api, "owner-two@example.com")
+    _subscribe(session, second, "starter")
     second_import = api.post(
         "/api/live/invoices/batch",
         headers={"X-Merchant-ID": second},

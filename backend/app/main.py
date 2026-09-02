@@ -3,7 +3,7 @@
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI, Request, status
+from fastapi import Depends, FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -40,6 +40,7 @@ from app.core.middleware import (
 )
 from app.scheduler.setup import shutdown_scheduler, start_scheduler
 from app.services.auth import verify_reviewer_account
+from app.services.authorization import require_active_subscription
 from app.services.demo_control import load_into_clock
 
 log = get_logger("app")
@@ -158,13 +159,24 @@ def create_app() -> FastAPI:
     app.include_router(auth.router)
     app.include_router(live_auth.router)
     app.include_router(billing.router)
+    # Gated on a live subscription: the workspace itself. `auth` and `billing` are
+    # deliberately absent — a merchant who cannot reach billing can never pay, which
+    # would make the gate permanent.
+    #
+    # `integrations` and `payment-connections` are also absent, and not by oversight:
+    # both carry OAuth callbacks that a provider reaches by redirecting the merchant's
+    # browser. Those requests hold no session and authenticate with a one-time `state`
+    # instead, so a session-based gate turns their 400 into a 401 and breaks the
+    # connect flow. Their writes are already refused by `assert_write_allowed`, which
+    # reads the same subscription state this gate does.
+    _paid = [Depends(require_active_subscription)]
     app.include_router(controls.router)
     app.include_router(integrations.router)
     app.include_router(operations.router)
     app.include_router(payment_connections.router)
     app.include_router(team.router)
-    app.include_router(live_dashboard.router)
-    app.include_router(live_invoices.router)
+    app.include_router(live_dashboard.router, dependencies=_paid)
+    app.include_router(live_invoices.router, dependencies=_paid)
     app.include_router(invoices.router)
     app.include_router(webhooks.router)
     app.include_router(admin.router)

@@ -17,6 +17,9 @@ export function LiveRegistrationForm() {
   const [phase, setPhase] = useState<"details" | "verify" | "verified">("details");
   const [pendingRegistration, setPendingRegistration] = useState<LiveRegistrationPayload | null>(null);
   const [resendCooldown, setResendCooldown] = useState(0);
+  // Only ever set outside production: the API returns the raw code in local/test so
+  // the lifecycle stays testable where the sending provider is unreachable.
+  const [devCode, setDevCode] = useState<string | null>(null);
 
   useEffect(() => {
     if (phase !== "verify" || resendCooldown <= 0) return;
@@ -40,11 +43,21 @@ export function LiveRegistrationForm() {
       accept_privacy: data.get("privacy") === "on",
     };
     try {
-      await registerLive(payload);
+      const result = await registerLive(payload);
       setPendingRegistration(payload);
       setPhase("verify");
       setResendCooldown(30);
-      setMessage(`We sent a six-digit verification code to ${payload.email}.`);
+      setDevCode(result.verification_token ?? null);
+      // A code is NOT always issued. Registering an address that already exists and
+      // is verified deliberately sends nothing, so the API can't be used to test who
+      // holds an account — but the old copy claimed a code had been sent regardless,
+      // which left someone waiting for mail that was never going to arrive. This
+      // wording is true either way, and points at the door they actually need.
+      setMessage(
+        result.verification_token
+          ? `Development mode — no email was sent. Your code is ${result.verification_token}.`
+          : `If ${payload.email} still needs verifying, a six-digit code is on its way. Already have a workspace? Sign in instead.`,
+      );
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Registration failed");
     } finally {
@@ -94,9 +107,14 @@ export function LiveRegistrationForm() {
     setError(null);
     setMessage(null);
     try {
-      await registerLive(pendingRegistration);
+      const result = await registerLive(pendingRegistration);
       setResendCooldown(30);
-      setMessage("A fresh verification code was sent. Earlier codes no longer work.");
+      setDevCode(result.verification_token ?? null);
+      setMessage(
+        result.verification_token
+          ? `Development mode — no email was sent. Your new code is ${result.verification_token}.`
+          : "If that address still needs verifying, a fresh code is on its way. Earlier codes no longer work.",
+      );
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not resend the code");
     } finally {
@@ -132,14 +150,20 @@ export function LiveRegistrationForm() {
         <h1 id="verify-title">Verify your work email</h1>
         <p className="auth-intro">Enter the one-time code sent to <strong>{pendingRegistration?.email}</strong>. It expires after 15 minutes and can only be used once.</p>
         <form onSubmit={verify} className="auth-form">
-          <label>Six-digit code<input key="verification-code" name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} required className="auth-code" /></label>
+          {/*
+            `key` is tied to devCode so React remounts the input when a new code
+            arrives — defaultValue alone is read once and a resend would leave the
+            previous code sitting in the box.
+          */}
+          <label>Six-digit code<input key={devCode ?? "verification-code"} defaultValue={devCode ?? ""} name="code" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} required className="auth-code" /></label>
           {error ? <p role="alert" className="auth-error">{error}</p> : null}
           {message ? <p role="status" className="auth-success">{message}</p> : null}
           <button disabled={busy}>{busy ? "Verifying…" : "Verify email and continue"}</button>
           <button type="button" className="auth-secondary" disabled={busy || resendCooldown > 0} onClick={resend}>
             {resendCooldown > 0 ? `Resend code in ${resendCooldown}s` : "Resend code"}
           </button>
-          <button type="button" className="auth-secondary" onClick={() => { setPhase("details"); setPendingRegistration(null); setError(null); setMessage(null); }}>Use a different email</button>
+          <button type="button" className="auth-secondary" onClick={() => { setPhase("details"); setPendingRegistration(null); setError(null); setMessage(null); setDevCode(null); }}>Use a different email</button>
+          <Link className="auth-secondary" href="/live/login" style={{ textAlign: "center" }}>Already verified? Sign in</Link>
         </form>
       </section>
     );

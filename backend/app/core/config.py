@@ -86,7 +86,12 @@ class Settings(BaseSettings):
     # --- Gemini via Google AI Studio ---
     # Model IDs are config, not literals: a retired or mistyped ID is a .env edit.
     google_api_key: str
-    gemini_primary_model: str = "gemini-3.7-flash"
+    # Chosen from measurement, not the version number. Probed against the live API on
+    # 2026-09-02: 3.7-flash never answered (0/4, hung to the timeout every time) and
+    # 3.6-flash returned 504 DEADLINE_EXCEEDED through the client on every call, so
+    # both cost a full `llm_timeout_seconds` before failing over. 3.5-flash answered
+    # 4/4 in about a second. The newest model is not the fastest one here.
+    gemini_primary_model: str = "gemini-3.5-flash"
     gemini_fallback_model: str = "gemini-3.6-flash"
     llm_timeout_seconds: float = 20.0
     llm_max_retries: int = 2
@@ -168,6 +173,21 @@ class Settings(BaseSettings):
     #: audited endpoint, is visible in the UI whenever it is not zero, and can be
     #: wound back without a redeploy. A real multi-merchant deployment leaves it off.
     demo_controls_enabled: bool = False
+
+    #: Lets DEMO_CONTROLS_ENABLED survive `assert_production_safe`.
+    #:
+    #: The demo clock is process-global — `app.core.clock._runtime_offset_days` shifts
+    #: `utcnow()` for every code path, not just the demo's. Advancing it on a
+    #: deployment that holds real merchants would change how overdue their invoices
+    #: are, when their trials end, and when their sessions expire. That is why
+    #: production refuses it by default and why this override is separate rather than
+    #: folded into the flag it unlocks: enabling the demo clock has to be one
+    #: decision, and accepting that consequence has to be another.
+    #:
+    #: Defensible only while the live tenants are the operator's own and hold no
+    #: invoices. Turn it off before onboarding anyone real; the guard below is what
+    #: makes forgetting expensive rather than silent.
+    allow_demo_controls_in_production: bool = False
 
     # --- Reviewer access -----------------------------------------------------
     #: Lets anyone reaching the login page open a READ-ONLY session without a
@@ -266,12 +286,20 @@ class Settings(BaseSettings):
         # What this cannot check is whether the reviewer ACCOUNT is actually an
         # auditor — that needs a database. `verify_reviewer_account` does it at
         # startup, and the app refuses to serve if it is wrong.
-        for flag, name in (
-            (self.allow_simulated_replies, "ALLOW_SIMULATED_REPLIES"),
-            (self.demo_controls_enabled, "DEMO_CONTROLS_ENABLED"),
-        ):
-            if flag:
-                raise RuntimeError(f"{name} must be false in production")
+        # ALLOW_SIMULATED_REPLIES has no override and should never get one: it writes
+        # a fabricated customer statement into the audit trail with no signature and
+        # no sender correlation, which is a lie about evidence rather than a shortcut
+        # through time.
+        if self.allow_simulated_replies:
+            raise RuntimeError("ALLOW_SIMULATED_REPLIES must be false in production")
+        if self.demo_controls_enabled and not self.allow_demo_controls_in_production:
+            raise RuntimeError(
+                "DEMO_CONTROLS_ENABLED must be false in production. The demo clock is "
+                "process-global and would shift overdue counts, trial end dates and "
+                "session expiry for every live merchant on this deployment. If this "
+                "deployment holds no real merchants and you accept that, set "
+                "ALLOW_DEMO_CONTROLS_IN_PRODUCTION=true as a separate, deliberate act."
+            )
         if self.admin_api_key in {"", "changeme", "local-dev-key"}:
             raise RuntimeError("ADMIN_API_KEY must be set to a real secret in production")
         if not self.session_secret or len(self.session_secret) < 32:
