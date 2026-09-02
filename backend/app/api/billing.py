@@ -14,6 +14,7 @@ from app.core.logging import get_logger
 from app.models import BillingPlan, BillingSubscription
 from app.services.authorization import (
     LiveContext,
+    merchant_scope,
     require_live_permission,
     require_live_reauth,
     set_merchant_context,
@@ -131,14 +132,26 @@ def checkout(
             # A 500 tells the merchant nothing and looks like an outage.
             session.rollback()
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
-    session.commit()
-    plan = session.get(BillingPlan, subscription.plan_id)
+    # `commit()` expires every instance above, so building the response re-reads
+    # them — in a NEW transaction, where the transaction-local `app.merchant_id`
+    # from `set_merchant_context` is already gone. RLS then matches no rows and
+    # SQLAlchemy reports the subscription it just wrote as deleted. Holding the
+    # tenant across the commit is what `merchant_scope` is for; the alternative,
+    # reading the fields into locals beforehand, breaks again the next time anyone
+    # touches an ORM attribute down here.
+    with merchant_scope(session, context.merchant.id):
+        session.commit()
+        stored_plan = session.get(BillingPlan, subscription.plan_id)
+        subscription_id = str(subscription.id)
+        subscription_status = subscription.status
+        amount_paise = stored_plan.amount_paise if stored_plan else None
+        provider_plan_id = stored_plan.razorpay_plan_id if stored_plan else None
     return {
-        "subscription_id": str(subscription.id),
-        "status": subscription.status,
+        "subscription_id": subscription_id,
+        "status": subscription_status,
         "plan": payload.plan_slug,
-        "amount_paise": plan.amount_paise if plan else None,
-        "provider_plan_id": plan.razorpay_plan_id if plan else None,
+        "amount_paise": amount_paise,
+        "provider_plan_id": provider_plan_id,
         "checkout_required": True,
         # Where the merchant authorises the mandate and pays. None when Razorpay
         # subscriptions are not configured, which the UI reports rather than
