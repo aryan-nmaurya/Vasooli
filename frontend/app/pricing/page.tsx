@@ -6,9 +6,9 @@ export const metadata = {
 };
 
 const PLANS = [
-  { name: "Starter", price: "₹1,999", description: "For lean finance teams replacing manual follow-up.", invoices: "100 active invoices", seats: "5 team seats", cta: "Start free for 7 days", features: ["Policy-controlled recovery", "CSV ledger import", "Payment links and reconciliation", "Promises and disputes", "Complete audit log", "Email support"] },
-  { name: "Growth", price: "₹5,999", description: "For growing teams that need connected, repeatable collections.", invoices: "500 active invoices", seats: "15 team seats", cta: "Choose Growth", featured: true, features: ["Everything in Starter", "Zoho Books integration", "Custom recovery policies", "Role-based access", "Operational exceptions queue", "Priority support"] },
-  { name: "Scale", price: "₹14,999", description: "For high-volume operations with deeper controls and oversight.", invoices: "2,000 active invoices", seats: "50 team seats", cta: "Choose Scale", features: ["Everything in Growth", "Signed custom ERP webhooks", "Advanced team controls", "Audit and ledger exports", "Billing reconciliation", "Onboarding support"] },
+  { name: "Starter", price: "₹1,999", description: "For lean finance teams replacing manual follow-up.", invoices: "100 active invoices", seats: "1 user", cta: "Start free for 7 days", features: ["Policy-controlled recovery", "Zoho Books integration", "CSV ledger import", "Payment links and reconciliation", "Promises and disputes", "Complete audit log", "Email support"] },
+  { name: "Growth", price: "₹5,999", description: "For growing teams that need connected, repeatable collections.", invoices: "500 active invoices", seats: "Up to 5 users", cta: "Choose Growth", featured: true, features: ["Everything in Starter", "Custom recovery policies", "Role-based access", "Operational exceptions queue", "Priority support"] },
+  { name: "Scale", price: "₹14,999", description: "For high-volume operations with deeper controls and oversight.", invoices: "2,000 active invoices", seats: "Up to 15 users", cta: "Choose Scale", features: ["Everything in Growth", "Advanced team controls", "Audit and ledger exports", "Billing reconciliation", "Onboarding support"] },
 ];
 
 const FAQ = [

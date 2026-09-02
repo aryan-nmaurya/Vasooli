@@ -15,6 +15,12 @@ from app.core.middleware import client_ip
 from app.models import ReminderPolicyVersion, SendingDomain, SuppressionEntry
 from app.services.auth import audit
 from app.services.authorization import LiveContext, require_live_permission
+from app.services.billing import (
+    BillingEntitlementError,
+    assert_feature_entitled,
+    assert_write_allowed,
+)
+from app.services.plans import Feature
 from app.services.policy_versions import PRESETS, create_policy
 from app.services.sending_domains import (
     provider_domain_status,
@@ -64,6 +70,23 @@ def put_policy(
     context: Annotated[LiveContext, Depends(require_live_permission("reminder.configure"))],
 ) -> dict[str, Any]:
     values = PRESETS[payload.preset] if payload.preset else {}
+
+    # Automation is paused while billing is unpaid, and the cadence is automation.
+    try:
+        assert_write_allowed(session, context.merchant.id)
+    except BillingEntitlementError as exc:
+        raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, str(exc)) from exc
+
+    # "Custom recovery policies" is a Growth capability. Every plan may still choose a
+    # published preset — the gate is on hand-tuned values, not on having a policy.
+    if any(
+        v is not None for v in (payload.tier_offsets, payload.cooldown_days, payload.max_attempts)
+    ):
+        try:
+            assert_feature_entitled(session, context.merchant.id, Feature.CUSTOM_POLICIES)
+        except BillingEntitlementError as exc:
+            raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, str(exc)) from exc
+
     try:
         row = create_policy(
             session,

@@ -3,7 +3,9 @@
 import hashlib
 import hmac
 import uuid
-from datetime import datetime, timedelta
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from math import ceil
 from typing import Any
 
 from sqlalchemy import func
@@ -25,11 +27,13 @@ from app.models import (
     MerchantInvitation,
     MerchantMembership,
 )
+from app.services.plans import PLANS, TRIAL_PLAN, Feature, Plan, plan_for
 
+#: Kept as the legacy (amount, invoices, seats) shape that older call sites read,
+#: but derived from `plans.PLANS` so the catalogue has exactly one definition.
 PLAN_CATALOG = {
-    "starter": (199_900, 100, 5),
-    "growth": (599_900, 500, 15),
-    "scale": (1_499_900, 2_000, 50),
+    plan.slug: (plan.amount_paise, plan.included_active_invoices, plan.included_seats)
+    for plan in PLANS
 }
 
 ACTIVE_STATES = {"active", "authenticated"}
@@ -137,9 +141,13 @@ def assert_live_entitled(
     *,
     additional_invoices: int = 0,
 ) -> None:
-    """Fail closed when billing is suspended or an invoice cap would be exceeded."""
-    if not subscription_is_active(session, merchant_id):
-        raise BillingEntitlementError("An active billing subscription is required")
+    """Fail closed when billing is suspended or an invoice cap would be exceeded.
+
+    The message comes from `subscription_state`, so a merchant is told what actually
+    stopped them — trial ended, payment failed, cancelled — instead of one generic
+    line that fits none of those cases.
+    """
+    assert_write_allowed(session, merchant_id)
     active_count = session.exec(
         select(func.count(Invoice.id)).where(
             Invoice.merchant_id == merchant_id,
@@ -154,15 +162,8 @@ def assert_live_entitled(
 
 def assert_seat_entitled(session: Session, merchant_id: uuid.UUID) -> None:
     """Enforce included seats for active members plus outstanding invitations."""
-    plan_seats = PLAN_CATALOG["starter"][2]
-    subscription = session.exec(
-        select(BillingSubscription)
-        .where(BillingSubscription.merchant_id == merchant_id)
-        .order_by(BillingSubscription.updated_at.desc())  # type: ignore[attr-defined]
-    ).first()
-    if subscription is not None:
-        plan = session.get(BillingPlan, subscription.plan_id)
-        plan_seats = plan.included_seats if plan is not None else 0
+    state = subscription_state(session, merchant_id)
+    plan_seats = state.plan.included_seats
     members = session.exec(
         select(func.count(MerchantMembership.id)).where(
             MerchantMembership.merchant_id == merchant_id,
@@ -176,8 +177,13 @@ def assert_seat_entitled(session: Session, merchant_id: uuid.UUID) -> None:
             MerchantInvitation.revoked_at.is_(None),  # type: ignore[union-attr]
         )
     ).one()
-    if int(members or 0) + int(pending or 0) >= plan_seats:
-        raise BillingEntitlementError("Seat entitlement exceeded")
+    used = int(members or 0) + int(pending or 0)
+    if used >= plan_seats:
+        seat_word = "seat" if plan_seats == 1 else "seats"
+        raise BillingEntitlementError(
+            f"{state.plan.name} includes {plan_seats} {seat_word} and {used} are in use. "
+            "Upgrade your plan to invite more people."
+        )
 
 
 def create_checkout_subscription(
@@ -213,15 +219,20 @@ def create_checkout_subscription(
     return row
 
 
-def create_provider_subscription(plan: BillingPlan) -> str | None:
-    """Create the provider subscription when the platform integration is enabled."""
+def create_provider_subscription(plan: BillingPlan) -> tuple[str | None, str | None]:
+    """Create the provider subscription, returning its id and hosted checkout URL.
+
+    `short_url` is where the merchant actually authorises the mandate and pays. It is
+    returned rather than stored: Razorpay expires these, so a link persisted now and
+    opened next week sends the merchant to a dead page.
+    """
     if not settings.razorpay_subscriptions_enabled or not plan.razorpay_plan_id:
-        return None
+        return None, None
     payload = get_razorpay_client().create_subscription(plan_id=plan.razorpay_plan_id)
     provider_id = payload.get("id")
     if not provider_id:
         raise ValueError("Razorpay did not return a subscription ID")
-    return str(provider_id)
+    return str(provider_id), payload.get("short_url")
 
 
 def apply_subscription_event(
@@ -297,3 +308,267 @@ def apply_subscription_event(
     event.outcome = "applied" if subscription is not None else "unmatched"
     session.add(event)
     return event
+
+
+# ===========================================================================
+# Subscription state, trial, and the read-only gate.
+#
+# The product rule, decided deliberately: a lapsed subscription pauses the
+# AUTOMATION, never the merchant's access to their own records. Vasooli holds
+# receivables, payments, disputes and an audit trail that a business may need for
+# its own filings; withholding those to apply payment pressure would be both a
+# trust problem and, plausibly, a compliance one. So every read stays open and every
+# export stays open, while the things that cost money or touch a customer stop.
+# ===========================================================================
+
+#: Statuses where the subscription is paid and current.
+_LIVE_STATES = frozenset({"active", "authenticated"})
+#: Statuses that end the relationship. A merchant here has no plan at all.
+_DEAD_STATES = frozenset({"cancelled", "expired"})
+
+
+@dataclass(frozen=True)
+class SubscriptionState:
+    """Everything the UI and the gates need, resolved once."""
+
+    #: None while the merchant is on trial and has never subscribed.
+    subscription: BillingSubscription | None
+    plan: Plan
+    status: str
+    #: True when automation may run and billable writes are permitted.
+    is_active: bool
+    on_trial: bool
+    #: Whole days remaining in the current paid period or trial; 0 once elapsed.
+    days_remaining: int
+    period_end: datetime | None
+    cancel_at_period_end: bool
+    #: Why writes are refused, or None when they are permitted. Set only when the
+    #: subscription is genuinely inactive — a grace period is a warning, not a block.
+    paused_reason: str | None
+    #: Something the merchant should act on while service continues, e.g. a failed
+    #: card inside the grace window. Never blocks; the banner shows it.
+    warning: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "status": self.status,
+            "plan": {
+                "slug": self.plan.slug,
+                "name": self.plan.name,
+                "amount_paise": self.plan.amount_paise,
+                "included_active_invoices": self.plan.included_active_invoices,
+                "included_seats": self.plan.included_seats,
+                "features": sorted(str(f) for f in self.plan.features),
+            },
+            "is_active": self.is_active,
+            "on_trial": self.on_trial,
+            "days_remaining": self.days_remaining,
+            "period_end": self.period_end.isoformat() if self.period_end else None,
+            "cancel_at_period_end": self.cancel_at_period_end,
+            "paused_reason": self.paused_reason,
+            "warning": self.warning,
+            "provider_subscription_id": (
+                self.subscription.razorpay_subscription_id if self.subscription else None
+            ),
+        }
+
+
+def trial_ends_at(merchant: Merchant) -> datetime:
+    """When this merchant's free trial expires.
+
+    Read from `onboarding_state` when present so an extension granted by support is
+    honoured, and otherwise computed from signup. Computing it rather than requiring
+    the field means merchants created before trials existed still get one.
+    """
+    raw = (merchant.onboarding_state or {}).get("trial_ends_at")
+    if raw:
+        try:
+            parsed = datetime.fromisoformat(raw)
+        except (TypeError, ValueError):
+            parsed = None
+        if parsed is not None:
+            return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+    return merchant.created_at + timedelta(days=settings.live_trial_days)
+
+
+def start_trial(merchant: Merchant) -> None:
+    """Stamp the trial window at signup so it cannot drift with `created_at` edits."""
+    state = dict(merchant.onboarding_state or {})
+    state.setdefault(
+        "trial_ends_at", (utcnow() + timedelta(days=settings.live_trial_days)).isoformat()
+    )
+    merchant.onboarding_state = state
+
+
+def _days_between(now: datetime, end: datetime | None) -> int:
+    if end is None:
+        return 0
+    remaining = end - now
+    return max(0, ceil(remaining.total_seconds() / 86_400))
+
+
+def subscription_state(session: Session, merchant_id: uuid.UUID) -> SubscriptionState:
+    """Resolve plan, status and remaining days in one place.
+
+    Every gate and the billing UI read this, so there is a single answer to "is this
+    workspace paid up?" rather than several that can disagree.
+    """
+    now = utcnow()
+    merchant = session.get(Merchant, merchant_id)
+    row = session.exec(
+        select(BillingSubscription)
+        .where(BillingSubscription.merchant_id == merchant_id)
+        .order_by(BillingSubscription.updated_at.desc())  # type: ignore[attr-defined]
+    ).first()
+
+    if row is None or row.status in _DEAD_STATES:
+        # No live subscription: the merchant is on trial, or the trial has run out.
+        # A cancelled subscription still shows its plan so the UI can offer that tier
+        # back, but grants nothing.
+        plan = plan_for(_plan_slug(session, row)) if row is not None else TRIAL_PLAN
+        end = trial_ends_at(merchant) if merchant is not None else None
+        on_trial = row is None and end is not None and end > now
+        days = _days_between(now, end) if on_trial else 0
+        if on_trial:
+            reason = None
+        elif row is not None and row.status == "cancelled":
+            reason = "Your subscription was cancelled. Renew to resume automation."
+        elif row is not None:
+            reason = "Your subscription has expired. Renew to resume automation."
+        else:
+            reason = "Your free trial has ended. Choose a plan to resume automation."
+        return SubscriptionState(
+            subscription=row,
+            plan=TRIAL_PLAN if on_trial else plan,
+            status="trialing" if on_trial else (row.status if row else "trial_expired"),
+            is_active=on_trial,
+            on_trial=on_trial,
+            days_remaining=days,
+            period_end=end if on_trial else (row.current_period_end if row else None),
+            cancel_at_period_end=bool(row.cancel_at_period_end) if row else False,
+            paused_reason=reason,
+        )
+
+    plan = plan_for(_plan_slug(session, row))
+    in_grace = row.status == "past_due" and row.grace_until is not None and row.grace_until > now
+    is_active = row.status in _LIVE_STATES or in_grace
+    end = row.grace_until if in_grace else row.current_period_end
+    warning = None
+    if row.status in _LIVE_STATES:
+        reason = None
+    elif in_grace:
+        # Service continues: that is the entire point of a grace period. The merchant
+        # is warned, not stopped — a retryable card failure must not read as an outage.
+        reason = None
+        warning = "Your last payment failed. Update your payment method to avoid interruption."
+    elif row.status == "past_due":
+        reason = "Your last payment failed and the grace period has ended."
+    elif row.status == "paused":
+        reason = "Your subscription is paused. Resume it to restart automation."
+    else:
+        reason = "Your subscription is not active. Renew to resume automation."
+    return SubscriptionState(
+        subscription=row,
+        plan=plan,
+        status=row.status,
+        is_active=is_active,
+        on_trial=False,
+        days_remaining=_days_between(now, end),
+        period_end=end,
+        cancel_at_period_end=bool(row.cancel_at_period_end),
+        paused_reason=reason,
+        warning=warning,
+    )
+
+
+def _plan_slug(session: Session, row: BillingSubscription | None) -> str:
+    if row is None:
+        return TRIAL_PLAN.slug
+    plan = session.get(BillingPlan, row.plan_id)
+    return plan.slug if plan is not None else TRIAL_PLAN.slug
+
+
+def write_paused_reason(session: Session, merchant_id: uuid.UUID) -> str | None:
+    """Why billable writes are refused, or None when they are permitted."""
+    return subscription_state(session, merchant_id).paused_reason
+
+
+def assert_write_allowed(session: Session, merchant_id: uuid.UUID) -> None:
+    """Gate every mutation that costs money or reaches a customer.
+
+    Reads and exports deliberately do not call this.
+    """
+    reason = write_paused_reason(session, merchant_id)
+    if reason is not None:
+        raise BillingEntitlementError(reason)
+
+
+def assert_feature_entitled(session: Session, merchant_id: uuid.UUID, feature: Feature) -> None:
+    """Gate a capability that belongs to a higher tier.
+
+    Separate from `assert_write_allowed`: one asks "is this workspace paid up?", the
+    other "does this plan include that?". Conflating them produced the wrong message
+    — a Starter merchant told to renew a subscription that was already current.
+    """
+    state = subscription_state(session, merchant_id)
+    if feature in state.plan.features:
+        return
+    required = next((p for p in PLANS if feature in p.features), None)
+    upgrade_to = required.name if required is not None else "a higher plan"
+    raise BillingEntitlementError(
+        f"{state.plan.name} does not include this feature. Upgrade to {upgrade_to} to use it."
+    )
+
+
+def cancel_subscription(
+    session: Session, merchant_id: uuid.UUID, *, immediate: bool = False
+) -> SubscriptionState:
+    """Stop recurring billing.
+
+    Defaults to end-of-period: the merchant paid for this month and keeps it. The
+    provider is told first — if that call fails the local row is left alone, because
+    a workspace that believes it is cancelled while Razorpay keeps charging is the
+    one failure mode here that costs the merchant money.
+    """
+    row = session.exec(
+        select(BillingSubscription)
+        .where(
+            BillingSubscription.merchant_id == merchant_id,
+            ~BillingSubscription.status.in_(tuple(_DEAD_STATES)),  # type: ignore[union-attr]
+        )
+        .order_by(BillingSubscription.updated_at.desc())  # type: ignore[attr-defined]
+    ).first()
+    if row is None:
+        raise BillingEntitlementError("There is no active subscription to cancel")
+
+    if row.razorpay_subscription_id and settings.razorpay_subscriptions_enabled:
+        get_razorpay_client().cancel_subscription(
+            row.razorpay_subscription_id, cancel_at_cycle_end=not immediate
+        )
+
+    if immediate:
+        row.status = "cancelled"
+        row.cancel_at_period_end = False
+    else:
+        row.cancel_at_period_end = True
+    row.updated_at = utcnow()
+    session.add(row)
+    session.flush()
+    return subscription_state(session, merchant_id)
+
+
+def checkout_url_for(subscription: BillingSubscription) -> str | None:
+    """A live hosted-checkout URL for a subscription already created.
+
+    Fetched on demand rather than stored: Razorpay expires these links, so one
+    persisted at creation and served a week later sends the merchant to a dead page.
+    A provider failure returns None instead of raising — the billing page must still
+    render what is owed even when Razorpay is briefly unreachable.
+    """
+    if not subscription.razorpay_subscription_id or not settings.razorpay_subscriptions_enabled:
+        return None
+    try:
+        payload = get_razorpay_client().fetch_subscription(subscription.razorpay_subscription_id)
+    except Exception:
+        return None
+    return payload.get("short_url")

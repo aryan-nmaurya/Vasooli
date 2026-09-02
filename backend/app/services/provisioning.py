@@ -26,7 +26,6 @@ from app.integrations.razorpay_client import (
     RazorpayDuplicateReferenceError,
     RazorpayPermanentError,
     RazorpayTransientError,
-    get_razorpay_client,
 )
 from app.models import (
     AuditAction,
@@ -37,6 +36,10 @@ from app.models import (
     Merchant,
     PaymentLink,
     PaymentLinkStatus,
+)
+from app.services.payment_connections import (
+    PaymentConnectionRequiredError,
+    razorpay_client_for_merchant,
 )
 
 log = get_logger("provisioning")
@@ -106,7 +109,15 @@ def provision_for_invoice(
     Safe to call repeatedly. Commits on success so a partially-completed batch keeps
     everything it managed to provision.
     """
-    client = client or get_razorpay_client()
+    # Fail closed. A live merchant's link must never be created on the platform
+    # Razorpay account: the money would land in Vasooli's account rather than theirs,
+    # and the link would be unreadable by the reconciliation that runs against their
+    # credentials. Demo merchants resolve to the platform client by design.
+    if client is None:
+        invoice_row = session.get(Invoice, invoice_id)
+        if invoice_row is None:
+            raise ProvisioningError(f"Invoice {invoice_id} not found")
+        client = razorpay_client_for_merchant(session, invoice_row.merchant_id)
 
     # Serialize only provisioning for this invoice. Unlike SELECT FOR UPDATE, this
     # advisory lock does not block a payment webhook or a customer reply while the
@@ -206,7 +217,9 @@ def provision_batch(
     ledger in a state nobody can reason about, and Razorpay's test mode rate-limits
     hard enough that transient failures are expected rather than exceptional.
     """
-    client = client or get_razorpay_client()
+    # Resolved per invoice below rather than once for the batch: a batch spans
+    # merchants, and each merchant's links live on their own Razorpay account.
+    override = client
 
     query = select(Invoice).where(
         ~select(PaymentLink.invoice_id).where(PaymentLink.invoice_id == Invoice.id).exists()
@@ -220,10 +233,28 @@ def provision_batch(
     provisioned = 0
     failed: list[dict[str, str]] = []
 
+    clients: dict[uuid.UUID, object] = {}
+
     for invoice in pending:
         try:
-            provision_for_invoice(session, invoice.id, client=client)
+            if override is not None:
+                merchant_client = override
+            else:
+                if invoice.merchant_id not in clients:
+                    clients[invoice.merchant_id] = razorpay_client_for_merchant(
+                        session, invoice.merchant_id
+                    )
+                merchant_client = clients[invoice.merchant_id]
+            provision_for_invoice(session, invoice.id, client=merchant_client)
             provisioned += 1
+        except PaymentConnectionRequiredError as exc:
+            # A merchant with no connected account: reported, never retried in a loop.
+            failed.append({"invoice_number": invoice.invoice_number, "error": str(exc)})
+            log.warning(
+                "provisioning.no_connection",
+                invoice_number=invoice.invoice_number,
+                merchant_id=str(invoice.merchant_id),
+            )
         except ProvisioningError as exc:
             failed.append({"invoice_number": invoice.invoice_number, "error": str(exc)})
             log.warning(

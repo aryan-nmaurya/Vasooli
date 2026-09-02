@@ -11,6 +11,10 @@ import httpx
 
 from app.integrations.outbound_url import assert_safe_outbound_url
 
+#: Zoho Books is the only supported ERP. Everything that validates a provider
+#: reads this rather than repeating a literal.
+SUPPORTED_PROVIDERS = frozenset({"zoho"})
+
 
 @dataclass(frozen=True)
 class CanonicalInvoice:
@@ -159,6 +163,15 @@ def _invoice_from_mapping(provider: str, row: dict[str, Any], *, tenant: str) ->
     )
 
 
+class ErpAuthExpiredError(RuntimeError):
+    """The stored OAuth access token is no longer accepted.
+
+    Separate from a transient provider error because the remedy is different: this
+    one is fixed by refreshing the token and retrying, and retrying without
+    refreshing would fail identically forever.
+    """
+
+
 class ZohoBooksAdapter:
     """Read-only, cursor-based Zoho Books invoice adapter.
 
@@ -198,6 +211,10 @@ class ZohoBooksAdapter:
             timeout=self.timeout,
             follow_redirects=False,
         )
+        if response.status_code == 401:
+            # Zoho access tokens last about an hour, so this is the ordinary state of
+            # a scheduled sync rather than an exceptional one.
+            raise ErpAuthExpiredError("Zoho access token expired")
         if response.status_code == 429 or response.status_code >= 500:
             raise RuntimeError(f"Zoho transient error ({response.status_code})")
         if response.is_error:
@@ -208,51 +225,6 @@ class ZohoBooksAdapter:
         has_more = bool((payload.get("page_context") or {}).get("has_more_page"))
         next_cursor = str(page + 1) if has_more else None
         return SyncPage(records=records, next_cursor=next_cursor, has_more=has_more)
-
-
-class TallyAgentAdapter:
-    """Read-only adapter for a signed outbound Tally edge agent.
-
-    Tally itself is never exposed to the internet. The agent owns the local XML/HTTP
-    connection and exposes a short-lived HTTPS feed to Vasooli.
-    """
-
-    provider = "tally"
-
-    def __init__(self, credentials: dict[str, Any], *, source_tenant: str | None = None) -> None:
-        self.endpoint = str(credentials.get("endpoint") or "").rstrip("/")
-        self.agent_token = str(credentials.get("agent_token") or "")
-        self.source_tenant = source_tenant or str(credentials.get("company") or "default")
-        self.timeout = credentials.get("timeout_seconds") or 20
-        if not self.endpoint or not self.agent_token:
-            raise ValueError("Tally requires endpoint and agent_token")
-        # Merchant-supplied, so it is untrusted input that this process will request
-        # with its own network position. Re-checked here as well as at configuration
-        # time: DNS can change after a connection is saved.
-        assert_safe_outbound_url(self.endpoint, what="Tally agent endpoint")
-
-    def fetch_invoices(self, *, cursor: str | None, limit: int = 100) -> SyncPage:
-        response = httpx.get(
-            f"{self.endpoint}/v1/invoices",
-            headers={"Authorization": f"Bearer {self.agent_token}"},
-            params={"cursor": cursor or "", "limit": min(max(limit, 1), 500)},
-            timeout=self.timeout,
-            # A redirect would move the destination after the safety check.
-            follow_redirects=False,
-        )
-        if response.status_code == 429 or response.status_code >= 500:
-            raise RuntimeError(f"Tally agent transient error ({response.status_code})")
-        if response.is_error:
-            raise RuntimeError(f"Tally agent rejected invoice sync ({response.status_code})")
-        payload = response.json()
-        tenant = str(payload.get("source_tenant") or self.source_tenant)
-        rows = payload.get("invoices") or []
-        records = [_invoice_from_mapping("tally", row, tenant=tenant) for row in rows]
-        return SyncPage(
-            records=records,
-            next_cursor=str(payload.get("next_cursor")) if payload.get("next_cursor") else None,
-            has_more=bool(payload.get("has_more")),
-        )
 
 
 def json_safe(payload: dict[str, Any]) -> dict[str, Any]:
@@ -279,12 +251,15 @@ def payload_hash(payload: dict[str, Any]) -> str:
 
 
 def adapter_for(provider: str, payload: list[dict[str, Any]] | None = None) -> ErpAdapter:
-    """Return a deterministic fixture adapter until provider credentials are configured."""
-    if provider == "custom":
-        return CustomFixtureAdapter(payload or [])
-    if provider in {"zoho", "tally"}:
-        raise ValueError(f"{provider} adapter requires an active connector worker")
-    raise ValueError(f"Unsupported ERP provider: {provider}")
+    """A deterministic in-memory adapter over supplied rows.
+
+    A test and fixture seam only: it never reaches a provider, which is what makes
+    the sync pipeline testable without a live Zoho tenant. Reaching a real provider
+    goes through `adapter_for_credentials`.
+    """
+    if provider not in SUPPORTED_PROVIDERS:
+        raise ValueError(f"Unsupported ERP provider: {provider}")
+    return FixtureAdapter(payload or [], provider=provider)
 
 
 def adapter_for_credentials(
@@ -295,18 +270,15 @@ def adapter_for_credentials(
 ) -> ErpAdapter:
     if provider == "zoho":
         return ZohoBooksAdapter(credentials, source_tenant=source_tenant)
-    if provider == "tally":
-        return TallyAgentAdapter(credentials, source_tenant=source_tenant)
-    if provider == "custom":
-        return CustomFixtureAdapter(list(credentials.get("fixture_rows") or []))
     raise ValueError(f"Unsupported ERP provider: {provider}")
 
 
-class CustomFixtureAdapter:
-    provider = "custom"
+class FixtureAdapter:
+    """Replays supplied rows through the same canonical pipeline as a real provider."""
 
-    def __init__(self, rows: list[dict[str, Any]]) -> None:
+    def __init__(self, rows: list[dict[str, Any]], *, provider: str = "zoho") -> None:
         self._rows = rows
+        self.provider = provider
 
     def fetch_invoices(self, *, cursor: str | None, limit: int = 100) -> SyncPage:
         start = int(cursor or 0)
@@ -315,7 +287,7 @@ class CustomFixtureAdapter:
         for row in selected:
             records.append(
                 CanonicalInvoice(
-                    source_system="custom",
+                    source_system=self.provider,
                     source_tenant=str(row.get("source_tenant") or "default"),
                     source_id=str(row["source_id"]),
                     source_version=str(row.get("source_version"))

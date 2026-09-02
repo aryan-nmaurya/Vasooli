@@ -12,7 +12,7 @@ export const LIVE_SETTINGS_SECTIONS: Array<{
   description: string;
 }> = [
   { href: "/live/settings", icon: "settings", label: "General", description: "Sender identity and automation health." },
-  { href: "/live/settings/integrations", icon: "integrations", label: "Integrations", description: "Connect ERP data and verified Razorpay collections." },
+  { href: "/live/settings/integrations", icon: "integrations", label: "Integrations", description: "Connect Zoho Books and your Razorpay collection account." },
   { href: "/live/settings/policy", icon: "policy", label: "Recovery policy", description: "Control schedules, cooldowns, and escalation limits." },
   { href: "/live/settings/billing", icon: "billing", label: "Billing", description: "Manage the plan, subscription state, and capacity." },
   { href: "/live/settings/team", icon: "team", label: "Team access", description: "Invite teammates and enforce least-privilege roles." },

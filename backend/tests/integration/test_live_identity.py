@@ -257,8 +257,26 @@ def test_refresh_rotation_detects_reuse_and_revokes_family(api, session):
     assert all(row.revoked_at is not None for row in session.exec(select(UserSession)).all())
 
 
+def _subscribe(session, merchant_id: str, slug: str) -> None:
+    """Put a merchant on a paid plan.
+
+    Starter includes a single seat, which the owner occupies, so any test that
+    invites a second person needs a plan with room. Without this the invite is
+    refused on seats and the test stops exercising what it is named for.
+    """
+    from app.models import BillingSubscription
+    from app.services.billing import ensure_plans
+
+    plan = next(p for p in ensure_plans(session) if p.slug == slug)
+    session.add(
+        BillingSubscription(merchant_id=uuid.UUID(merchant_id), plan_id=plan.id, status="active")
+    )
+    session.commit()
+
+
 def test_invitation_enrollment_gets_the_intended_least_privilege_role(api, session):
     merchant_id, _ = _live_user(api, "owner-inviter@example.com")
+    _subscribe(session, merchant_id, "growth")
     analyst = session.exec(
         select(Role).where(Role.merchant_id == uuid.UUID(merchant_id), Role.slug == "analyst")
     ).one()

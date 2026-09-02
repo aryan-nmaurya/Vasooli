@@ -12,6 +12,7 @@ import { SignOutButton } from "@/components/SignOutButton";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { DemoExitGuard } from "@/components/DemoExitGuard";
 import { LiveExitGuard } from "@/components/LiveExitGuard";
+import { SubscriptionBanner } from "@/components/SubscriptionBanner";
 import { liveGet } from "@/lib/live-api";
 
 const DEMO_ROUTES = ["/recovered", "/promises", "/audit", "/invoices", "/settings"];
@@ -100,6 +101,7 @@ function LiveShell({ children, pathname }: { children: React.ReactNode; pathname
     </aside>
     <div className="dashboard-content">
       <header className="dashboard-topbar"><div className="lg:hidden"><Brand href="/live" compact /></div><div className="ml-auto flex items-center gap-2"><details className="group relative lg:hidden"><summary aria-label="Open live workspace menu" className="grid size-9 cursor-pointer list-none place-items-center rounded-lg border border-line bg-panel text-ink-3"><WorkspaceNavIcon name="settings" /></summary><div className="absolute right-0 top-11 z-50 w-64 rounded-xl border border-line bg-panel p-2 shadow-xl"><p className="px-2 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-ink-4">Live operations</p>{LIVE_OPERATIONS_NAV.map(([href, label]) => <Link key={href} href={href} className="flex items-center gap-2.5 rounded-lg px-2 py-2 text-xs text-ink-2 hover:bg-panel-2"><WorkspaceNavIcon name={liveIconFor(href)} />{label}</Link>)}<div className="my-1 border-t border-line-2" /><Link href="/live/settings" className="flex items-center gap-2.5 rounded-lg px-2 py-2 text-xs font-medium text-ink hover:bg-panel-2"><WorkspaceNavIcon name="settings" />Settings</Link></div></details><ThemeToggle /><LiveSignOutButton /></div></header>
+      <SubscriptionBanner />
       <main className="w-full flex-1 px-4 py-6 sm:px-6 lg:px-8 lg:py-8">{children}</main>
       <footer className="border-t border-line px-4 py-4 text-[11px] text-ink-4 sm:px-6 lg:px-8"><div className="flex flex-wrap items-center gap-x-4 gap-y-1"><span>Vasooli · Live merchant workspace</span><span className="ml-auto">Tenant-scoped · Policy-controlled · Audited</span></div></footer>
       <nav aria-label="Live workspace mobile" className="dashboard-mobile-nav grid grid-cols-4 border-t border-line bg-panel/95 px-1 pb-[max(0.35rem,env(safe-area-inset-bottom))] pt-1 backdrop-blur lg:hidden">{LIVE_CORE_NAV.map(([href, label]) => { const active = href === "/live" ? pathname === href : pathname === href || pathname.startsWith(`${href}/`); return <Link key={href} href={href} className={`flex min-w-0 flex-col items-center gap-0.5 rounded-lg px-1 py-1.5 text-[10px] font-medium transition-colors ${active ? "text-accent" : "text-ink-3 hover:bg-panel-2 hover:text-ink"}`}><span className="grid size-6 place-items-center"><WorkspaceNavIcon name={liveIconFor(href)} /></span><span className="truncate">{label === "Audit log" ? "Audit" : label}</span></Link>; })}</nav>

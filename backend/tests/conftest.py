@@ -51,6 +51,10 @@ os.environ["SCHEDULER_ENABLED"] = "false"
 # sender_identity falls back to the platform sender only when this flag is on, and
 # otherwise refuses. Left unpinned it is read from a developer's .env, so a live
 # merchant's send succeeded locally and failed in CI for the same test.
+# The trial length is a published promise ("7-day Starter trial" on the pricing
+# page) and several tests count days against it, so it is pinned rather than read
+# from whatever a developer or deployment happens to have set.
+os.environ["LIVE_TRIAL_DAYS"] = "7"
 os.environ["ALLOW_PLATFORM_SENDER_FOR_LIVE"] = "false"
 os.environ["ALLOW_DIRECT_CUSTOMER_EMAIL"] = "false"
 os.environ["REVIEWER_ACCESS_ENABLED"] = "false"

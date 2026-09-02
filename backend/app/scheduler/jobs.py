@@ -215,7 +215,7 @@ def erp_sync_job() -> None:
                         connection_ids = session.exec(
                             select(ErpConnection.id).where(
                                 ErpConnection.merchant_id == merchant_id,
-                                ErpConnection.provider.in_(["zoho", "tally"]),  # type: ignore[union-attr]
+                                ErpConnection.provider == "zoho",
                                 ErpConnection.status.in_(["connected", "healthy", "error"]),  # type: ignore[union-attr]
                             )
                         ).all()

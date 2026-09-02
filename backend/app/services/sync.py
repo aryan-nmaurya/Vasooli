@@ -13,6 +13,8 @@ from the link and the amount, so re-running the sync is a no-op rather than a se
 payment.
 """
 
+import uuid
+
 from sqlmodel import Session, select
 
 from app.core.logging import get_logger
@@ -20,7 +22,6 @@ from app.integrations.razorpay_client import (
     RazorpayClient,
     RazorpayPermanentError,
     RazorpayTransientError,
-    get_razorpay_client,
 )
 from app.models import (
     AuditAction,
@@ -31,6 +32,10 @@ from app.models import (
     ReconciliationEvent,
 )
 from app.models.reconciliation_event import EventStatus
+from app.services.payment_connections import (
+    PaymentConnectionRequiredError,
+    razorpay_client_for_merchant,
+)
 from app.services.reconciliation import process_event
 
 log = get_logger("sync")
@@ -58,7 +63,10 @@ def sync_payment_links(
     Only checks links that could still change: a link we already recorded as fully paid
     and closed has nothing to tell us, and asking would burn rate limit for nothing.
     """
-    client = client or get_razorpay_client()
+    # `client` stays an override for tests and for the single-invoice demo path. When
+    # it is not given, each link is fetched with the credentials of the account it was
+    # created on — resolved per merchant below, not once for the whole batch.
+    override = client
 
     query = select(PaymentLink)
     if invoice_number:
@@ -78,8 +86,34 @@ def sync_payment_links(
 
     checked = recovered = errors = 0
 
+    # One resolved client per merchant, not per link: a batch commonly holds many
+    # links for the same merchant and re-resolving would decrypt the same credentials
+    # over and over.
+    clients: dict[uuid.UUID, object] = {}
+
+    def client_for(merchant_id: uuid.UUID):
+        if override is not None:
+            return override
+        if merchant_id not in clients:
+            clients[merchant_id] = razorpay_client_for_merchant(session, merchant_id)
+        return clients[merchant_id]
+
     for link, invoice in candidates:
         checked += 1
+        try:
+            client = client_for(invoice.merchant_id)
+        except PaymentConnectionRequiredError as exc:
+            # Not an error to retry: the merchant disconnected, or never connected.
+            # Counted and logged so it surfaces, then skipped — hammering a link we
+            # have no credentials for would burn rate limit for every merchant.
+            errors += 1
+            log.warning(
+                "sync.no_connection",
+                invoice_number=invoice.invoice_number,
+                merchant_id=str(invoice.merchant_id),
+                error=str(exc)[:200],
+            )
+            continue
         try:
             remote = client.fetch_payment_link(link.razorpay_payment_link_id)
         except (RazorpayPermanentError, RazorpayTransientError) as exc:
