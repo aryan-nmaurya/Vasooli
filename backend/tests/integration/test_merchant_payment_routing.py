@@ -46,7 +46,7 @@ def demo_merchant(session):
     return m
 
 
-def connect(session, merchant, *, key_id="rzp_test_MERCHANTKEY"):
+def connect(session, merchant, *, key_id="rzp_test_MERCHANTPLACEHOLDER"):
     row = PaymentConnection(
         merchant_id=merchant.id,
         mode="byok",
@@ -84,7 +84,7 @@ def make_invoice(session, merchant, customer, *, overdue=5, number="INV-ROUTE"):
 def test_a_connected_merchant_resolves_to_their_own_credentials(session, live_merchant):
     connect(session, live_merchant)
     client = razorpay_client_for_merchant(session, live_merchant.id)
-    assert client._api_key_id == "rzp_test_MERCHANTKEY"
+    assert client._api_key_id == "rzp_test_MERCHANTPLACEHOLDER"
 
 
 def test_a_live_merchant_without_a_connection_is_refused(session, live_merchant):
