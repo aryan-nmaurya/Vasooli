@@ -35,6 +35,9 @@ class ConnectionRequest(BaseModel):
     refresh_token: str | None = Field(default=None, max_length=2000)
     api_key_id: str | None = Field(default=None, max_length=160)
     api_key_secret: str | None = Field(default=None, max_length=500)
+    #: The merchant's Razorpay webhook signing secret. Without it their payment
+    #: confirmations fail signature verification and only reconcile on the sweep.
+    webhook_secret: str | None = Field(default=None, max_length=500)
     scopes: list[str] = Field(default_factory=list, max_length=20)
 
 
@@ -186,6 +189,7 @@ def connect(
         refresh_token=payload.refresh_token,
         api_key_id=payload.api_key_id,
         api_key_secret=payload.api_key_secret,
+        webhook_secret=payload.webhook_secret,
         scopes=payload.scopes,
     )
     from app.services.auth import audit
@@ -201,7 +205,12 @@ def connect(
         detail={"mode": row.mode, "provider_account_id": row.provider_account_id},
     )
     session.commit()
-    return {"status": row.status, "mode": row.mode, "provider_account_id": row.provider_account_id}
+    return {
+        "status": row.status,
+        "mode": row.mode,
+        "provider_account_id": row.provider_account_id,
+        "webhook_secret_present": bool(row.webhook_secret_encrypted),
+    }
 
 
 @router.delete("")

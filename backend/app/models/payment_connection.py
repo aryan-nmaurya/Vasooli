@@ -35,6 +35,12 @@ class PaymentConnection(SQLModel, table=True):
     api_key_secret_encrypted: str | None = Field(
         default=None, sa_column=Column(String(1000), nullable=True)
     )
+    #: The merchant's own Razorpay webhook signing secret. Their account signs its
+    #: webhooks with this, not with the platform secret, so without it every payment
+    #: confirmation for their links fails verification.
+    webhook_secret_encrypted: str | None = Field(
+        default=None, sa_column=Column(String(1000), nullable=True)
+    )
     scopes: list[str] = Field(default_factory=list, sa_column=jsonb_column(default=list))
     token_expires_at: datetime | None = Field(sa_column=timestamp_column(nullable=True))
     status: str = Field(default="pending", sa_column=Column(String(30), nullable=False, index=True))
