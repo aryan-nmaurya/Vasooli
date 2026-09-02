@@ -252,7 +252,15 @@ def require_live_reauth(codename: str):
                 status.HTTP_428_PRECONDITION_REQUIRED,
                 "Recent re-authentication is required for this action",
             )
+        # Burning the challenge has to be durable even if the action then fails, so
+        # this commits. That commit is also what makes the line below necessary:
+        # `set_merchant_context` uses set_config(..., true), which is transaction-local
+        # and dies here. Without re-applying it the handler runs with no tenant, and
+        # every RLS policy's WITH CHECK refuses the write — so the endpoints behind
+        # this dependency, the ones that create subscriptions and store payment
+        # credentials, were the only ones that could not write.
         session.commit()
+        set_merchant_context(session, context.merchant.id)
         return context
 
     return dependency
