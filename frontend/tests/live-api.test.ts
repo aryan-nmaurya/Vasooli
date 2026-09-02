@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { isPaymentRequired, LiveApiError, registerLive } from "@/lib/live-api";
+import type { LiveRegistrationPayload } from "@/lib/live-api";
 
 function respondWith(status: number, body: unknown) {
   vi.stubGlobal(
@@ -13,10 +14,12 @@ function respondWith(status: number, body: unknown) {
   );
 }
 
-const payload = {
+const payload: LiveRegistrationPayload = {
   email: "owner@acme.test",
   password: "CorrectHorse9Battery",
   legal_business_name: "Acme",
+  country: "IN",
+  timezone: "Asia/Kolkata",
   accept_terms: true,
   accept_privacy: true,
 };
