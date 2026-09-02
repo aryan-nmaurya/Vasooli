@@ -49,6 +49,7 @@ from app.models import (
 from app.services.authorization import service_scope, set_merchant_context
 from app.services.delivery_events import record_delivery_event
 from app.services.messaging import reply_address_for
+from app.services.payment_connections import decrypt_secret
 from app.services.reconciliation import (
     begin_attempt,
     mark_event_failed,
@@ -448,6 +449,51 @@ def _event_id(request: Request, payload: dict) -> str:
     return "sha256:" + hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
 
+def _verify_with_merchant_secret(
+    session: Session, raw_body: bytes, signature: str | None
+) -> PaymentConnection | None:
+    """Re-check the signature against the secret of the merchant the payload names.
+
+    Returns the connection whose secret verified, or None. Only connections that
+    actually store a secret are tried, so an unconfigured merchant costs nothing.
+    """
+    if not signature:
+        return None
+    try:
+        payload = json.loads(raw_body)
+    except json.JSONDecodeError:
+        return None
+
+    account_id = payload.get("account_id") or _link_account_id(payload)
+    if not account_id:
+        return None
+
+    # Resolving a connection from a provider account id is a cross-tenant read, and
+    # has to say so. Nothing is written under this scope.
+    with service_scope(session):
+        candidates = session.exec(
+            select(PaymentConnection).where(
+                PaymentConnection.provider_account_id == str(account_id),
+                PaymentConnection.status == "connected",
+                PaymentConnection.revoked_at.is_(None),  # type: ignore[union-attr]
+                PaymentConnection.webhook_secret_encrypted.is_not(None),  # type: ignore[union-attr]
+            )
+        ).all()
+
+    for connection in candidates:
+        try:
+            secret = decrypt_secret(connection.webhook_secret_encrypted or "")
+        except Exception:
+            log.warning(
+                "webhook.merchant_secret_undecryptable",
+                merchant_id=str(connection.merchant_id),
+            )
+            continue
+        if verify_signature(raw_body, signature, secret):
+            return connection
+    return None
+
+
 @router.post("/razorpay/collections")
 @router.post("/razorpay")
 async def razorpay_webhook(request: Request, session: SessionDep) -> dict[str, str]:
@@ -456,7 +502,18 @@ async def razorpay_webhook(request: Request, session: SessionDep) -> dict[str, s
     raw_body = await request.body()
     signature = request.headers.get("X-Razorpay-Signature")
 
+    verified_connection = None
     if not verify_signature(raw_body, signature):
+        # The platform secret did not match, which is expected for a link issued on a
+        # merchant's own Razorpay: their account signs with their secret.
+        #
+        # The payload is used only to CHOOSE which secret to try, never trusted. An
+        # attacker can name any merchant they like and still cannot produce a valid
+        # HMAC without that merchant's secret, so the guarantee is unchanged — the
+        # signature is still what decides, only the key it is checked against moves.
+        verified_connection = _verify_with_merchant_secret(session, raw_body, signature)
+
+    if verified_connection is None and not verify_signature(raw_body, signature):
         log.warning("webhook.signature_invalid", body_bytes=len(raw_body))
         session.add(
             AuditLog(

@@ -80,6 +80,7 @@ def save_connection(
     refresh_token: str | None = None,
     api_key_id: str | None = None,
     api_key_secret: str | None = None,
+    webhook_secret: str | None = None,
     scopes: list[str] | None = None,
     token_expires_in: int | None = None,
 ) -> PaymentConnection:
@@ -100,6 +101,10 @@ def save_connection(
         row.refresh_token_encrypted = None
         row.api_key_id = api_key_id
         row.api_key_secret_encrypted = encrypt_secret(api_key_secret) if api_key_secret else None
+    # Kept across a reconnect unless a new one is supplied: re-authorising should not
+    # silently stop the merchant's payment confirmations from verifying.
+    if webhook_secret:
+        row.webhook_secret_encrypted = encrypt_secret(webhook_secret)
     row.scopes = scopes or row.scopes
     row.token_expires_at = (
         utcnow() + timedelta(seconds=token_expires_in) if token_expires_in else row.token_expires_at
