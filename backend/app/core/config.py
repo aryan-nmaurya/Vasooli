@@ -36,6 +36,21 @@ class Settings(BaseSettings):
     razorpay_key_id: str
     razorpay_key_secret: str
     razorpay_webhook_secret: str
+    #: Subscription billing runs on its own Razorpay credentials, separate from the
+    #: platform key above.
+    #:
+    #: The platform key serves the DEMO — `razorpay_client_for_merchant` returns it
+    #: for any demo merchant, and the dashboard shows a hard-coded "Test mode" badge
+    #: next to it. Pointing that key at a live account would make the guided demo
+    #: create real payment links for real money while still claiming to be in test
+    #: mode. Subscription billing genuinely needs live credentials, so the two are
+    #: split rather than forcing one to be wrong.
+    #:
+    #: Each falls back to the platform value when unset, so a deployment that has not
+    #: split them yet behaves exactly as before.
+    razorpay_billing_key_id: str | None = None
+    razorpay_billing_key_secret: str | None = None
+    razorpay_billing_webhook_secret: str | None = None
     razorpay_plan_id_starter: str | None = None
     razorpay_plan_id_growth: str | None = None
     razorpay_plan_id_scale: str | None = None
@@ -193,6 +208,19 @@ class Settings(BaseSettings):
     def is_production(self) -> bool:
         return self.environment == "production"
 
+    @property
+    def effective_billing_key_id(self) -> str:
+        """Billing credentials, falling back to the platform key when not split."""
+        return self.razorpay_billing_key_id or self.razorpay_key_id
+
+    @property
+    def effective_billing_key_secret(self) -> str:
+        return self.razorpay_billing_key_secret or self.razorpay_key_secret
+
+    @property
+    def effective_billing_webhook_secret(self) -> str:
+        return self.razorpay_billing_webhook_secret or self.razorpay_webhook_secret
+
     def assert_production_safe(self) -> None:
         """Guards that must hold before this process serves real traffic.
 
@@ -229,6 +257,15 @@ class Settings(BaseSettings):
             )
         if self.razorpay_key_id.startswith("rzp_live_") and not self.allow_live_razorpay:
             raise RuntimeError("Live Razorpay credentials require ALLOW_LIVE_RAZORPAY=true")
+        if self.effective_billing_key_id.startswith("rzp_live_") and not self.allow_live_razorpay:
+            raise RuntimeError("Live Razorpay billing credentials require ALLOW_LIVE_RAZORPAY=true")
+        # The demo must never transact real money. It runs on the platform key, and
+        # the dashboard states "Test mode" beside it as a fact, not a hope.
+        if self.razorpay_key_id.startswith("rzp_live_"):
+            raise RuntimeError(
+                "RAZORPAY_KEY_ID is the DEMO credential and must stay in test mode. "
+                "Put live subscription credentials in RAZORPAY_BILLING_KEY_ID instead."
+            )
         # Merchant Razorpay credentials are encrypted with this key. Without it the
         # code used to derive one from SESSION_SECRET, which meant rotating that
         # secret — the ordinary way to revoke every session — silently made every

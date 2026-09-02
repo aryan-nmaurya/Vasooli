@@ -6,7 +6,7 @@ from sqlalchemy import text
 from sqlmodel import Session, select
 
 from app.core.clock import utcnow
-from app.integrations.razorpay_client import RazorpayClient, RazorpayError, get_razorpay_client
+from app.integrations.razorpay_client import RazorpayClient, RazorpayError, get_billing_client
 from app.models import BillingReconciliationRun, BillingSubscription
 
 
@@ -40,7 +40,7 @@ def reconcile_billing(
             if provider_snapshot is not None:
                 remote = provider_snapshot.get(provider_id)
             else:
-                remote = (client or get_razorpay_client()).fetch_subscription(provider_id)
+                remote = (client or get_billing_client()).fetch_subscription(provider_id)
             run.checked_count += 1
             if not remote:
                 drift.append({"subscription_id": provider_id, "reason": "missing_provider_state"})

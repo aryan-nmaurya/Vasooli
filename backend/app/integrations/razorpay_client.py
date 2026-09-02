@@ -369,5 +369,23 @@ class RazorpayOAuthClient:
 def get_razorpay_client(
     *, key_id: str | None = None, key_secret: str | None = None
 ) -> RazorpayClient:
-    """Build a client for the platform account or a merchant's BYO credentials."""
+    """Build a client for the platform account or a merchant's BYO credentials.
+
+    The platform account here is the DEMO one. Subscription billing has its own
+    credentials — see `get_billing_client`.
+    """
     return RazorpayClient(key_id=key_id, key_secret=key_secret)
+
+
+def get_billing_client() -> RazorpayClient:
+    """The account Vasooli's own subscription fees are charged on.
+
+    Separate from the platform/demo client on purpose. The demo transacts on the
+    platform key and the dashboard states "Test mode" beside it; charging real
+    subscription fees through that same key would make that statement false and put
+    the guided demo on live rails.
+    """
+    return RazorpayClient(
+        key_id=settings.effective_billing_key_id,
+        key_secret=settings.effective_billing_key_secret,
+    )

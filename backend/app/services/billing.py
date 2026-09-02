@@ -15,7 +15,7 @@ from sqlmodel import Session, select
 from app.core.clock import utcnow
 from app.core.config import settings
 from app.core.constants import TERMINAL_STATUSES
-from app.integrations.razorpay_client import get_razorpay_client
+from app.integrations.razorpay_client import get_billing_client
 from app.integrations.razorpay_signature import verify_signature
 from app.models import (
     BillingEntitlement,
@@ -56,7 +56,8 @@ class BillingEntitlementError(ValueError):
 
 
 def verify_billing_signature(raw_body: bytes, signature: str | None) -> bool:
-    return verify_signature(raw_body, signature)
+    """Subscription webhooks are signed by the BILLING account, not the demo one."""
+    return verify_signature(raw_body, signature, settings.effective_billing_webhook_secret)
 
 
 def ensure_plans(session: Session) -> list[BillingPlan]:
@@ -228,7 +229,7 @@ def create_provider_subscription(plan: BillingPlan) -> tuple[str | None, str | N
     """
     if not settings.razorpay_subscriptions_enabled or not plan.razorpay_plan_id:
         return None, None
-    payload = get_razorpay_client().create_subscription(plan_id=plan.razorpay_plan_id)
+    payload = get_billing_client().create_subscription(plan_id=plan.razorpay_plan_id)
     provider_id = payload.get("id")
     if not provider_id:
         raise ValueError("Razorpay did not return a subscription ID")
@@ -244,7 +245,7 @@ def apply_subscription_event(
     signature: str | None,
 ) -> BillingEvent:
     expected = hmac.new(
-        settings.razorpay_webhook_secret.encode(), raw_body, hashlib.sha256
+        settings.effective_billing_webhook_secret.encode(), raw_body, hashlib.sha256
     ).hexdigest()
     verified = bool(signature) and hmac.compare_digest(expected, signature or "")
     event = BillingEvent(
@@ -542,7 +543,7 @@ def cancel_subscription(
         raise BillingEntitlementError("There is no active subscription to cancel")
 
     if row.razorpay_subscription_id and settings.razorpay_subscriptions_enabled:
-        get_razorpay_client().cancel_subscription(
+        get_billing_client().cancel_subscription(
             row.razorpay_subscription_id, cancel_at_cycle_end=not immediate
         )
 
@@ -568,7 +569,7 @@ def checkout_url_for(subscription: BillingSubscription) -> str | None:
     if not subscription.razorpay_subscription_id or not settings.razorpay_subscriptions_enabled:
         return None
     try:
-        payload = get_razorpay_client().fetch_subscription(subscription.razorpay_subscription_id)
+        payload = get_billing_client().fetch_subscription(subscription.razorpay_subscription_id)
     except Exception:
         return None
     return payload.get("short_url")
