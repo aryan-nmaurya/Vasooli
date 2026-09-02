@@ -20,12 +20,13 @@ into request-scoped access or lets a write land in the wrong tenant.
 
 import pytest
 from sqlalchemy import create_engine, text
+from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.engine import make_url
 from sqlmodel import Session, select
 
 from app.core.clock import utcnow
 from app.core.config import settings
-from app.models import Customer, Invoice, Merchant, PaymentLink
+from app.models import Customer, Invoice, Merchant, PaymentLink, Reminder
 from app.services.authorization import merchant_scope, service_scope, set_merchant_context
 from app.services.recovery import run_recovery_cycle
 
@@ -159,15 +160,28 @@ def test_webhook_can_resolve_a_payment_link_to_its_invoice(session, restricted_e
     session.commit()
 
     with Session(restricted_engine) as restricted:
-        link = restricted.exec(
-            select(PaymentLink).where(PaymentLink.razorpay_payment_link_id == "plink_audit_1")
-        ).first()
-        assert link is not None, "payment_links carries no merchant_id and stays readable"
-        assert restricted.get(Invoice, link.invoice_id) is None, (
+        # `payment_links` used to be readable with no scope at all, because it carries
+        # no merchant_id and so the merchant-isolation sweep skipped it. It is now
+        # isolated through its parent invoice, which is the whole point of the child
+        # -table policies — so routing has to declare its cross-tenant read.
+        assert (
+            restricted.exec(
+                select(PaymentLink).where(PaymentLink.razorpay_payment_link_id == "plink_audit_1")
+            ).first()
+            is None
+        ), "payment_links must not be readable without a scope"
+        assert restricted.get(Invoice, alpha.id) is None, (
             "baseline: the invoice behind the link is hidden without a scope"
         )
 
         with service_scope(restricted):
+            link = restricted.exec(
+                select(PaymentLink).where(PaymentLink.razorpay_payment_link_id == "plink_audit_1")
+            ).first()
+            assert link is not None, (
+                "the webhook resolves a link to its invoice under service scope; if "
+                "that read fails, a real payment is recorded as unmatched"
+            )
             matched = restricted.get(Invoice, link.invoice_id)
         assert matched is not None, (
             "the Razorpay webhook must be able to reach the invoice a paid link belongs "
@@ -265,3 +279,103 @@ def test_every_tenant_table_carries_the_service_scope_clause(session):
         "these tenant tables cannot be read by background jobs or webhook routing, so "
         f"work touching them will silently do nothing in production: {missing}"
     )
+
+
+#: The eight tables that hang off `invoices` by `invoice_id` and carry no
+#: `merchant_id`. They were skipped by the merchant-isolation sweep because that
+#: matched on a column they do not have.
+INVOICE_CHILD_TABLES = (
+    "audit_logs",
+    "dispute_cases",
+    "email_events",
+    "external_payments",
+    "inbound_messages",
+    "payment_links",
+    "promises",
+    "reminders",
+)
+
+
+def test_every_invoice_child_table_is_isolated(session):
+    """A child table without a policy is an IDOR waiting for a careless endpoint.
+
+    These carry no `merchant_id`, so `_merchant_isolation` never covered them and the
+    gap was invisible to the check above. Ownership comes from the parent invoice
+    instead, which is self-scoping because `invoices` is itself under forced RLS.
+    """
+    rows = session.exec(
+        text(
+            """
+            SELECT c.relname, c.relrowsecurity, c.relforcerowsecurity,
+                   pg_get_expr(p.polqual, p.polrelid) AS using_clause
+            FROM pg_class c
+            LEFT JOIN pg_policy p
+              ON p.polrelid = c.oid AND p.polname = c.relname || '_invoice_isolation'
+            WHERE c.relname = ANY(:names)
+            """
+        ).bindparams(names=list(INVOICE_CHILD_TABLES))
+    ).all()
+    found = {name: (enabled, forced, clause) for name, enabled, forced, clause in rows}
+    assert set(found) == set(INVOICE_CHILD_TABLES), "a child table is missing from the schema"
+
+    for table, (enabled, forced, clause) in sorted(found.items()):
+        assert enabled and forced, f"{table} does not force row-level security"
+        assert clause, f"{table} has no {table}_invoice_isolation policy"
+        # Without this, background work reads nothing and silently does nothing —
+        # the same failure mode the merchant-isolation sweep exists to prevent.
+        assert "app.service_role" in clause, f"{table} is unreadable under service scope"
+
+
+def test_a_child_row_is_hidden_from_another_tenant(session, restricted_engine):
+    """The backstop itself: the parent decides who may see the child."""
+    alpha, beta = _two_tenants(session)
+    set_merchant_context(session, alpha.merchant_id)
+    session.add(
+        Reminder(
+            invoice_id=alpha.id,
+            tier=1,
+            tone="firm",
+            subject="s",
+            body="b",
+            channel="email",
+            policy_decision={},
+        )
+    )
+    session.commit()
+
+    with Session(restricted_engine) as restricted:
+        set_merchant_context(restricted, alpha.merchant_id)
+        assert [r.invoice_id for r in restricted.exec(select(Reminder)).all()] == [alpha.id]
+
+    with Session(restricted_engine) as restricted:
+        # Beta owns no reminders, and must not be able to read Alpha's.
+        set_merchant_context(restricted, beta.merchant_id)
+        assert restricted.exec(select(Reminder)).all() == []
+
+
+def test_service_scope_cannot_write_a_child_row_into_another_tenant(session, restricted_engine):
+    """Service scope reads across tenants; it must still write into none of them.
+
+    `WITH CHECK` deliberately does not reuse the `USING` subquery, which widens to
+    every invoice under service scope. Sharing one expression would have let
+    background work attach a reminder to somebody else's invoice.
+    """
+    _alpha, beta = _two_tenants(session)
+
+    with Session(restricted_engine) as restricted, service_scope(restricted):
+        restricted.add(
+            Reminder(
+                invoice_id=beta.id,
+                tier=2,
+                tone="firm",
+                subject="s",
+                body="b",
+                channel="email",
+                policy_decision={},
+            )
+        )
+        with pytest.raises(ProgrammingError, match="row-level security"):
+            restricted.flush()
+        # `service_scope` clears its setting on the way out, which needs a usable
+        # session; without this the cleanup raises and masks the refusal above.
+        restricted.rollback()

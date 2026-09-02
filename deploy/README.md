@@ -1,5 +1,72 @@
 # Deploying Vasooli
 
+> ## ⚠️ This document does not describe the running deployment
+>
+> It describes an **RDS** topology deployed by **`git pull` on the server**. The
+> production host runs neither. Verified against the live box:
+>
+> | | This document | The actual host |
+> |---|---|---|
+> | Compose file | `docker-compose.rds.yml` | **`docker-compose.prod.yml`** |
+> | Database | managed RDS | **Postgres 17 in a container** |
+> | Code delivery | `git pull` | **`rsync` — there is no `.git` on the server** |
+>
+> `docker-compose.rds.yml` fails on this host with `required variable DATABASE_URL is
+> missing`, because `prod.yml` composes the URL from the `POSTGRES_*` variables and
+> `rds.yml` expects it whole. Running `git pull` there fails outright.
+>
+> **To deploy the backend, see [§0 How this host is actually deployed](#0-how-this-host-is-actually-deployed) below.**
+> The rest of this file is retained because the RDS topology is still the intended
+> destination, and because §§ on Caddy, backups and the security group remain accurate.
+
+---
+
+## 0. How this host is actually deployed
+
+Rsync the tree, then rebuild in place. Run from the repository root:
+
+```bash
+rsync -az --delete -e "ssh -i ~/Codes/Deployment/vasooli-ec2.pem" \
+  --exclude '.git' --exclude '.venv' --exclude 'node_modules' --exclude '.next' \
+  --exclude '__pycache__' --exclude '.pytest_cache' --exclude '.ruff_cache' \
+  --exclude 'deploy/.env' --exclude 'backend/.env' --exclude 'frontend/.env*' \
+  --exclude 'deploy/backups' \
+  ./ ubuntu@13.204.55.131:/home/ubuntu/vasooli/
+```
+
+The `.env` and `deploy/backups` exclusions are not optional. Without them an rsync
+`--delete` overwrites production secrets with local ones, or removes the backups.
+
+Then, on the host:
+
+```bash
+cd /home/ubuntu/vasooli/deploy && docker compose -f docker-compose.prod.yml up -d --build api scheduler worker
+```
+
+A one-shot `migrate` container runs `alembic upgrade head` as the owner before the app
+containers bind, so migrations apply on every deploy.
+
+**Pre-flight before any restart.** A restart once took production down for ten minutes
+because `deploy/.env` held a value the code refused to boot with — the container had
+been running since before that guard existed, so nothing looked wrong until it
+restarted. Check the config the container will actually load, first:
+
+```bash
+docker compose -f docker-compose.prod.yml run --rm --no-deps -T api python -c "from app.core.config import settings; settings.assert_production_safe(); print('OK')"
+```
+
+Do not pipe that into `tail`: the pipe swallows the exit code, so `set -e` will not
+stop a deploy script on failure.
+
+The frontend is on Vercel, and its project Root Directory is already `frontend`, so
+deploy it **from the repository root**, not from `frontend/`:
+
+```bash
+npx vercel --prod --scope aryan-nmauryas-projects
+```
+
+---
+
 Frontend on Vercel, backend on EC2, PostgreSQL on encrypted RDS.
 
 The split is deliberate. Vercel hosts Next.js for free, permanently, and does it

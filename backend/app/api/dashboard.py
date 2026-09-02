@@ -24,6 +24,7 @@ from app.core.constants import DisputeStatus, InvoiceStatus, PromiseStatus
 from app.core.db import SessionDep
 from app.core.logging import get_logger
 from app.core.money import format_inr
+from app.services.runtime_status import ai_health, scheduler_health
 from app.models import (
     AuditAction,
     AuditActor,
@@ -104,8 +105,13 @@ class RuntimeSafety(BaseModel):
 
 
 @router.get("/dashboard/runtime", response_model=RuntimeSafety)
-def runtime_safety() -> RuntimeSafety:
-    """Non-secret operating modes the UI must disclose before an action is taken."""
+def runtime_safety(session: SessionDep) -> RuntimeSafety:
+    """Non-secret operating modes the UI must disclose before an action is taken.
+
+    `scheduler` and `ai` are measured, not configured — see `app.services.runtime_status`
+    for why reporting either from settings made this banner lie to the exact audience
+    the reviewer guide tells to trust it.
+    """
     if settings.email_dry_run:
         email = "dry_run"
     elif settings.email_redirect_to:
@@ -114,10 +120,10 @@ def runtime_safety() -> RuntimeSafety:
         email = "direct_customer"
     return RuntimeSafety(
         environment=settings.environment,
-        scheduler="enabled" if settings.scheduler_enabled else "disabled",
+        scheduler=scheduler_health(session),
         email=email,
         razorpay=("live" if settings.razorpay_key_id.startswith("rzp_live_") else "test"),
-        ai="enabled" if settings.google_api_key else "deterministic_fallback",
+        ai=ai_health(session),
         inbound_email=(
             "native_resend"
             if settings.resend_inbound_webhook_secret

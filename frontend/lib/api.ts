@@ -51,10 +51,16 @@ export type Overview = {
 
 export type RuntimeSafety = {
   environment: string;
-  scheduler: "enabled" | "disabled";
+  /**
+   * Measured from recorded job runs, not from configuration. The API container sets
+   * SCHEDULER_ENABLED=false by design because the scheduler is its own container, so
+   * reporting the flag told a reviewer automation was dead when it was running.
+   */
+  scheduler: "running" | "stale" | "failing" | "disabled" | "unknown";
   email: "dry_run" | "redirected" | "direct_customer";
   razorpay: "test" | "live";
-  ai: "enabled" | "deterministic_fallback";
+  /** Measured from what the models actually returned, not from key presence. */
+  ai: "enabled" | "degraded" | "disabled";
   inbound_email: "native_resend" | "signed_adapter" | "simulation_only";
 };
 

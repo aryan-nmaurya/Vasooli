@@ -2,24 +2,48 @@
 
 import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 
-import { loginLive, registerLive, verifyLiveCode } from "@/lib/live-api";
+import { API_BASE, loginLive, registerLive, verifyLiveCode } from "@/lib/live-api";
 import type { LiveRegistrationPayload } from "@/lib/live-api";
 
+type PlanChoice = {
+  slug: string;
+  name: string;
+  amount_paise: number;
+  included_active_invoices: number;
+  included_seats: number;
+};
+
+/** Matches LIVE_TRIAL_DAYS on the server; the pricing page promises the same. */
+const TRIAL_DAYS = 7;
+
 export function LiveRegistrationForm() {
-  const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [terms, setTerms] = useState(false);
   const [privacy, setPrivacy] = useState(false);
   const [phase, setPhase] = useState<"details" | "verify" | "verified">("details");
+  const [plans, setPlans] = useState<PlanChoice[]>([]);
+  const [chosenPlan, setChosenPlan] = useState<string | null>(null);
+  // True when auto sign-in succeeded, so the plan step can go straight to checkout
+  // instead of routing back through the login page.
+  const [signedIn, setSignedIn] = useState(false);
   const [pendingRegistration, setPendingRegistration] = useState<LiveRegistrationPayload | null>(null);
   const [resendCooldown, setResendCooldown] = useState(0);
   // Only ever set outside production: the API returns the raw code in local/test so
   // the lifecycle stays testable where the sending provider is unreachable.
   const [devCode, setDevCode] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (phase !== "verified") return;
+    // A public price list, so no session or merchant header is needed — which is
+    // what lets it load before the merchant has ever signed in.
+    fetch(`${API_BASE}/api/live/billing/plans`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((rows: PlanChoice[]) => setPlans(rows))
+      .catch(() => setPlans([]));
+  }, [phase]);
 
   useEffect(() => {
     if (phase !== "verify" || resendCooldown <= 0) return;
@@ -88,9 +112,11 @@ export function LiveRegistrationForm() {
       const merchant = login.merchants[0];
       if (!merchant) throw new Error("Your workspace membership could not be found.");
       window.localStorage.setItem("vasooli_live_merchant", merchant);
-      setMessage("Email verified. Your secure workspace is ready.");
-      router.push("/live");
-      router.refresh();
+      // Signed in, but a brand-new workspace has no subscription, so the dashboard
+      // would only bounce back here on the first write. Ask for the plan now.
+      setSignedIn(true);
+      setPhase("verified");
+      setMessage("Email verified. One step left before your workspace opens.");
     } catch {
       // The OTP is single-use. If verification committed but session creation or
       // navigation failed, never leave the user trapped on a consumed code.
@@ -126,18 +152,69 @@ export function LiveRegistrationForm() {
     return (
       <section className="auth-card" aria-labelledby="verified-title">
         <div className="auth-step">Email verified</div>
-        <h1 id="verified-title">Your workspace is ready.</h1>
-        {/*
-          .auth-success sets margin:0, and the h1 runs at line-height .98, so on the
-          two-line heading the descender of "ready." collided with the box. Spaced
-          here rather than in globals.css: that file is a frozen demo source, and
-          this is a live-auth screen the demo never renders.
-        */}
-        <p role="status" className="auth-success" style={{ marginTop: "1.5rem" }}>
-          {message}
+        <h1 id="verified-title">Choose your plan.</h1>
+        <p className="auth-intro">
+          Every plan starts with a {TRIAL_DAYS}-day free trial. Your card is not charged
+          until the trial ends, and you can cancel at any time.
         </p>
-        <Link className="auth-primary-link" href="/live/login">
-          Continue to secure sign in
+
+        {/*
+          Styled with utilities rather than new .auth-* rules: globals.css is a
+          frozen demo source, and re-baselining the demo freeze for a live-auth
+          screen the demo never renders would be the wrong trade.
+        */}
+        <div className="mt-4 grid gap-2.5">
+          {plans.map((plan) => {
+            const picked = chosenPlan === plan.slug;
+            return (
+              <button
+                type="button"
+                key={plan.slug}
+                aria-pressed={picked}
+                onClick={() => setChosenPlan(plan.slug)}
+                className={`flex w-full flex-col items-start gap-1 rounded-lg border px-4 py-3 text-left transition ${
+                  picked
+                    ? "border-[#55c7d6] bg-[#55c7d6]/10"
+                    : "border-[rgba(243,241,234,.16)] hover:border-[rgba(243,241,234,.32)]"
+                }`}
+              >
+                <span className="flex w-full flex-wrap items-baseline gap-x-2">
+                  <span className="text-sm font-semibold text-[#f3f1ea]">{plan.name}</span>
+                  <span className="ml-auto text-sm font-semibold tabular-nums text-[#f3f1ea]">
+                    ₹{(plan.amount_paise / 100).toLocaleString("en-IN")}
+                    <span className="font-normal text-[#aeb2ac]"> / month</span>
+                  </span>
+                </span>
+                <span className="text-xs leading-5 text-[#aeb2ac]">
+                  {plan.included_active_invoices.toLocaleString("en-IN")} active invoices ·{" "}
+                  {plan.included_seats === 1 ? "1 user" : `up to ${plan.included_seats} users`}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        <p role="status" className="auth-success" style={{ marginTop: "1.25rem" }}>
+          {chosenPlan
+            ? "A ₹2 charge confirms your Autopay mandate and is refunded automatically. Your plan is not charged until the trial ends."
+            : signedIn
+              ? "Pick a plan to open your workspace."
+              : "Pick a plan to continue. You confirm payment right after signing in."}
+        </p>
+
+        <Link
+          className="auth-primary-link"
+          // Checkout needs a session. When auto sign-in worked we already have one,
+          // so go straight to billing; otherwise the choice rides through the login
+          // page in storage and billing pre-selects it on arrival.
+          href={signedIn ? "/live/settings/billing?reason=new_signup" : "/live/login"}
+          onClick={() => {
+            if (chosenPlan) window.localStorage.setItem("vasooli_pending_plan", chosenPlan);
+          }}
+          aria-disabled={!chosenPlan}
+          style={chosenPlan ? undefined : { opacity: 0.45, pointerEvents: "none" }}
+        >
+          {signedIn ? "Continue to payment" : "Continue to secure sign in"}
         </Link>
       </section>
     );

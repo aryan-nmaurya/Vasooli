@@ -3,6 +3,8 @@
   "endpoints": {
     "GET /api/auth/modes": {
       "body": {
+        "demo_controls": true,
+        "demo_invoice_count": 8,
         "live_registration": false,
         "reviewer_access": false
       },
@@ -786,6 +788,8 @@
         "db": "ok",
         "detail": null,
         "environment": "test",
+        "schema_current": true,
+        "schema_revision": "c4d5e6f7a8b9",
         "status": "ok",
         "version": "0.1.0"
       },

@@ -12,6 +12,7 @@ import { SignOutButton } from "@/components/SignOutButton";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { DemoExitGuard } from "@/components/DemoExitGuard";
 import { LiveExitGuard } from "@/components/LiveExitGuard";
+import { PaymentGate } from "@/components/PaymentGate";
 import { SubscriptionBanner } from "@/components/SubscriptionBanner";
 import { liveGet } from "@/lib/live-api";
 
@@ -83,6 +84,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
 function LiveShell({ children, pathname }: { children: React.ReactNode; pathname: string }) {
   return <div className="dashboard-shell live-dashboard-shell">
     <LiveExitGuard />
+    <PaymentGate />
     <aside className="dashboard-sidebar">
       <div className="flex h-16 items-center border-b border-line px-5"><Brand href="/live" subtitle="Recovery desk" /></div>
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-3 py-5">
