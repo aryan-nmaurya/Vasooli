@@ -87,6 +87,9 @@ class CycleReport:
     events_retried: int = 0
     events_recovered: int = 0
     ai_disabled_after_failure: bool = False
+    #: Consecutive model failures so far in this cycle. The breaker trips on a run of
+    #: them, not on the first — see `_note_ai_outcome`.
+    ai_consecutive_failures: int = 0
     errors: list[dict[str, str]] = field(default_factory=list)
 
     def as_dict(self) -> dict:
@@ -109,6 +112,33 @@ class CycleReport:
             "ai_disabled_after_failure": self.ai_disabled_after_failure,
             "errors": self.errors,
         }
+
+
+#: Consecutive model failures before the cycle stops asking. Deliberately not 1.
+#:
+#: Both Gemini models return 504 DEADLINE_EXCEEDED intermittently under load — that is
+#: capacity, not an outage, and failover already covers a single one. Tripping on the
+#: first failure meant one unlucky call at the top of a cycle turned every remaining
+#: invoice deterministic, which is how production came to report `ai: degraded` with
+#: `models_attempted: []` while the API itself was perfectly healthy.
+#:
+#: Three in a row is evidence the models are genuinely not answering; fewer is noise
+#: the fallback exists to absorb.
+AI_BREAKER_THRESHOLD = 3
+
+
+def _record_ai_attempt(report: "CycleReport", *, failed: bool) -> None:
+    """Advance or reset the cycle's model-failure streak.
+
+    A success anywhere clears the streak: the breaker is meant to stop a cycle
+    hammering a dead API, not to punish it for one slow response an hour ago.
+    """
+    if not failed:
+        report.ai_consecutive_failures = 0
+        return
+    report.ai_consecutive_failures += 1
+    if report.ai_consecutive_failures >= AI_BREAKER_THRESHOLD:
+        report.ai_disabled_after_failure = True
 
 
 def escalate_to_human(
@@ -250,8 +280,7 @@ def _ensure_diagnosis(
     session.add(invoice)
 
     if use_llm:
-        if result.source == "rule_based":
-            report.ai_disabled_after_failure = True
+        _record_ai_attempt(report, failed=result.source == "rule_based")
         record_ai_outcome(
             session,
             invoice_id=invoice.id,
@@ -584,11 +613,10 @@ def _process_invoice(
 
     if ai_requested:
         fell_back = draft.generated_by == "template_fallback"
-        if fell_back:
-            # Treat the first full-model failure as a circuit-breaker signal for the
-            # remainder of this cycle. Deterministic rules/templates are immediately
-            # available and do not multiply one outage by the ledger size.
-            report.ai_disabled_after_failure = True
+        # A run of failures is a circuit-breaker signal for the rest of this cycle:
+        # deterministic templates are immediately available and do not multiply a real
+        # outage by the ledger size. A single failure is not — see AI_BREAKER_THRESHOLD.
+        _record_ai_attempt(report, failed=fell_back)
         record_ai_outcome(
             session,
             invoice_id=invoice.id,

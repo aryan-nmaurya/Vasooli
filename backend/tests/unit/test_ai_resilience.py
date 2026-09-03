@@ -11,6 +11,7 @@ import pytest
 from app.ai.client import LLMClient, LLMUnavailableError, _is_retryable
 from app.ai.schemas import DiagnosisResponse
 from app.core.config import settings
+from app.services.recovery import AI_BREAKER_THRESHOLD, CycleReport, _record_ai_attempt
 
 
 @pytest.fixture
@@ -266,3 +267,58 @@ def test_the_configured_timeout_reaches_the_sdk(monkeypatch):
         c._generate_once(settings.gemini_primary_model, "x", DiagnosisResponse)
 
     assert captured["timeout_ms"] == 7500
+
+
+# --- The cycle's AI circuit breaker ------------------------------------------------
+#
+# It used to trip on the FIRST model failure, which meant one transient 504 at the top
+# of a run turned every remaining invoice deterministic. Production reported
+# `ai: degraded` with `models_attempted: []` while the Gemini API was healthy — both
+# models return 504 DEADLINE_EXCEEDED intermittently under load, and failover already
+# covers a single one.
+
+
+def test_one_failure_does_not_open_the_breaker():
+    report = CycleReport()
+    _record_ai_attempt(report, failed=True)
+    assert report.ai_disabled_after_failure is False
+    assert report.ai_consecutive_failures == 1
+
+
+def test_a_run_of_failures_opens_it():
+    report = CycleReport()
+    for _ in range(AI_BREAKER_THRESHOLD):
+        _record_ai_attempt(report, failed=True)
+    assert report.ai_disabled_after_failure is True
+
+
+def test_a_success_clears_the_streak():
+    """Intermittent failures must not accumulate across an otherwise working cycle."""
+    report = CycleReport()
+    for _ in range(AI_BREAKER_THRESHOLD - 1):
+        _record_ai_attempt(report, failed=True)
+    _record_ai_attempt(report, failed=False)
+    assert report.ai_consecutive_failures == 0
+    assert report.ai_disabled_after_failure is False
+
+    # And the cleared streak really does need a full run again to trip.
+    for _ in range(AI_BREAKER_THRESHOLD - 1):
+        _record_ai_attempt(report, failed=True)
+    assert report.ai_disabled_after_failure is False
+
+
+def test_alternating_outcomes_never_open_it():
+    """The exact production pattern: occasional 504s among successful drafts."""
+    report = CycleReport()
+    for failed in (True, False, True, False, True, False, True):
+        _record_ai_attempt(report, failed=failed)
+    assert report.ai_disabled_after_failure is False
+
+
+def test_the_breaker_stays_open_once_tripped():
+    """A genuine outage should not be re-probed for the rest of the cycle."""
+    report = CycleReport()
+    for _ in range(AI_BREAKER_THRESHOLD):
+        _record_ai_attempt(report, failed=True)
+    _record_ai_attempt(report, failed=False)
+    assert report.ai_disabled_after_failure is True

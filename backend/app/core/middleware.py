@@ -197,6 +197,13 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     A sliding window of request timestamps per (client, path group). Old entries are
     discarded as they age out, so memory stays bounded by the limit itself rather than
     growing with traffic.
+
+    **This counter is per-process, so the effective limit multiplies by the number of
+    API processes.** One container today, which is why the configured numbers are the
+    real ones. Run two and `/api/live/auth/login` becomes 20/minute rather than 10 —
+    quietly, with nothing failing to announce it. Before scaling the API horizontally,
+    move these counters to shared storage (Redis) or accept and re-tune the numbers;
+    do not assume the values below still describe what an attacker gets.
     """
 
     def __init__(self, app) -> None:

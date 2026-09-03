@@ -168,11 +168,65 @@ Migrations no longer run from the API, scheduler and worker start commands. All 
 used to run `alembic upgrade head` themselves, which meant three containers racing the
 same migration on every deploy.
 
-Redeploy after a push:
+### Redeploying this host
+
+This is the procedure for the **live AWS box**, which is the `docker-compose.prod.yml`
+topology described in section 0 — not the RDS one above. There is no `.git` on the
+server, so code arrives by rsync.
+
+**1. Ship the code.** From the repository root, locally:
 
 ```bash
-git pull && docker compose -f docker-compose.rds.yml up -d --build
+rsync -az --delete --exclude '.env' --exclude '.env.*' --exclude '.venv' --exclude '__pycache__' --exclude '.ruff_cache' --exclude '.pytest_cache' --exclude 'data' -e "ssh -i ~/Codes/Deployment/vasooli-ec2.pem" backend/ ubuntu@<STATIC_IP>:~/vasooli/backend/
 ```
+
+The `.env` exclusions are **not optional**. Without them local settings overwrite
+production ones — `ENVIRONMENT=local`, a dry-run mailer and the wrong database.
+
+**2. Pre-flight the configuration before restarting anything.**
+
+```bash
+docker compose -f docker-compose.prod.yml run --rm --no-deps -T api python -c "from app.core.config import settings; settings.assert_production_safe(); print('config OK')"
+```
+
+This is the step whose absence caused a ten-minute outage. `deploy/.env` had
+`DEMO_CONTROLS_ENABLED=true`, which `assert_production_safe` refuses in production. The
+running container had started before that line was added, so nothing looked wrong until
+something restarted it — and then the API crash-looped.
+
+Two details that matter: run it **after** the rsync, so it tests the code you are about
+to start, not the image already running; and **do not pipe it into `tail` or `head`** —
+the pipe returns the pager's exit code, so `set -e` will not stop a script when the
+check fails.
+
+**3. Build and restart.**
+
+```bash
+docker compose -f docker-compose.prod.yml up -d --build api scheduler worker
+```
+
+**4. Verify from outside.**
+
+```bash
+curl -s --resolve api.vasooli.space:443:<STATIC_IP> https://api.vasooli.space/health
+```
+
+Expect `"status":"ok"`, `"db":"ok"` and `"schema_current":true`. The `--resolve` form
+matters on networks that sinkhole the domain in DNS — see section 0.
+
+Then confirm the containers settled:
+
+```bash
+docker compose -f docker-compose.prod.yml ps
+```
+
+All five (`api`, `caddy`, `db`, `scheduler`, `worker`) should read `running`, and `api`,
+`db`, `scheduler` and `worker` should read `healthy`.
+
+**If the API crash-loops after a restart**, it is almost always `assert_production_safe`
+refusing a flag in `deploy/.env`. `docker compose -f docker-compose.prod.yml logs --tail 30 api`
+names the exact variable. Every change to that file should be preceded by a backup —
+`cp .env .env.bak.$(date +%H%M%S)`.
 
 ### Deploy this remediation release
 
@@ -363,6 +417,90 @@ that proves MX delivery, Resend Receiving, signature verification, authenticated
 retrieval, routing, persistence, and reply processing together.
 
 ---
+
+## 3b. Rotating secrets
+
+Each of these has a different blast radius, and one of them destroys data if rotated
+carelessly. Read the row before changing the value.
+
+| Secret | Effect of rotating | Procedure |
+|---|---|---|
+| `SESSION_SECRET` | Every operator session is invalidated immediately. This is the intended way to force everyone out. | Change it, restart `api`. Users sign in again. |
+| `ADMIN_API_KEY` | Service scripts and smoke checks stop working until updated. | Change it, restart `api`, update anything that sends `X-Admin-Key`. |
+| `RAZORPAY_WEBHOOK_SECRET` / `RAZORPAY_BILLING_WEBHOOK_SECRET` | Provider events start failing signature verification. **Nothing is written to the database** — the request is rejected before it is stored — so the failure is only visible in the Razorpay dashboard's delivery log. | Change it in Razorpay **and** `deploy/.env` together, then restart `api`. Confirm in Razorpay's delivery log that deliveries return 200. |
+| `RESEND_API_KEY` | Outbound mail and inbound webhook verification stop. Registration returns 503 because email verification cannot be sent. | Change it, restart `api`, `scheduler` and `worker`. |
+| `GOOGLE_API_KEY` | AI diagnosis and drafting fall back to deterministic rules. Nothing breaks; the runtime banner turns `degraded`. | Change it, restart all three. |
+| **`CREDENTIAL_ENCRYPTION_KEY`** | **Every stored merchant connector credential becomes permanently undecryptable.** There is no recovery. | **Do not rotate without re-encrypting first.** Decrypt every `*_encrypted` column with the old key, re-encrypt with the new one, and deploy both in the same change. If you only have the new key, the credentials are gone and every affected merchant must reconnect. |
+
+The `CREDENTIAL_ENCRYPTION_KEY` row is why it is a required, separate variable rather
+than being derived from `SESSION_SECRET`. It used to fall back to that value, which
+meant the ordinary act of forcing everyone to sign out silently destroyed every stored
+credential. `assert_production_safe` now refuses to start without it.
+
+Generate a new one with:
+
+```bash
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+## 3c. Knowing when something breaks
+
+**What is already captured.** Every request runs through `RequestContextMiddleware`,
+which binds a `request_id` and logs `request.completed` with the status code, or
+`request.failed` with a full traceback when an exception escapes. Logs are JSON in
+production (`LOG_JSON=true`) and bounded by the compose logging driver. Every scheduler
+run is also written to the `job_runs` table before and after, so "did the cycle run" is
+answerable from data rather than from log scrollback.
+
+**What is missing, and it is the important half.** Nothing *notifies* anyone. A 500 at
+3am sits in a container log until somebody looks. Two gaps, in order of value:
+
+**1. A dead-man switch for the scheduler (do this first — config only, no code).**
+`_heartbeat` in `app/scheduler/jobs.py` is already wired and pings on every successful
+run; it does nothing while the URL is empty, which is how it currently ships. Create two
+checks at any dead-man service (healthchecks.io has a free tier) and set:
+
+```
+OPS_HEARTBEAT_URL=https://hc-ping.com/<uuid>
+OPS_RECOVERY_HEARTBEAT_URL=https://hc-ping.com/<uuid>
+```
+
+Restart `scheduler`. If the container dies, the check goes silent and you are emailed.
+Without this, a dead scheduler is invisible until a merchant notices nobody was chased.
+
+**2. Error aggregation.** There is deliberately no error-tracking SDK in this repo: it
+would ship request context to a third party, which is a decision for whoever owns the
+data, not a default. If you want it, `sentry-sdk` initialised from a `SENTRY_DSN` in
+`app/main.py`'s lifespan is the smallest version, and it should be gated on the DSN
+being set so local and test runs stay offline. Until then, `/api/operations/readiness`
+is the honest substitute: it reports `degraded` when the recovery cycle is stale or a
+job has failed, and it is the endpoint an uptime monitor should watch — not `/health`,
+which only proves the database answered.
+
+## 3d. Measured performance
+
+Numbers rather than adjectives. Taken against the live host on 2026-09-03, over the
+public HTTPS path through Caddy, on the 2 GB box with a single API container. Six
+samples per endpoint.
+
+| Endpoint | avg | min | max |
+|---|---|---|---|
+| `/health` (includes a DB round-trip) | 0.098s | 0.090s | 0.106s |
+| `/api/dashboard/overview` | 0.068s | 0.058s | 0.077s |
+| `/api/dashboard/queue` | 0.075s | 0.068s | 0.083s |
+| `/api/dashboard/audit` | 0.098s | 0.088s | 0.120s |
+| `/api/live/billing/plans` | 0.054s | 0.045s | 0.061s |
+
+Concurrency: **20 parallel requests to `/api/dashboard/queue` all returned 200 in
+0.82s total.**
+
+Two things this does and does not tell you. It does show the read paths are not
+N+1-bound at demo scale — the dashboard batches child lookups by invoice id rather than
+querying per row, and the hot foreign keys carry indexes (4–8 per table). It does **not**
+predict behaviour at thousands of invoices per merchant, or under write load, and no
+sustained load test has been run. Before committing to volume, measure with a real tool
+against a seeded ledger of the size you expect — and remember the rate limiter is
+per-process (see `RATE_LIMITS` in `app/core/middleware.py`).
 
 ## 4. Environment
 
