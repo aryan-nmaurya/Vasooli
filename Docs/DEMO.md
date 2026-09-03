@@ -41,6 +41,36 @@ test mode allows about six link creations per minute.
 
 **Never commit these.** `.env` is gitignored; verify with `git check-ignore backend/.env`.
 
+> **Check the Gemini quota the day before, not on the day.** The free tier allows 20
+> requests per day *per model*, and one recovery cycle over the eight seeded invoices
+> needs a diagnosis and a draft for each — so a single rehearsal can exhaust the day's
+> allowance and leave the real demo running on deterministic fallbacks with the runtime
+> banner reading `ai: degraded`. A partly-spent quota fails intermittently, which reads
+> as flaky models rather than as a limit. Enable billing on the Google Cloud project
+> behind the key, or rehearse with `Dry run` (step 6), which still calls the models —
+> `use_llm` is independent of `dry_run`, so a dry run costs quota exactly like a real
+> one. Rehearsing on a different day from the demo is the cheap version of this fix.
+
+### 3b. Where to run the demo
+
+**Run the guided demo from `localhost:3000`, not from the deployed site.**
+
+The Time Machine — the control that compresses the 3/10/21-day cadence into two
+minutes — needs `DEMO_CONTROLS_ENABLED`, and production refuses to boot with it on
+unless `ALLOW_DEMO_CONTROLS_IN_PRODUCTION` is also set. It is deliberately off there,
+because the demo clock is process-global: advancing it shifts `utcnow()` for every
+tenant, including overdue counts, trial end dates and session expiry for real
+merchants. Both flags must always be changed together — setting the override to false
+while the feature stays on is the exact combination that crash-loops the API.
+
+A second reason: `mentor` and `reviewer` are `auditor` accounts, and moving the clock
+is a write, so `POST /api/demo/advance` returns 403 for them. Even with the controls
+on, a reviewer could not drive it themselves.
+
+Use the deployed site as proof the system is really running — health, live Razorpay
+plans, row-level security under a restricted role — and drive the guided story
+locally, where the clock is safe and you hold an admin account.
+
 ### 4. Deployed backend
 
 Use the deployed TLS endpoint for the production demo:
@@ -58,6 +88,25 @@ before concluding anything is down.
 
 For a fully local rehearsal only, a public tunnel is still required. Never leave a
 temporary tunnel URL configured in Razorpay after the rehearsal.
+
+> **Test the venue network before you present.** Some networks make a perfectly healthy
+> deployment look dead, and each failure mode looks like an outage:
+>
+> - **DNS sinkholing.** On the college wifi, `vasooli.space` resolves to
+>   `sinkhole.paloaltonetworks.com` — including through `1.1.1.1` and `8.8.8.8`, because
+>   the interception is transparent. Every request then fails with `Connection reset by
+>   peer`. Confirm from a second path before concluding anything:
+>   `curl -s --resolve api.vasooli.space:443:13.204.55.131 https://api.vasooli.space/health`
+> - **IPv6-only carriers.** One hotspot ran IPv6-only with NAT64, so the bare IPv4
+>   address had no route at all while hostnames worked fine (DNS64 synthesises the AAAA
+>   record). `curl` succeeded and `ssh 13.204.55.131` timed out, which reads as a
+>   firewall but is not one. The giveaway is a `64:ff9b::` address in `curl -v` output.
+> - **Outbound SSH.** Blocked on the college wifi, and Cloudflare WARP does not carry
+>   port 22 either — so with WARP on the site loads but deploys fail, and with it off
+>   deploys work but the site does not load. A phone hotspot is the reliable path.
+>
+> This has produced five separate false "the server is down" conclusions. It is always
+> worth thirty seconds with `--resolve` before believing one.
 
 ### 5. Razorpay webhook
 

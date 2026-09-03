@@ -4,6 +4,19 @@
 
 ---
 
+> ## © 2026 Aryan Maurya. All rights reserved.
+>
+> **This is a proprietary repository. No licence is granted.**
+>
+> You may **read** this code — it is published so reviewers, employers and competition
+> judges can assess the work. You may **not** use it, copy it, modify it, build on it,
+> host it, or incorporate any part of it into another project, commercial or otherwise.
+>
+> Reading is not permission to reuse. Any use beyond reading requires prior written
+> permission from the copyright holder. See [LICENSE](LICENSE) for the full terms.
+
+---
+
 ## 1. The problem
 
 Indian SMEs write off unpaid invoices not because customers refuse to pay, but because
@@ -358,9 +371,27 @@ the tier it paused at, never back at polite. A dispute never enters the cadence 
 | Duplicate webhook | Rejected by a unique index on the provider event id. Answered 200 so Razorpay stops |
 | Out-of-order webhook | Amounts applied with `max()` — a stale event cannot walk a balance backwards |
 | Payment Link cancellation fails | The payment stays recorded. Cancellation becomes a retryable task; it can never undo reconciliation |
-| Gemini unavailable | Fails over to the fallback model, then to deterministic rules and templates |
+| Gemini unavailable | Fails over to the fallback model, then to deterministic rules and templates. The cycle stops asking only after **three consecutive** failures (`AI_BREAKER_THRESHOLD`), and any success clears the streak — one transient 504 or 429 used to trip it on the first call and turn every remaining invoice in that run deterministic |
+| Gemini quota exhausted | Indistinguishable from unavailability at the call site, and handled the same way. `429 RESOURCE_EXHAUSTED` names the quota in its own error text — see the warning in section 10 |
 | Razorpay rate limit | Recognised as transient (Razorpay labels 429 as a *bad request*) and retried with backoff |
 | Two cycles at once | A Postgres advisory lock on a dedicated connection; a process/connection crash releases the session lock |
+
+**The runtime banner is measured, not configured.** It is the one thing the reviewer
+guide points a judge at and calls honest, so both of its derived fields come from
+recorded outcomes rather than from settings:
+
+- `ai` reads the model named on recent drafts *and* on recent `diagnosed` audit rows.
+  Drafts alone were the wrong evidence: a reminder row exists only when one is actually
+  sent, so a ledger with nothing currently due produced no new evidence and the banner
+  stayed pinned to whatever the last send happened to be. Only an unbroken run of
+  fallbacks reports `degraded`; a single real model name anywhere recent reports
+  `enabled`. An absent API key is `disabled` — a configuration statement, not a
+  measurement.
+- `scheduler` reads job history, not `SCHEDULER_ENABLED`. That flag describes the
+  process answering the request, and it is false for the API container by design
+  because the scheduler runs in its own container against the same database. Reading
+  the flag made the dashboard report the automation dead while `job_runs` showed a
+  cycle succeeding milliseconds earlier.
 
 ## 9. Evaluation
 
@@ -399,6 +430,18 @@ cp .env.example .env.local    # NEXT_PUBLIC_API_URL and the shared backend SESSI
 npm run dev
 ```
 
+> **The Gemini free tier will not run this product.** It allows **20 requests per day,
+> per model** — and a single recovery cycle over the eight seeded demo invoices needs a
+> diagnosis plus a draft for each, so one cycle nearly exhausts a day. Past that point
+> every call returns `429 RESOURCE_EXHAUSTED`, the system falls back to deterministic
+> rules exactly as designed, and the runtime banner correctly reports `ai: degraded`.
+>
+> This is easy to misread as broken models or slow responses, because a partly-spent
+> quota fails intermittently and can surface as timeouts. If the banner says `degraded`,
+> check the quota before suspecting the code: the API's own error names it. Enable
+> billing on the Google Cloud project behind the key to lift it — Flash models cost very
+> little at this volume, and nothing in the code changes.
+
 **Environment variables**
 
 | Variable | Purpose | Notes |
@@ -406,7 +449,7 @@ npm run dev
 | `DATABASE_URL` | Postgres connection | |
 | `RAZORPAY_KEY_ID` / `_SECRET` | Payment Links | **Test keys only** (`rzp_test_…`) |
 | `RAZORPAY_WEBHOOK_SECRET` | Signature verification | From the dashboard webhook |
-| `GOOGLE_API_KEY` | Gemini | Free tier is **20 requests/day per model** |
+| `GOOGLE_API_KEY` | Gemini | Free tier is **20 requests/day per model** — see the warning above |
 | `RESEND_API_KEY` | Email | |
 | `AUTH_EMAIL_FROM` | OTP and password-recovery sender | `Vasooli <noreply@vasooli.com>`; domain verified in Resend |
 | `EMAIL_DRY_RUN` | Record without sending | `true` unless demoing |
@@ -449,11 +492,21 @@ npm audit --audit-level=high
 
 ## 13. Deployment
 
-Backend runs from `backend/Dockerfile` in Docker Compose on AWS EC2; Caddy terminates
-TLS, and PostgreSQL runs on encrypted private Multi-AZ RDS so it is not in the EC2
-failure domain. The frontend is deployed on Vercel. See `deploy/README.md` for the
-exact migration order, health checks, mandatory off-host backups, restore drills, and
-external dead-man alerts.
+Backend runs from `backend/Dockerfile` in Docker Compose on AWS EC2, with Caddy
+terminating TLS. The frontend is on Vercel.
+
+**PostgreSQL currently runs as a container on the same EC2 host** (`postgres:17`, the
+`db` service in `docker-compose.prod.yml`), so the database *is* in the EC2 failure
+domain. `docker-compose.rds.yml` exists for the managed-database topology and is what
+section 14 refers to as outstanding — swapping to it means pointing `DATABASE_URL` at
+RDS and deleting the `db` service. Until that happens, losing the instance loses the
+database, and the only copies are the nightly dumps under `deploy/backups/` on that
+same host (`BACKUP_S3_URI` is unset, so they are not shipped off-box).
+
+Code reaches the server by **rsync, not `git pull`** — there is no `.git` on the host.
+`deploy/README.md` §3 has the exact sequence, including the configuration pre-flight
+that must run before any restart, the migration order, health checks, backups, restore
+drills, and the dead-man alert setup.
 
 ## 14. Current production status and known limitations
 
@@ -486,9 +539,27 @@ below is completed:
   payments and provider-net reconciliation, promises, dispute review, operational
   exceptions, and the append-only audit trail. All reads and actions are permissioned
   and constrained to the authenticated merchant.
-- New workspaces receive a bounded seven-day Starter trial configured by
-  `LIVE_TRIAL_DAYS`. Growth and Scale have no trial. When the Starter trial expires,
-  billable import and recovery operations fail closed until a subscription is active.
+- **Registration no longer opens a workspace.** It used to hand out a working trial
+  before any payment instrument had been seen, so the first time a card was tested was
+  the day the trial ended and the first charge failed. Signing up now ends on
+  `/live/start`, a dedicated activation page, and `require_active_subscription` refuses
+  every workspace route with **402 Payment Required** until a subscription is live.
+  `/api/live/auth` and `/api/live/billing` are deliberately exempt — a merchant who
+  cannot reach billing could never pay, which would make the gate permanent.
+
+- **Two ways in, and the merchant picks.** A trial takes only a refundable ₹2
+  (`TRIAL_AUTH_AMOUNT_PAISE`) to verify the Autopay mandate, and defers the plan charge
+  by `LIVE_TRIAL_DAYS`; starting immediately authorises the full plan amount that day
+  with no mandate fee. `start_trial` on the checkout request is a *request*, not an
+  instruction: `trial_is_available` still decides, so a returning merchant cannot
+  collect a second free week by sending the flag, and the response reports which path
+  actually happened. Billing settings inside the dashboard always buys the plan
+  outright and never runs the mandate flow.
+
+- A mandate cannot be validated for nothing — a bank or UPI app will not confirm a
+  recurring debit without a real payment — which is why the ₹2 exists and is refunded
+  as soon as Razorpay reports the subscription `authenticated`. That is also what makes
+  the first post-trial charge run against an instrument already proven to work.
 
 - Zoho Books OAuth and invoice reads exist, and a locked scheduler polls connected
   Zoho/Tally sources. Zoho accounts with multiple Books organizations are rejected
