@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { liveGet, livePost, reauthLive } from "@/lib/live-api";
 import type { PlanSummary, SubscriptionState } from "@/lib/subscription";
@@ -65,6 +65,21 @@ export default function StartPage() {
   const [awaitingPayment, setAwaitingPayment] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
+  // Refs, not state, because both guards have to hold BEFORE the next render.
+  //
+  // `busy` only disables the button once React has re-rendered. A merchant holding
+  // Enter — or clicking twice — submits again inside that gap, and every one of those
+  // submissions used to run in full: four Enters produced four re-auth calls, four
+  // checkout requests and four Razorpay tabs. The extra requests are what filled the
+  // console with errors, and two checkout calls racing each other can get past the
+  // server's "you already have a checkout in flight" test and register a second
+  // subscription on the merchant's Razorpay account.
+  const submitting = useRef(false);
+  // The activation poller, so it can be stopped from anywhere — including unmount.
+  // It used to be a local `timer`, which meant nothing could cancel it once the page
+  // went away: leaving mid-payment left an interval calling the API every three
+  // seconds for the rest of the session, against a component that no longer existed.
+  const poll = useRef<number | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -100,6 +115,37 @@ export default function StartPage() {
     };
   }, []);
 
+  const stopPolling = useCallback(() => {
+    if (poll.current !== null) {
+      window.clearInterval(poll.current);
+      poll.current = null;
+    }
+  }, []);
+
+  useEffect(() => stopPolling, [stopPolling]);
+
+  /**
+   * Re-read the subscription after the merchant comes back from checkout.
+   *
+   * Coming back means one of two things and the page cannot tell them apart on its
+   * own: the payment was abandoned, or it went through and the webhook landed in the
+   * moment between the last poll and the tab closing. Asking the server settles it,
+   * so a merchant who did pay is not left staring at the plan picker.
+   */
+  const refreshSubscription = useCallback(async () => {
+    if (!merchant) return;
+    try {
+      const state = await liveGet<SubscriptionState>("/api/live/billing/subscription", merchant);
+      setSubscription(state);
+      if (state.is_active) {
+        window.localStorage.removeItem("vasooli_pending_plan");
+        router.replace("/live");
+      }
+    } catch {
+      /* The plan choice on screen is still valid; leave it alone. */
+    }
+  }, [merchant, router]);
+
   // Whether the free trial is still on the table. The server is the authority; this
   // only decides which buttons to render, and the response corrects the page if the
   // two ever disagree.
@@ -121,20 +167,26 @@ export default function StartPage() {
    * webhook arrives — which can land after the redirect either way.
    */
   function waitForActivation(checkoutTab: Window | null) {
+    // Only ever one watcher. Anything already running is watching a tab the merchant
+    // has moved on from, and letting them accumulate meant a stale one could fire
+    // "Checkout timed out" over a checkout that was going perfectly well.
+    stopPolling();
     // Computed on the first tick rather than here: `Date.now()` in the function body
     // is read during render, which the purity rule correctly rejects.
     let deadline = 0;
-    const timer = window.setInterval(async () => {
+    poll.current = window.setInterval(async () => {
       if (deadline === 0) deadline = Date.now() + 15 * 60 * 1000;
-      // Merchant closed the payment tab themselves: stop waiting, leave them here.
+      // Merchant closed the payment tab themselves: stop waiting, leave them here —
+      // but ask the server first, in case they closed it on a payment that worked.
       if (checkoutTab && checkoutTab.closed) {
-        window.clearInterval(timer);
+        stopPolling();
         setAwaitingPayment(false);
+        void refreshSubscription();
         return;
       }
       // Fifteen minutes is longer than any hosted page stays useful.
       if (Date.now() > deadline) {
-        window.clearInterval(timer);
+        stopPolling();
         setAwaitingPayment(false);
         setError("Checkout timed out. If you completed the payment, reload this page.");
         return;
@@ -145,7 +197,7 @@ export default function StartPage() {
           merchant,
         );
         if (!state.is_active) return;
-        window.clearInterval(timer);
+        stopPolling();
         window.localStorage.removeItem("vasooli_pending_plan");
         // Close the tab this page opened, then move to the workspace.
         try {
@@ -162,6 +214,10 @@ export default function StartPage() {
 
   async function pay(startTrial: boolean, confirmPassword: string) {
     if (!plan || !merchant) return;
+    // The guard that actually holds. Set synchronously, so the second and third
+    // Enter of a held key return here instead of starting another checkout.
+    if (submitting.current) return;
+    submitting.current = true;
     setBusy(plan.slug);
     setError(null);
     try {
@@ -175,17 +231,21 @@ export default function StartPage() {
         { "X-Reauth-Token": challenge.reauth_token },
       );
       if (result.checkout_url) {
-        setPassword("");
-        setPendingTrial(null);
-        setAwaitingPayment(true);
         const tab = window.open(result.checkout_url, "_blank", "noopener=false");
         if (!tab) {
-          setAwaitingPayment(false);
+          // Nothing opened, so nothing has been confirmed: keep the merchant on the
+          // form they were already filling in rather than clearing it and sending
+          // them back to pick a plan again to read a pop-up warning.
           setError(
             "Your browser blocked the payment window. Allow pop-ups for this site and try again.",
           );
           return;
         }
+        // Cleared only now that the tab is genuinely open. The password does not stay
+        // in component state a moment longer than the request that needed it.
+        setPassword("");
+        setPendingTrial(null);
+        setAwaitingPayment(true);
         waitForActivation(tab);
         return;
       }
@@ -195,6 +255,10 @@ export default function StartPage() {
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not start checkout");
     } finally {
+      // Released on every path, including the failed ones: a mistyped password has to
+      // stay retryable. What it prevents is a second attempt while the first is still
+      // in flight, not a second attempt at all.
+      submitting.current = false;
       setBusy(null);
     }
   }
@@ -283,8 +347,13 @@ export default function StartPage() {
       {plan && !awaitingPayment && pendingTrial !== null ? (
         <form
           className="flex flex-col gap-3 rounded-lg border border-line bg-panel px-4 py-4"
+          aria-busy={busy !== null}
           onSubmit={(event) => {
             event.preventDefault();
+            // Repeated here as well as inside `pay` so the intent is visible at the
+            // point a browser can fire this several times over: implicit submission
+            // from a held Enter key does not wait for React to disable the button.
+            if (busy !== null || submitting.current) return;
             void pay(pendingTrial, password);
           }}
         >
@@ -304,9 +373,14 @@ export default function StartPage() {
               type="password"
               autoComplete="current-password"
               required
+              // Read-only rather than disabled while the request is in flight: a
+              // disabled field loses focus and empties itself in some password
+              // managers, and the merchant should be able to see what they typed if
+              // the attempt comes back rejected.
+              readOnly={busy !== null}
               value={password}
               onChange={(event) => setPassword(event.target.value)}
-              className="rounded-md border border-line bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-accent"
+              className="rounded-md border border-line bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-accent read-only:opacity-60"
             />
           </label>
           <div className="flex flex-wrap gap-2">

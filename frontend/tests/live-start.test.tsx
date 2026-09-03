@@ -50,6 +50,7 @@ describe("activation page", () => {
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
+    vi.useRealTimers();
     window.localStorage.clear();
   });
 
@@ -109,5 +110,94 @@ describe("activation page", () => {
     await confirmWith(/Start 7-day trial/);
     // Silence here looked like a broken button.
     expect(await screen.findByRole("alert")).toHaveTextContent(/pop-ups/i);
+    // And the form they were filling in is still there. Clearing it before knowing the
+    // tab had opened sent them back to pick a plan again just to read the warning.
+    expect(screen.getByLabelText(/your password/i)).toBeInTheDocument();
+  });
+
+  it("takes one payment however many times Enter is pressed", async () => {
+    mockLoad(NEW_MERCHANT);
+    // A real round trip is not instant. Hold the re-auth open across the extra
+    // presses, which is the gap the merchant was hammering.
+    let release: (value: unknown) => void = () => {};
+    vi.mocked(reauthLive).mockReturnValue(
+      new Promise((resolve) => {
+        release = resolve;
+      }) as never,
+    );
+    vi.mocked(livePost).mockResolvedValue({ checkout_url: "https://rzp.io/x" } as never);
+    const open = vi.spyOn(window, "open").mockReturnValue({ closed: false, close: vi.fn() } as never);
+
+    render(<StartPage />);
+    fireEvent.click(await screen.findByRole("button", { name: /Start 7-day trial/ }));
+    const field = await screen.findByLabelText(/your password/i);
+    fireEvent.change(field, { target: { value: "hunter2hunter2" } });
+
+    const form = field.closest("form")!;
+    for (let press = 0; press < 4; press += 1) fireEvent.submit(form);
+    release({ status: "ok", reauth_token: "t" });
+
+    await waitFor(() => expect(open).toHaveBeenCalled());
+    // Four presses used to mean four re-auth calls, four checkout requests and four
+    // Razorpay tabs — the console errors the merchant reported, and two checkout
+    // calls racing each other can register a second subscription on their account.
+    expect(reauthLive).toHaveBeenCalledTimes(1);
+    expect(livePost).toHaveBeenCalledTimes(1);
+    expect(open).toHaveBeenCalledTimes(1);
+  });
+
+  it("still lets the merchant retry after a rejected password", async () => {
+    mockLoad(NEW_MERCHANT);
+    vi.mocked(reauthLive).mockRejectedValueOnce(new Error("Password is incorrect"));
+
+    render(<StartPage />);
+    await confirmWith(/Start 7-day trial/);
+    expect(await screen.findByRole("alert")).toHaveTextContent(/password is incorrect/i);
+
+    // The guard exists to stop a second attempt while the first is in flight, not to
+    // lock out someone who simply mistyped.
+    vi.mocked(reauthLive).mockResolvedValue({ status: "ok", reauth_token: "t" } as never);
+    fireEvent.submit(screen.getByLabelText(/your password/i).closest("form")!);
+    await waitFor(() => expect(reauthLive).toHaveBeenCalledTimes(2));
+  });
+
+  it("asks the server again when the payment tab is closed", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    mockLoad(NEW_MERCHANT);
+    vi.mocked(livePost).mockResolvedValue({ checkout_url: "https://rzp.io/x" } as never);
+    const tab = { closed: false, close: vi.fn() };
+    vi.spyOn(window, "open").mockReturnValue(tab as never);
+
+    render(<StartPage />);
+    await confirmWith(/Start 7-day trial/);
+    await screen.findByText(/waiting for your payment/i);
+
+    // The merchant pays, then closes the tab before the poller notices.
+    mockLoad({ ...NEW_MERCHANT, is_active: true });
+    tab.closed = true;
+    await vi.advanceTimersByTimeAsync(3500);
+
+    // Closing the tab is not proof the payment failed. Asking settles it, so someone
+    // who did pay is not dropped back onto the plan picker.
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/live"));
+    expect(window.localStorage.getItem("vasooli_pending_plan")).toBeNull();
+  });
+
+  it("stops polling once the merchant leaves the page", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    mockLoad(NEW_MERCHANT);
+    vi.mocked(livePost).mockResolvedValue({ checkout_url: "https://rzp.io/x" } as never);
+    vi.spyOn(window, "open").mockReturnValue({ closed: false, close: vi.fn() } as never);
+
+    const view = render(<StartPage />);
+    await confirmWith(/Start 7-day trial/);
+    await screen.findByText(/waiting for your payment/i);
+
+    view.unmount();
+    const calls = vi.mocked(liveGet).mock.calls.length;
+    await vi.advanceTimersByTimeAsync(20_000);
+    // The interval used to outlive the page, calling the API every three seconds for
+    // the rest of the session against a component that no longer existed.
+    expect(vi.mocked(liveGet).mock.calls.length).toBe(calls);
   });
 });
