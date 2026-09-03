@@ -36,7 +36,14 @@ export function Landing() {
           sign-in — which made a working product look like a locked door. */}
           <div className="landing-actions"><Link href="/register" className="landing-button landing-button-primary">Start free for 7 days <Arrow /></Link><Link href="/login" className="landing-button landing-button-quiet">Explore the product</Link><Link href="/live/login" className="landing-button landing-button-quiet">Sign in</Link></div>
         </div>
-        <div className="landing-proof-strip landing-reveal" data-reveal><span>No card required</span><span>ERP-connected context</span><span>Razorpay reconciliation</span><span>Every action audited</span></div>
+        {/*
+          NOT "No card required" any more. The trial begins by confirming an Autopay
+          mandate, which takes a refundable ₹2 — a bank will not approve a recurring
+          debit for nothing. Promising no card and then asking for one is the kind of
+          thing that costs a merchant's trust at the worst possible moment, so the
+          strip states the actual figure instead.
+        */}
+        <div className="landing-proof-strip landing-reveal" data-reveal><span>₹2 to start, refunded</span><span>ERP-connected context</span><span>Razorpay reconciliation</span><span>Every action audited</span></div>
         <a href="#how" className="landing-scroll-cue"><span>Follow the recovery loop</span><i aria-hidden /></a>
       </section>
 
@@ -60,13 +67,39 @@ export function Landing() {
         <div className="landing-boundary landing-reveal" data-reveal><div className="landing-boundary-row"><span>Intelligence</span><strong>Classifies replies and drafts language</strong><small>Structured output, timeouts, fallbacks, and audited model metadata</small></div><div className="landing-boundary-row"><span>Control</span><strong>Decides whether communication is allowed</strong><small>Cooldowns, attempt caps, promises, disputes, suppressions, and pauses</small></div><div className="landing-boundary-row landing-boundary-final"><span>Financial truth</span><strong>Changes balances from trusted records</strong><small>Signed webhooks, authenticated reads, and attributed operator entries</small></div><p className="landing-boundary-note">Customer text and model output can never mark an invoice paid.</p></div>
       </section>
 
+      {/*
+        Measured, not asserted — and the one section that answers "does it work?"
+        rather than "what does it do?". Every figure is from `backend/eval/out/results.csv`:
+        the real policy engine, recovery cycle and webhook handler run against 150
+        held-out invoices over 45 simulated days, with a fixed seed.
+
+        The recovery rate is deliberately shown LOSING to the naive chaser. It is the
+        most persuasive number on the page precisely because it is the unflattering one:
+        anyone can chase harder, and the naive baseline does — five contacts per invoice,
+        including customers who had already paid and customers disputing the bill, at the
+        cost of 92 breaches of its own rules. Claiming to recover the most would invite
+        the question this answers instead.
+      */}
+      <section id="evidence" className="landing-proof landing-grid" aria-labelledby="evidence-title">
+        <div className="landing-story-heading"><span className="landing-section-number landing-reveal" data-reveal>04</span><div><p className="landing-eyebrow landing-reveal" data-reveal>Measured, not asserted</p><h2 id="evidence-title" className="landing-section-title landing-reveal" data-reveal>Restraint is the point.<br />So we measured what it costs.</h2></div></div>
+        <div className="landing-metrics">
+          <div className="landing-metric landing-reveal" data-reveal><strong>1.1</strong><span>Contacts per invoice</span><small>A naive chaser sends 5.17 — to everyone, including customers who already paid</small></div>
+          <div className="landing-metric landing-reveal" data-reveal><strong>0</strong><span>Compliance breaches</span><small>Across 150 invoices and 45 days. The naive baseline committed 92</small></div>
+          <div className="landing-metric landing-reveal" data-reveal><strong>98.7%</strong><span>Diagnosis accuracy</span><small>Against held-out labels the classifier never sees</small></div>
+        </div>
+        <p className="landing-proof-note landing-reveal" data-reveal>Vasooli recovers 65% of the ledger by value against the naive chaser&rsquo;s 85% — about
+        four-fifths of the result for a fifth of the contact, and none of the behaviour you would
+        have to defend to a customer. The claim is not that it recovers the most. It is that it
+        recovers most of it without burning the relationship that produced the invoice.</p>
+      </section>
+
       <section id="operations" className="landing-trace-section landing-grid" aria-labelledby="operations-title">
-        <div className="landing-trace-copy"><span className="landing-section-number landing-reveal" data-reveal>04</span><p className="landing-eyebrow landing-reveal" data-reveal>Conversation and operations</p><h2 id="operations-title" className="landing-section-title landing-reveal" data-reveal>See what happened.<br />Know what happens next.</h2><p className="landing-explainer landing-reveal" data-reveal>A single operational trail connects synchronized invoices, policy decisions, outbound status, verified replies, promises, disputes, operator actions, payment events, and recovery closure.</p></div>
+        <div className="landing-trace-copy"><span className="landing-section-number landing-reveal" data-reveal>05</span><p className="landing-eyebrow landing-reveal" data-reveal>Conversation and operations</p><h2 id="operations-title" className="landing-section-title landing-reveal" data-reveal>See what happened.<br />Know what happens next.</h2><p className="landing-explainer landing-reveal" data-reveal>A single operational trail connects synchronized invoices, policy decisions, outbound status, verified replies, promises, disputes, operator actions, payment events, and recovery closure.</p></div>
         <div className="landing-trace landing-reveal" data-reveal aria-label="Illustrative recovery workflow"><div className="landing-trace-head"><span>RECOVERY WORKFLOW</span><span className="landing-status"><i /> AUDITED</span></div><ol>{TRACE.map(([time, event, detail], index) => <li key={`${time}-${event}`} style={{ "--trace-index": index } as CSSProperties}><time>{time}</time><span className="landing-trace-dot" /><div><strong>{event}</strong><small>{detail}</small></div></li>)}</ol></div>
       </section>
 
       <section className="landing-proof landing-grid" aria-labelledby="control-title">
-        <div className="landing-story-heading"><span className="landing-section-number landing-reveal" data-reveal>05</span><div><p className="landing-eyebrow landing-reveal" data-reveal>Operational controls</p><h2 id="control-title" className="landing-section-title landing-reveal" data-reveal>Built for accountable teams.</h2></div></div>
+        <div className="landing-story-heading"><span className="landing-section-number landing-reveal" data-reveal>06</span><div><p className="landing-eyebrow landing-reveal" data-reveal>Operational controls</p><h2 id="control-title" className="landing-section-title landing-reveal" data-reveal>Built for accountable teams.</h2></div></div>
         <div className="landing-metrics"><div className="landing-metric landing-reveal" data-reveal><strong>Scoped</strong><span>Workspace access</span><small>Role permissions and tenant-bound data access</small></div><div className="landing-metric landing-reveal" data-reveal><strong>Replay-safe</strong><span>Integration events</span><small>Provider event identities and idempotent reconciliation</small></div><div className="landing-metric landing-reveal" data-reveal><strong>Observable</strong><span>Background operations</span><small>Run history, retries, exceptions, and stale-connection signals</small></div></div>
         <p className="landing-proof-note landing-reveal" data-reveal>Payment state is derived from integer minor-unit records. Sensitive connector secrets are encrypted at rest, and high-impact actions require explicit permission with recent re-authentication where configured.</p>
       </section>

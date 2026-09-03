@@ -130,7 +130,9 @@ async function currentManifest() {
   return {
     schema_version: 1,
     frozen_at_tag: "demo-freeze-2026-08-30",
-    rebaselined_at: "2026-09-01",
+    // Bumped by hand when the baseline is deliberately recaptured, so the manifest
+    // says WHEN it was last reviewed rather than when the script was written.
+    rebaselined_at: "2026-09-03",
     backend_goldens: await Promise.all(goldenPaths.map(fileRecord)),
     screenshots: await Promise.all(screenshotRoutes.map(screenshotRecord)),
     frozen_frontend_sources: await Promise.all(sourcePaths.map(fileRecord)),

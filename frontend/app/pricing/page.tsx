@@ -27,7 +27,7 @@ export default function PricingPage() {
         <p className="public-eyebrow">Simple, transparent pricing</p>
         <h1>Recover more than<br /><span>your software costs.</span></h1>
         <p>Start with the receivables you manage today. Every plan includes the controlled recovery loop, trusted payment state, and an audit trail your team can rely on.</p>
-        <div className="pricing-trust"><span>7-day Starter trial</span><span>No card required for Starter</span><span>Cancel anytime</span></div>
+        <div className="pricing-trust"><span>7-day Starter trial</span><span>₹2 to verify the mandate, refunded</span><span>Cancel anytime</span></div>
       </section>
       <section className="pricing-grid" aria-label="Vasooli plans">
         {PLANS.map((plan) => <article key={plan.name} className={`pricing-card${plan.featured ? " pricing-card-featured" : ""}`}>

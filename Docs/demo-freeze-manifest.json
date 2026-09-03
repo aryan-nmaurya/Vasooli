@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "frozen_at_tag": "demo-freeze-2026-08-30",
-  "rebaselined_at": "2026-09-01",
+  "rebaselined_at": "2026-09-03",
   "backend_goldens": [
     {
       "path": "backend/tests/golden/demo/api_responses.json",
@@ -20,9 +20,9 @@
     {
       "route": "/",
       "path": "Docs/assets/demo-baseline/01-landing.jpg",
-      "sha256": "d5c7311f31584fe14ca3367a15177f160205c0fc8e44b3435e3b7485e3280218",
+      "sha256": "6fa9f1fb58f6881e00d18dc792d345661b03c28f4c90add03cca2ffd60a44c34",
       "format": "jpeg",
-      "height": 8224,
+      "height": 9639,
       "width": 1280
     },
     {
@@ -185,7 +185,7 @@
     },
     {
       "path": "frontend/components/Landing.tsx",
-      "sha256": "057e426a6fa34dfc33d0067e79228695d2aabeb5b008b3b031466bc26fede651"
+      "sha256": "731e13d53aa3644a9c8f436aa91523666ee9b2a435344a44f9cc2226ba6d3feb"
     },
     {
       "path": "frontend/components/Nav.tsx",

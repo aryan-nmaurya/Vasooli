@@ -21,6 +21,27 @@ describe("production landing page", () => {
     expect(html).toContain("Previewed ledger import");
     expect(html).toContain("Signed webhook ingestion");
     expect(html).not.toContain("Tally");
+  });
+
+  it("does not promise a card-free trial the product no longer offers", () => {
+    const html = renderToStaticMarkup(<Landing />);
+    // The trial begins by confirming an Autopay mandate, which takes a refundable ₹2.
+    // Saying "No card required" and then asking for one is the kind of thing a merchant
+    // discovers at the worst moment.
+    expect(html).not.toContain("No card required");
+    expect(html).toContain("₹2 to start, refunded");
+  });
+
+  it("shows measured evidence rather than only claims", () => {
+    const html = renderToStaticMarkup(<Landing />);
+    // Figures come from backend/eval/out/results.csv. Pinned so a future edit cannot
+    // quietly round them into something the harness does not support.
+    expect(html).toContain("1.1");
+    expect(html).toContain("Contacts per invoice");
+    expect(html).toContain("Compliance breaches");
+    expect(html).toContain("98.7%");
+    // The unflattering number stays. Dropping it would turn measurement into marketing.
+    expect(html).toContain("65%");
     expect(html).not.toContain("any ERP");
   });
 
