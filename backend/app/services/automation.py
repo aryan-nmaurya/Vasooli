@@ -166,9 +166,17 @@ def _verdict(job_id: str, last_success: JobRun | None, last_run: JobRun | None) 
     boot. Equally, a job whose last completion was a failure is reported as failing even
     if an older run succeeded — the most recent outcome is the one that describes now.
     """
-    if not settings.scheduler_enabled:
-        return "disabled", "The scheduler is switched off in this deployment."
+    # Order matters. `scheduler_enabled` describes THIS process, and in production it
+    # is false for the API container by design — the scheduler runs in its own
+    # container against the same database. Checking the flag first therefore reported
+    # "the scheduler is switched off" while `last_run_status` said "succeeded" 408ms
+    # earlier, which is what made the dashboard tell a judge the automation was dead.
+    #
+    # Job history is the cross-process source of truth, so it is consulted first.
+    # "Disabled" is only true when nothing is running it ANYWHERE.
     if last_run is None:
+        if not settings.scheduler_enabled:
+            return "disabled", "The scheduler is switched off in this deployment."
         return "unknown", "No run has been recorded yet on this deployment."
 
     if last_success is None:

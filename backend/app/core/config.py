@@ -93,7 +93,10 @@ class Settings(BaseSettings):
     # 4/4 in about a second. The newest model is not the fastest one here.
     gemini_primary_model: str = "gemini-3.5-flash"
     gemini_fallback_model: str = "gemini-3.6-flash"
-    llm_timeout_seconds: float = 20.0
+    #: 20s was too tight for drafting: both Gemini models returned 504
+    #: DEADLINE_EXCEEDED on real prompts often enough to keep the cycle's breaker
+    #: tripped, while a trivial probe answered in about a second.
+    llm_timeout_seconds: float = 45.0
     llm_max_retries: int = 2
 
     # --- Email ---
