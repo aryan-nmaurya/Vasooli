@@ -26,13 +26,13 @@ export function PaymentGate() {
 
   useEffect(() => {
     // Already where we would send them; redirecting again would loop.
-    if (pathname.startsWith("/live/settings/billing")) return;
+    if (pathname.startsWith("/live/start")) return;
 
     function onRejection(event: PromiseRejectionEvent) {
       if (!isPaymentRequired(event.reason)) return;
       // Handled: without this the browser also logs it as uncaught noise.
       event.preventDefault();
-      router.replace("/live/settings/billing?reason=payment_required");
+      router.replace("/live/start?reason=payment_required");
     }
 
     window.addEventListener("unhandledrejection", onRejection);

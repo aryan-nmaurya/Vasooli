@@ -228,9 +228,11 @@ export function LiveRegistrationForm() {
             // so go straight to billing; otherwise the choice rides through the login
             // page in storage and billing pre-selects it on arrival.
             window.localStorage.setItem("vasooli_pending_plan", chosenPlan);
-            window.location.assign(
-              signedIn ? "/live/settings/billing?reason=new_signup" : "/live/login",
-            );
+            // `/live/start`, not billing settings. That screen manages an established
+            // subscription — renewal dates, a cancel control, a plan-change grid — none
+            // of which is true for someone who has not paid yet, and it made the
+            // one-time mandate charge look like a standing feature of billing.
+            window.location.assign(signedIn ? "/live/start" : "/live/login");
           }}
           className="auth-primary-link w-full disabled:cursor-not-allowed disabled:opacity-[.42] disabled:hover:translate-y-0 disabled:hover:bg-[#55c7d6]"
         >

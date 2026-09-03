@@ -41,6 +41,18 @@ log = get_logger("billing")
 
 class CheckoutRequest(BaseModel):
     plan_slug: str = Field(pattern=r"^(starter|growth|scale)$")
+    #: Whether this checkout should carry the free trial.
+    #:
+    #: Asked for rather than assumed. The two paths take different money up front —
+    #: a trial takes only the refundable mandate verification and defers the plan
+    #: charge, while starting immediately authorises the full plan amount today — so
+    #: which one a merchant is agreeing to has to be their explicit choice, made on a
+    #: screen that states the figure. It defaults to False so that the ordinary
+    #: in-dashboard plan change never quietly turns into a ₹2 mandate flow.
+    #:
+    #: Requesting a trial does not grant one: `trial_is_available` still decides, so a
+    #: returning merchant cannot collect a second trial by asking for it.
+    start_trial: bool = False
 
 
 @router.get("/plans")
@@ -112,6 +124,12 @@ def checkout(
         superseded = existing
         existing = None
 
+    # Assigned in both branches below. Declared here because the re-issue path does not
+    # create a provider subscription and so never reaches the decision — leaving it
+    # undefined would make reporting the terms a NameError on exactly the path a
+    # merchant hits by reloading an abandoned checkout.
+    trial_days: int | None = None
+
     if existing is not None:
         if existing.plan_id != plan.id:
             # A live subscription is a different matter: changing its plan has billing
@@ -124,6 +142,12 @@ def checkout(
         # A checkout already in flight: re-issue a fresh provider link rather than a
         # stored one, which Razorpay would have expired.
         checkout_url = checkout_url_for(existing)
+        # Report the terms this checkout was CREATED with, not the ones this request
+        # asked for. The provider subscription already exists; sending `start_trial`
+        # again does not change it, and echoing the request back would tell the
+        # merchant they owe ₹2 when the link in front of them charges the full plan.
+        if existing.auth_amount_paise > 0:
+            trial_days = settings.live_trial_days
     else:
         if superseded is not None:
             # Abandon it at the provider too, or the merchant accumulates half-finished
@@ -142,7 +166,7 @@ def checkout(
             # of ₹2, on the screen that had just promised them a free trial.
             trial_days = (
                 settings.live_trial_days
-                if trial_is_available(session, context.merchant.id)
+                if payload.start_trial and trial_is_available(session, context.merchant.id)
                 else None
             )
             provider_id, checkout_url = create_provider_subscription(plan, trial_days=trial_days)
@@ -181,6 +205,15 @@ def checkout(
         "amount_paise": amount_paise,
         "provider_plan_id": provider_plan_id,
         "checkout_required": True,
+        # What this checkout actually takes now, so the UI never has to re-derive it.
+        # `trial_days` is the server's decision, not the request's: asking for a trial
+        # a merchant is not eligible for returns a normal paid checkout, and the
+        # response says so rather than letting the page keep promising ₹2.
+        "trial_applied": trial_days is not None,
+        "trial_days": trial_days,
+        "amount_due_now_paise": (
+            settings.trial_auth_amount_paise if trial_days is not None else amount_paise
+        ),
         # Where the merchant authorises the mandate and pays. None when Razorpay
         # subscriptions are not configured, which the UI reports rather than
         # pretending a checkout exists.

@@ -17,8 +17,6 @@ import { PlanSummary, SubscriptionState, formatInr, useSubscription } from "@/li
 
 type CheckoutResult = { checkout_url: string | null; plan: string; status: string };
 
-/** Matches LIVE_TRIAL_DAYS on the server; the signup plan step promises the same. */
-const TRIAL_DAYS = 7;
 
 /** Reads as a sentence in the UI, so the singular case has to be right. */
 function days(n: number) {
@@ -58,9 +56,6 @@ export default function LiveBillingPage() {
   }, []);
 
   const { subscription, loaded, refresh } = useSubscription(merchant);
-  // What the next checkout actually takes now. Null once the merchant has subscribed
-  // before, because the trial and its verification charge belong to the first one.
-  const mandatePaise = subscription?.mandate_verification_paise ?? null;
 
   useEffect(() => {
     if (!merchant) return;
@@ -81,7 +76,9 @@ export default function LiveBillingPage() {
       const result = await livePost<CheckoutResult>(
         "/api/live/billing/checkout",
         merchant,
-        { plan_slug: selected },
+        // Never the trial. `start_trial` defaults to false server-side too; passing it
+        // explicitly keeps the intent of this screen readable at the call site.
+        { plan_slug: selected, start_trial: false },
         { "X-Reauth-Token": proof.reauth_token },
       );
       if (result.checkout_url) {
@@ -137,14 +134,10 @@ export default function LiveBillingPage() {
           className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm leading-6 text-amber-900 dark:text-amber-200"
         >
           <p className="font-semibold">
-            {sentHere === "signup"
-              ? "One step left: confirm your plan."
-              : "Choose a plan to open your workspace."}
+            {"Choose a plan to open your workspace."}
           </p>
           <p className="mt-1">
-            {sentHere === "signup"
-              ? `Your ${TRIAL_DAYS}-day free trial starts as soon as you confirm. A ₹2 charge verifies your Autopay mandate and is refunded automatically.`
-              : "Your subscription is not active yet, so the workspace is closed. Your data is safe and nothing has been deleted — pick a plan below and it opens again."}
+            {"Your subscription is not active yet, so the workspace is closed. Your data is safe and nothing has been deleted — pick a plan below and it opens again."}
           </p>
         </div>
       ) : null}
@@ -283,20 +276,12 @@ export default function LiveBillingPage() {
           title={`Continue with ${plans.find((p) => p.slug === selected)?.name ?? selected}`}
           hint="Re-entering your password authorises the subscription. You will be taken to Razorpay to complete it."
         >
-          {mandatePaise ? (
-            <div className="mb-4 rounded-lg border border-line bg-surface px-3 py-2.5 text-xs leading-5 text-ink-3">
-              <p className="font-semibold text-ink">
-                A {formatInr(mandatePaise)} charge confirms your Autopay mandate.
-              </p>
-              <p className="mt-1">
-                Your bank or UPI app needs a real payment to confirm you approved recurring
-                debits, so {formatInr(mandatePaise)} is taken now and{" "}
-                <strong className="font-semibold text-ink">refunded automatically</strong> once
-                the mandate is confirmed. Your plan itself is not charged until your{" "}
-                {subscription?.trial_days ?? 7}-day trial ends, and you can cancel at any time.
-              </p>
-            </div>
-          ) : null}
+          {/*
+            No mandate explainer here any more. The ₹2 verification belongs to the
+            one-time activation on `/live/start`; a plan change made from inside the
+            dashboard authorises the plan amount, so describing a refundable ₹2 charge
+            on this screen described a payment that was not about to happen.
+          */}
           <form onSubmit={startCheckout} className="flex flex-wrap items-end gap-3">
             <label className={`min-w-56 flex-1 ${labelClass}`}>
               Confirm current password

@@ -237,14 +237,73 @@ def test_signup_checkout_asks_for_the_trial_and_the_verification_charge(
     from app.api import billing as billing_api
 
     context = _context(session, live_merchant)
-    body = billing_api.checkout(billing_api.CheckoutRequest(plan_slug="starter"), session, context)
+    body = billing_api.checkout(
+        billing_api.CheckoutRequest(plan_slug="starter", start_trial=True), session, context
+    )
 
     assert body["checkout_required"] is True
+    assert body["trial_applied"] is True
+    assert body["amount_due_now_paise"] == 200, "the trial takes only the verification charge"
     sent = fake.created[-1]
     assert sent["auth_amount_paise"] == 200, (
         "a signing-up merchant must authorise ₹2, not the full plan amount"
     )
     assert sent["start_at"] is not None, "the first billing cycle must be pushed past the trial"
+
+
+def test_starting_immediately_charges_the_plan_and_takes_no_mandate_fee(
+    session, live_merchant, plan, fake, plan_ids_match_config
+):
+    """The other path a merchant can choose, and the one the billing page always uses.
+
+    Someone who does not want a trial is buying the plan today. Sending them through
+    the ₹2 mandate flow would defer the charge they asked to make now, and the two
+    take different money up front — so the choice is explicit and the response says
+    which one happened.
+    """
+    from app.api import billing as billing_api
+
+    context = _context(session, live_merchant)
+    body = billing_api.checkout(
+        billing_api.CheckoutRequest(plan_slug="growth", start_trial=False), session, context
+    )
+
+    assert body["trial_applied"] is False
+    assert body["amount_due_now_paise"] == body["amount_paise"], (
+        "starting immediately authorises the full plan amount, not ₹2"
+    )
+    sent = fake.created[-1]
+    assert sent["auth_amount_paise"] is None, "no mandate verification fee outside the trial"
+    assert sent["start_at"] is None, "billing starts now, so the first cycle is not deferred"
+
+
+def test_asking_for_a_trial_does_not_grant_a_second_one(
+    session, live_merchant, plan, fake, plan_ids_match_config
+):
+    """`start_trial` is a request, not an instruction.
+
+    A returning merchant could otherwise collect a fresh free week on every
+    resubscribe simply by sending the flag.
+    """
+    from app.api import billing as billing_api
+
+    context = _context(session, live_merchant)
+    billing_api.checkout(
+        billing_api.CheckoutRequest(plan_slug="starter", start_trial=True), session, context
+    )
+    # Retire it, so the merchant is "returning" rather than new.
+    row = session.exec(
+        select(BillingSubscription).where(BillingSubscription.merchant_id == live_merchant.id)
+    ).first()
+    row.status = "cancelled"
+    session.add(row)
+    session.commit()
+
+    body = billing_api.checkout(
+        billing_api.CheckoutRequest(plan_slug="starter", start_trial=True), session, context
+    )
+    assert body["trial_applied"] is False, "the trial belongs to a merchant's first subscription"
+    assert body["amount_due_now_paise"] == body["amount_paise"]
 
 
 def test_an_abandoned_checkout_does_not_trap_the_merchant_on_that_plan(

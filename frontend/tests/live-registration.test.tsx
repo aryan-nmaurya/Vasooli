@@ -131,11 +131,15 @@ describe("live registration", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: /Growth/ }));
     expect(cta).toBeEnabled();
-    // Checkout needs an authenticated session, so the choice is carried in storage
-    // and the billing page pre-selects it rather than asking twice.
+    // Checkout needs an authenticated session, so the choice is carried in storage and
+    // the activation page opens on it rather than asking twice.
     fireEvent.click(cta);
     expect(window.localStorage.getItem("vasooli_pending_plan")).toBe("growth");
-    expect(assign).toHaveBeenCalledWith("/live/settings/billing?reason=new_signup");
+    // `/live/start`, NOT billing settings. That screen manages an established
+    // subscription — renewal date, cancel control, plan-change grid — none of which is
+    // true for a merchant who has never paid, and it made the one-time ₹2 mandate look
+    // like a standing feature of billing.
+    expect(assign).toHaveBeenCalledWith("/live/start");
   });
 
   it("does not promise a free trial while telling the merchant no card is needed", () => {
