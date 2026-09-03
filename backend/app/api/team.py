@@ -22,7 +22,12 @@ from app.models import (
     User,
 )
 from app.services.auth import audit, new_opaque_token, normalize_email, token_hash
-from app.services.authorization import LiveContext, require_live_permission, set_merchant_context
+from app.services.authorization import (
+    LiveContext,
+    merchant_scope,
+    require_live_permission,
+    set_merchant_context,
+)
 from app.services.billing import BillingEntitlementError, assert_seat_entitled
 
 router = APIRouter(prefix="/api/live", tags=["live-team"])
@@ -164,12 +169,13 @@ def invite(
         ip_address=client_ip(request),
         detail={"email": email, "role": role.slug},
     )
-    session.commit()
-    return {
-        "id": str(row.id),
-        "status": "pending",
-        "invitation_token": raw if settings.environment in {"local", "test"} else None,
-    }
+    with merchant_scope(session, context.merchant.id):
+        session.commit()
+        return {
+            "id": str(row.id),
+            "status": "pending",
+            "invitation_token": raw if settings.environment in {"local", "test"} else None,
+        }
 
 
 @router.delete("/team/invitations/{invitation_id}")
@@ -312,5 +318,10 @@ def accept_invite(payload: AcceptInviteRequest, request: Request, session: Sessi
         object_id=membership.id,
         ip_address=client_ip(request),
     )
+    # Read before the commit rather than holding a merchant scope: this route runs for
+    # someone who is not yet a member of the merchant, so there is no LiveContext to
+    # scope to. The value is a plain UUID once copied out, so the post-commit re-SELECT
+    # that would otherwise fail under RLS never happens.
+    accepted_merchant_id = str(invitation.merchant_id)
     session.commit()
-    return {"status": "accepted", "merchant_id": str(invitation.merchant_id)}
+    return {"status": "accepted", "merchant_id": accepted_merchant_id}

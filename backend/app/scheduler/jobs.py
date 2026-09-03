@@ -15,7 +15,7 @@ from app.core.config import settings
 from app.core.db import engine
 from app.core.logging import get_logger
 from app.models import ErpConnection, Merchant
-from app.services.authorization import service_scope, set_merchant_context
+from app.services.authorization import merchant_scope, service_scope, set_merchant_context
 from app.services.automation import record_run
 from app.services.billing_reconciliation import reconcile_billing
 from app.services.closure import retry_pending_closures
@@ -227,7 +227,11 @@ def erp_sync_job() -> None:
                                 session.rollback()
                                 continue
                             attempted += 1
-                            run = sync_connection(session, connection)
+                            # Held across the sync: `sync_connection` commits its own
+                            # transactions (the refreshed token, then each batch), and
+                            # the tenant set above dies at the first of them.
+                            with merchant_scope(session, merchant_id):
+                                run = sync_connection(session, connection)
                             if run.status == "completed":
                                 completed += 1
                             else:

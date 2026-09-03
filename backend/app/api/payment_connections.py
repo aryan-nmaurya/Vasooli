@@ -12,7 +12,12 @@ from app.core.config import settings
 from app.core.db import SessionDep
 from app.core.middleware import client_ip
 from app.models import PaymentConnection
-from app.services.authorization import LiveContext, require_live_permission, require_live_reauth
+from app.services.authorization import (
+    LiveContext,
+    merchant_scope,
+    require_live_permission,
+    require_live_reauth,
+)
 from app.services.oauth import (
     OAuthConfigurationError,
     OAuthExchangeError,
@@ -92,6 +97,12 @@ def oauth_callback(
         set_merchant_context(session, state_row.merchant_id)
         tokens = exchange_razorpay_code(code, state_row.redirect_uri)
         connection = store_razorpay_tokens(session, state_row, tokens)
+        # Copied out before the commit. `set_merchant_context` above is
+        # transaction-local and dies here, so a post-commit attribute read would
+        # re-SELECT with no tenant and fail under the NOBYPASSRLS role production
+        # uses. The OAuth code is already spent by this point, so a 500 here is
+        # unrecoverable for the merchant — they cannot retry with the same code.
+        connected_account_id = connection.provider_account_id
         session.commit()
     except (OAuthConfigurationError, OAuthExchangeError, ValueError) as exc:
         session.rollback()
@@ -101,7 +112,7 @@ def oauth_callback(
         return {
             "status": "connected",
             "provider": "razorpay",
-            "provider_account_id": connection.provider_account_id,
+            "provider_account_id": connected_account_id,
         }
     return RedirectResponse(
         url=f"{target}?connected=razorpay", status_code=status.HTTP_303_SEE_OTHER
@@ -131,16 +142,20 @@ def oauth_refresh(
             scopes=tokens.scopes or row.scopes,
             token_expires_in=tokens.expires_in,
         )
+        # Same reason as the callback above, and the same cost: the refresh token has
+        # already been exchanged with Razorpay, so a 500 after this point leaves the
+        # merchant holding a spent token and an error message.
+        refreshed_status = refreshed.status
+        refreshed_account_id = refreshed.provider_account_id
+        refreshed_expires_at = refreshed.token_expires_at
         session.commit()
     except (OAuthConfigurationError, OAuthExchangeError, ValueError) as exc:
         session.rollback()
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
     return {
-        "status": refreshed.status,
-        "provider_account_id": refreshed.provider_account_id,
-        "expires_at": refreshed.token_expires_at.isoformat()
-        if refreshed.token_expires_at
-        else None,
+        "status": refreshed_status,
+        "provider_account_id": refreshed_account_id,
+        "expires_at": refreshed_expires_at.isoformat() if refreshed_expires_at else None,
     }
 
 
@@ -208,13 +223,14 @@ def connect(
         ip_address=client_ip(request),
         detail={"mode": row.mode, "provider_account_id": row.provider_account_id},
     )
-    session.commit()
-    return {
-        "status": row.status,
-        "mode": row.mode,
-        "provider_account_id": row.provider_account_id,
-        "webhook_secret_present": bool(row.webhook_secret_encrypted),
-    }
+    with merchant_scope(session, context.merchant.id):
+        session.commit()
+        return {
+            "status": row.status,
+            "mode": row.mode,
+            "provider_account_id": row.provider_account_id,
+            "webhook_secret_present": bool(row.webhook_secret_encrypted),
+        }
 
 
 @router.delete("")

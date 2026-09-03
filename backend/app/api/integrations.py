@@ -15,7 +15,12 @@ from app.core.db import SessionDep
 from app.core.middleware import client_ip
 from app.models import ErpConnection, ErpSyncRun
 from app.services.auth import audit
-from app.services.authorization import LiveContext, require_live_permission, require_live_reauth
+from app.services.authorization import (
+    LiveContext,
+    merchant_scope,
+    require_live_permission,
+    require_live_reauth,
+)
 from app.services.billing import (
     BillingEntitlementError,
     assert_feature_entitled,
@@ -157,11 +162,16 @@ def refresh_integration_token(
         row.credentials_encrypted = encrypt_secret(json.dumps(credentials, sort_keys=True))
         row.updated_at = utcnow()
         session.add(row)
+        # Copied out before the commit. The Zoho refresh token has already been
+        # exchanged by this point, so a post-commit 500 leaves the merchant with a
+        # spent token and an error.
+        refreshed_status = row.status
+        refreshed_provider = row.provider
         session.commit()
     except (OAuthConfigurationError, OAuthExchangeError, ValueError) as exc:
         session.rollback()
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
-    return {"status": row.status, "provider": row.provider}
+    return {"status": refreshed_status, "provider": refreshed_provider}
 
 
 @router.get("")
@@ -231,8 +241,9 @@ def connect_integration(
         ip_address=client_ip(request),
         detail={"provider": row.provider, "source_tenant": row.source_tenant},
     )
-    session.commit()
-    return {"id": str(row.id), "provider": row.provider, "status": row.status}
+    with merchant_scope(session, context.merchant.id):
+        session.commit()
+        return {"id": str(row.id), "provider": row.provider, "status": row.status}
 
 
 @router.post("/{connection_id}/sync")
@@ -254,14 +265,19 @@ def sync_integration(
         assert_live_entitled(session, context.merchant.id)
     except BillingEntitlementError as exc:
         raise HTTPException(status.HTTP_402_PAYMENT_REQUIRED, str(exc)) from exc
-    run = sync_connection(session, row, fixture_rows=payload.fixture_rows, limit=payload.limit)
-    return {
-        "id": str(run.id),
-        "status": run.status,
-        "imported": run.imported_count,
-        "failed": run.failed_count,
-        "error": run.error,
-    }
+    # `sync_connection` commits internally — once for the refreshed OAuth token and
+    # again per batch — so the transaction-local tenant set by the dependency would be
+    # gone partway through, and every read after it matches nothing under the
+    # NOBYPASSRLS role. The run row read below is on the far side of those commits too.
+    with merchant_scope(session, context.merchant.id):
+        run = sync_connection(session, row, fixture_rows=payload.fixture_rows, limit=payload.limit)
+        return {
+            "id": str(run.id),
+            "status": run.status,
+            "imported": run.imported_count,
+            "failed": run.failed_count,
+            "error": run.error,
+        }
 
 
 @router.get("/{connection_id}/runs")

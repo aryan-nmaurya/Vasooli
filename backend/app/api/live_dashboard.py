@@ -43,7 +43,12 @@ from app.models import (
 )
 from app.models.reconciliation_event import EventStatus
 from app.schemas.dashboard import InvoiceDetail, PromiseView, QueueRow
-from app.services.authorization import LiveContext, get_scoped_object, require_live_permission
+from app.services.authorization import (
+    LiveContext,
+    get_scoped_object,
+    merchant_scope,
+    require_live_permission,
+)
 from app.services.disputes import resolve_dispute
 from app.services.manual_payments import (
     ManualPaymentError,
@@ -491,8 +496,11 @@ def escalate(
     if invoice is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Invoice not found")
     escalate_to_human(session, invoice, "manual", actor=_actor(context))
-    session.commit()
-    return {"invoice_number": invoice.invoice_number, "status": str(invoice.status)}
+    # Held across the commit: the transaction-local tenant dies there, and both reads
+    # below would re-SELECT with no tenant under the NOBYPASSRLS role production uses.
+    with merchant_scope(session, context.merchant.id):
+        session.commit()
+        return {"invoice_number": invoice.invoice_number, "status": str(invoice.status)}
 
 
 @router.post("/disputes/{case_id}/resolve")
@@ -519,7 +527,8 @@ def resolve_case(
         session.commit()
     else:
         resumed = case.recovery_resumed_at is not None
-    return {"case_id": str(case.id), "status": str(case.status), "resumed": resumed}
+    with merchant_scope(session, context.merchant.id):
+        return {"case_id": str(case.id), "status": str(case.status), "resumed": resumed}
 
 
 @router.post("/exceptions/events/{provider_event_id}/retry")

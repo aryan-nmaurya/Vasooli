@@ -14,7 +14,7 @@ from app.core.db import SessionDep
 from app.core.middleware import client_ip
 from app.models import ReminderPolicyVersion, SendingDomain, SuppressionEntry
 from app.services.auth import audit
-from app.services.authorization import LiveContext, require_live_permission
+from app.services.authorization import LiveContext, merchant_scope, require_live_permission
 from app.services.billing import (
     BillingEntitlementError,
     assert_feature_entitled,
@@ -110,8 +110,14 @@ def put_policy(
         ip_address=client_ip(request),
         detail={"version": row.version, "tier_offsets": row.tier_offsets},
     )
-    session.commit()
-    return _policy_dict(row)
+    # `set_merchant_context` is transaction-local, so it dies at this commit. With
+    # `expire_on_commit=True` every attribute read below re-SELECTs in a fresh
+    # transaction that has no tenant set — under the NOBYPASSRLS role production uses,
+    # the policy then matches zero rows and SQLAlchemy raises ObjectDeletedError as a
+    # bare 500. Holding the tenant across the commit is what `merchant_scope` is for.
+    with merchant_scope(session, context.merchant.id):
+        session.commit()
+        return _policy_dict(row)
 
 
 @router.post("/suppressions", status_code=status.HTTP_201_CREATED)
@@ -132,8 +138,9 @@ def add_suppression(
         expires_at=payload.expires_at,
     )
     session.add(row)
-    session.commit()
-    return {"id": str(row.id), "status": "active", "reason": row.reason}
+    with merchant_scope(session, context.merchant.id):
+        session.commit()
+        return {"id": str(row.id), "status": "active", "reason": row.reason}
 
 
 @router.get("/sending-domains")
@@ -190,14 +197,18 @@ def add_sending_domain(
         dns_records=records,
     )
     session.add(row)
-    session.commit()
-    return {
-        "id": str(row.id),
-        "domain": row.domain,
-        "status": row.status,
-        "dns_records": row.dns_records,
-        "local_part": row.local_part,
-    }
+    # Resend has already created the domain by this point, so a 500 here leaves a real
+    # provider object with no local record and the merchant told it failed. Retrying
+    # then creates a duplicate at the provider.
+    with merchant_scope(session, context.merchant.id):
+        session.commit()
+        return {
+            "id": str(row.id),
+            "domain": row.domain,
+            "status": row.status,
+            "dns_records": row.dns_records,
+            "local_part": row.local_part,
+        }
 
 
 @router.post("/sending-domains/{domain_id}/verify")
@@ -242,8 +253,9 @@ def verify_sending_domain(
         ip_address=client_ip(request),
         detail={"verified": verified, "records": records},
     )
-    session.commit()
-    return {"id": str(row.id), "status": row.status, "records": records}
+    with merchant_scope(session, context.merchant.id):
+        session.commit()
+        return {"id": str(row.id), "status": row.status, "records": records}
 
 
 def _policy_dict(row: ReminderPolicyVersion) -> dict[str, Any]:

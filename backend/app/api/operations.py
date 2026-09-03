@@ -12,7 +12,12 @@ from app.core.db import SessionDep, check_database
 from app.core.middleware import client_ip
 from app.models import DataRequest, JobRun
 from app.services.auth import audit
-from app.services.authorization import LiveContext, require_live_permission, require_live_reauth
+from app.services.authorization import (
+    LiveContext,
+    merchant_scope,
+    require_live_permission,
+    require_live_reauth,
+)
 
 router = APIRouter(prefix="/api/live/operations", tags=["live-operations"])
 
@@ -144,5 +149,8 @@ def _create_request(
         object_id=row.id,
         ip_address=client_ip(request),
     )
-    session.commit()
-    return {"id": str(row.id), "status": row.status, "type": row.request_type}
+    # Held across the commit: the transaction-local tenant dies at commit, and these
+    # attribute reads would then re-SELECT with no tenant under the production role.
+    with merchant_scope(session, context.merchant.id):
+        session.commit()
+        return {"id": str(row.id), "status": row.status, "type": row.request_type}

@@ -46,7 +46,7 @@ from app.models import (
     PaymentConnection,
     ReconciliationEvent,
 )
-from app.services.authorization import service_scope, set_merchant_context
+from app.services.authorization import merchant_scope, service_scope, set_merchant_context
 from app.services.delivery_events import record_delivery_event
 from app.services.messaging import reply_address_for
 from app.services.payment_connections import decrypt_secret
@@ -253,26 +253,36 @@ def _record_inbound(
         session.rollback()
         return {"status": "duplicate_ignored", "event_id": event_id}
 
-    try:
-        # The complete body remains evidence; AI/policy gets a bounded working copy.
-        handle_reply(session, invoice, body[:20_000], inbound_message_id=str(message.id))
-        message.processed_at = utcnow()
-        message.processing_attempts += 1
-        message.last_attempt_at = utcnow()
-        message.processing_error = None
-        message.next_retry_at = None
-        session.add(message)
-        session.commit()
-    except Exception as exc:
-        session.rollback()
-        session.refresh(message)
-        # Schedules a retry rather than only writing the error into a column. This
-        # endpoint answers 200 either way — a 5xx would make the provider redeliver
-        # into the same bug — so the retry has to be ours, and without one the
-        # customer's message was previously a dead end.
-        mark_inbound_failed(session, message, f"{type(exc).__name__}: {exc}")
-        log.exception("inbound_email.processing_failed", event_id=event_id)
-        return {"status": "recorded_for_retry", "event_id": event_id}
+    # Everything below reads and writes tenant-scoped rows across several commits, so
+    # the tenant has to be held for the whole block rather than set once.
+    #
+    # Without this the failure was silent rather than loud: `handle_reply` re-reads the
+    # invoice after the commit above, which under the NOBYPASSRLS role production uses
+    # matches no rows and raises. The `except Exception` below then catches it, marks
+    # the message for retry and answers 200 — so the provider is told everything is
+    # fine, the retry hits the identical bug, and the customer's reply is never
+    # processed. No promise extracted, no dispute opened, no pause. Green all the way.
+    with merchant_scope(session, invoice.merchant_id):
+        try:
+            # The complete body remains evidence; AI/policy gets a bounded working copy.
+            handle_reply(session, invoice, body[:20_000], inbound_message_id=str(message.id))
+            message.processed_at = utcnow()
+            message.processing_attempts += 1
+            message.last_attempt_at = utcnow()
+            message.processing_error = None
+            message.next_retry_at = None
+            session.add(message)
+            session.commit()
+        except Exception as exc:
+            session.rollback()
+            session.refresh(message)
+            # Schedules a retry rather than only writing the error into a column. This
+            # endpoint answers 200 either way — a 5xx would make the provider redeliver
+            # into the same bug — so the retry has to be ours, and without one the
+            # customer's message was previously a dead end.
+            mark_inbound_failed(session, message, f"{type(exc).__name__}: {exc}")
+            log.exception("inbound_email.processing_failed", event_id=event_id)
+            return {"status": "recorded_for_retry", "event_id": event_id}
     return {"status": "processed", "event_id": event_id}
 
 
