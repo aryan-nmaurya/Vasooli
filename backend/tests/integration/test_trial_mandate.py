@@ -45,6 +45,8 @@ class FakeClient:
         self.created: list[dict] = []
         self.refunded: list[tuple] = []
         self.cancelled: list[tuple] = []
+        self.invoice_lookups: list[str] = []
+        self.auth_payment_id = "pay_auth_1"
         self.refund_id = refund_id
 
     def create_subscription(self, **kwargs):
@@ -56,6 +58,11 @@ class FakeClient:
     def refund_payment(self, payment_id, *, amount_paise=None, notes=None):
         self.refunded.append((payment_id, amount_paise))
         return {"id": self.refund_id, "status": "processed"}
+
+    def find_auth_payment_id(self, subscription_id):
+        """Razorpay's real behaviour: the payment id is on the invoice, not the event."""
+        self.invoice_lookups.append(subscription_id)
+        return self.auth_payment_id
 
     def cancel_subscription(self, subscription_id, *, cancel_at_cycle_end=True):
         self.cancelled.append((subscription_id, cancel_at_cycle_end))
@@ -109,8 +116,10 @@ def _subscription(session, merchant, plan, **kw):
         merchant_id=merchant.id,
         plan_id=plan.id,
         status=kw.pop("status", "authenticated"),
-        auth_payment_id="pay_1",
-        auth_amount_paise=200,
+        # Overridable: the webhook tests below start from a subscription that has
+        # neither, which is the state a real checkout leaves behind.
+        auth_payment_id=kw.pop("auth_payment_id", "pay_1"),
+        auth_amount_paise=kw.pop("auth_amount_paise", 200),
         **kw,
     )
     session.add(row)
@@ -343,3 +352,106 @@ def test_a_live_subscription_still_requires_an_explicit_cancellation(
     with pytest.raises(fastapi.HTTPException) as caught:
         billing_api.checkout(billing_api.CheckoutRequest(plan_slug="growth"), session, context)
     assert caught.value.status_code == 409
+
+
+# ===========================================================================
+# The webhook that actually arrives
+#
+# Nothing called `apply_subscription_event` before, and that is exactly how the ₹2
+# came to be captured and never returned on a real merchant's live subscription.
+# The refund tests above seed `auth_payment_id` by hand, so they proved the refund
+# helper works while saying nothing about whether anything ever populates that field.
+# ===========================================================================
+
+
+def _authenticated_event(provider_subscription_id: str) -> tuple[bytes, dict, str]:
+    """The real payload shape, verified against a production delivery.
+
+    Razorpay sends NO payment entity on `subscription.authenticated`, and the
+    subscription entity carries no `payment_id` either. Both lookups the handler tries
+    come back empty, which is the whole point of this fixture — a test that includes a
+    payment entity here passes while production fails.
+    """
+    import hashlib
+    import hmac
+    import json as _json
+
+    body = {
+        "event": "subscription.authenticated",
+        "payload": {
+            "subscription": {"entity": {"id": provider_subscription_id, "status": "authenticated"}}
+        },
+    }
+    raw = _json.dumps(body).encode()
+    signature = hmac.new(
+        settings.effective_billing_webhook_secret.encode(), raw, hashlib.sha256
+    ).hexdigest()
+    return raw, body, signature
+
+
+def test_authentication_refunds_the_charge_the_webhook_never_names(
+    session, live_merchant, plan, fake
+):
+    """The production bug, end to end.
+
+    `pay_TXZLB0FU8qpakw` was captured and `amount_refunded` stayed 0 because the event
+    names no payment, so the handler had nothing to refund. It now asks Razorpay for
+    the subscription's invoice, which is where the payment id lives.
+    """
+    from app.services.billing import apply_subscription_event
+
+    row = _subscription(
+        session, live_merchant, plan, status="created", auth_payment_id=None, auth_amount_paise=0
+    )
+    row.razorpay_subscription_id = "sub_live_1"
+    session.add(row)
+    session.commit()
+
+    raw, body, signature = _authenticated_event("sub_live_1")
+    apply_subscription_event(
+        session, raw, body, provider_event_id="evt_auth_1", signature=signature
+    )
+    session.commit()
+    session.refresh(row)
+
+    assert fake.invoice_lookups == ["sub_live_1"], (
+        "the handler must ask the provider for the payment the event omitted"
+    )
+    assert row.auth_payment_id == "pay_auth_1"
+    assert row.auth_amount_paise == 200, "the amount to return must be recorded too"
+    assert fake.refunded == [("pay_auth_1", 200)]
+    assert row.auth_refund_id == "rfnd_1"
+
+
+def test_a_provider_hiccup_looking_up_the_payment_does_not_fail_the_webhook(
+    session, live_merchant, plan, fake
+):
+    """A valid authentication must still activate the workspace.
+
+    Refusing the webhook over an unrefundable two rupees would leave the merchant
+    paid-for and locked out, which is far worse than a late refund. The daily
+    reconciliation re-runs this path.
+    """
+    from app.services.billing import apply_subscription_event
+
+    def _boom(_subscription_id):
+        raise RuntimeError("razorpay unavailable")
+
+    fake.find_auth_payment_id = _boom
+
+    row = _subscription(
+        session, live_merchant, plan, status="created", auth_payment_id=None, auth_amount_paise=0
+    )
+    row.razorpay_subscription_id = "sub_live_2"
+    session.add(row)
+    session.commit()
+
+    raw, body, signature = _authenticated_event("sub_live_2")
+    apply_subscription_event(
+        session, raw, body, provider_event_id="evt_auth_2", signature=signature
+    )
+    session.commit()
+    session.refresh(row)
+
+    assert row.status == "authenticated", "the subscription must still go live"
+    assert row.auth_refund_id is None

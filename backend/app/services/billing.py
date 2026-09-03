@@ -370,6 +370,23 @@ def apply_subscription_event(
             payment_id = entity.get("payment_id") or (
                 payload.get("payload", {}).get("payment", {}).get("entity", {}).get("id")
             )
+            # Razorpay does not put a payment entity on `subscription.authenticated`.
+            # Verified against a real production event: both lookups above come back
+            # empty, so `auth_payment_id` stayed null, the refund guard returned early,
+            # and the merchant's ₹2 was captured and never returned. The payment id
+            # lives on the subscription's first invoice, so ask for it.
+            #
+            # Best-effort by design: a provider hiccup here must not fail a webhook
+            # that is otherwise valid, and the reconciliation job re-runs this path.
+            if not payment_id and not subscription.auth_payment_id and provider_id:
+                try:
+                    payment_id = get_billing_client().find_auth_payment_id(str(provider_id))
+                except Exception as exc:  # noqa: BLE001
+                    log.warning(
+                        "billing.auth_payment_lookup_failed",
+                        subscription_id=str(subscription.id),
+                        error=str(exc)[:200],
+                    )
             if payment_id and not subscription.auth_payment_id:
                 subscription.auth_payment_id = str(payment_id)
                 if subscription.auth_amount_paise <= 0:

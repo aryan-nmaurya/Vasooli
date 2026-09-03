@@ -324,6 +324,30 @@ class RazorpayClient:
         return self._call(self._client.subscription.fetch, subscription_id)
 
     @retry(**_RETRY)
+    def find_auth_payment_id(self, subscription_id: str) -> str | None:
+        """The payment that authorised a subscription's mandate, or None.
+
+        Razorpay does NOT put a payment entity on `subscription.authenticated`, so the
+        webhook alone cannot say which payment to refund. Verified against a real
+        production event: `payload.payment.entity` is absent, and the subscription
+        entity carries no `payment_id` either.
+
+        It is on the subscription's invoice, which is what this reads. The mandate
+        verification is the first invoice raised against the subscription, so the
+        oldest paid one with a payment is the right answer; taking the newest would
+        eventually refund a real monthly charge instead.
+        """
+        payload = self._call(self._client.invoice.all, {"subscription_id": subscription_id})
+        items = payload.get("items") or []
+        paid = [
+            item for item in items if item.get("payment_id") and str(item.get("status")) == "paid"
+        ]
+        if not paid:
+            return None
+        paid.sort(key=lambda item: item.get("created_at") or 0)
+        return str(paid[0]["payment_id"])
+
+    @retry(**_RETRY)
     def cancel_subscription(
         self, subscription_id: str, *, cancel_at_cycle_end: bool = True
     ) -> dict[str, Any]:
