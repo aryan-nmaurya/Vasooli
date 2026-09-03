@@ -32,7 +32,14 @@ const LIVE_OPERATIONS_NAV = [
 
 export function shellForPath(pathname: string, guidedSignedIn: boolean) {
   pathname = pathname === "/" ? pathname : pathname.replace(/\/+$/, "");
-  if (pathname === "/live" || (pathname.startsWith("/live/") && pathname !== "/live/login")) return "live";
+  // `/live/start` is activation, not workspace. It is where a merchant lands before
+  // any subscription exists, so rendering it inside the workspace chrome showed a
+  // sidebar full of links the payment gate would immediately bounce them out of —
+  // and made an unpaid account look like it was already inside. It belongs with the
+  // sign-in and sign-up screens on the public shell.
+  const OUTSIDE_WORKSPACE = new Set(["/live/login", "/live/start"]);
+  if (pathname === "/live" || (pathname.startsWith("/live/") && !OUTSIDE_WORKSPACE.has(pathname)))
+    return "live";
   if (guidedSignedIn && (pathname === "/" || DEMO_ROUTES.some((route) => pathname === route || pathname.startsWith(`${route}/`)))) return "demo";
   return "public";
 }

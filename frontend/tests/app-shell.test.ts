@@ -6,6 +6,11 @@ describe("application shell routing", () => {
   it("never puts live routes in the guided demo shell", () => {
     expect(shellForPath("/live", true)).toBe("live");
     expect(shellForPath("/live/invoices", true)).toBe("live");
+    // Activation happens before a subscription exists. Rendering it inside the
+    // workspace chrome showed a sidebar the payment gate would bounce the merchant
+    // straight back out of, and made an unpaid account look like it was already in.
+    expect(shellForPath("/live/start", true)).toBe("public");
+    expect(shellForPath("/live/login", true)).toBe("public");
     expect(shellForPath("/live/recovered", true)).toBe("live");
     expect(shellForPath("/live/settings", false)).toBe("live");
   });

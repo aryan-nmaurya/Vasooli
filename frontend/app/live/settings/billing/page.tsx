@@ -188,7 +188,14 @@ export default function LiveBillingPage() {
             </p>
           ) : null}
 
-          {subscription.is_active && !subscription.on_trial && !subscription.cancel_at_period_end ? (
+          {/*
+            Cancelling was hidden during the trial, which broke the promise made on the
+            activation screen — "cancel any time before then and you pay nothing" — at
+            exactly the moment it mattered. A merchant on trial is the one most likely
+            to want out, and they had no control at all. The server already accepts a
+            cancellation in this state; only the button was missing.
+          */}
+          {subscription.is_active && !subscription.cancel_at_period_end ? (
             <div className="mt-4">
               {confirmCancel ? (
                 <form onSubmit={cancelSubscription} className="flex flex-wrap items-end gap-3 rounded-lg border border-line bg-surface p-4">
@@ -197,7 +204,11 @@ export default function LiveBillingPage() {
                     <input name="password" type="password" required autoComplete="current-password" className={fieldClass} />
                   </label>
                   <button disabled={busy !== null} className={primaryButtonClass}>
-                    {busy === "cancel" ? "Cancelling…" : "Confirm cancellation"}
+                    {busy === "cancel"
+                      ? "Cancelling…"
+                      : subscription.on_trial
+                        ? "Confirm — end trial, pay nothing"
+                        : "Confirm cancellation"}
                   </button>
                   <button type="button" onClick={() => setConfirmCancel(false)} className={secondaryButtonClass}>
                     Keep my plan

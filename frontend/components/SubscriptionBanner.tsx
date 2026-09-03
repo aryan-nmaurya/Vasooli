@@ -47,13 +47,20 @@ export function SubscriptionBanner() {
       : "Choose a plan to keep invoice sync, recovery automation and customer reminders running.";
 
   return (
-    <div role="status" className={`border-b px-4 py-3 sm:px-6 lg:px-8 ${tone}`}>
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <p className="text-sm font-semibold">{headline}</p>
-        <p className="min-w-0 text-sm leading-5 opacity-90">{detail}</p>
+    // Headline, detail and action were one wrapping flex row. On a narrow column the
+    // detail sentence pushed the button onto its own line hard against the text, and
+    // on a wide one the headline and a long sentence ran together as if they were one
+    // paragraph. Stacking the text and holding the action beside it keeps both
+    // readable at any width, and the button no longer collides with the copy.
+    <div role="status" className={`border-b px-4 py-4 sm:px-6 sm:py-5 lg:px-8 ${tone}`}>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
+        <div className="flex min-w-0 flex-col gap-1.5">
+          <p className="text-sm font-semibold leading-5">{headline}</p>
+          <p className="max-w-3xl text-sm leading-6 opacity-90">{detail}</p>
+        </div>
         <Link
           href="/live/settings/billing"
-          className="ml-auto shrink-0 rounded-lg bg-invert px-3 py-1.5 text-xs font-semibold text-invert-ink transition hover:opacity-90"
+          className="shrink-0 self-start rounded-lg bg-invert px-3.5 py-2 text-xs font-semibold text-invert-ink transition hover:opacity-90 sm:mt-0.5"
         >
           {paused ? "Resume automation" : "Manage billing"}
         </Link>

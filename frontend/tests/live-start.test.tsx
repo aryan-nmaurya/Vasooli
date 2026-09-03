@@ -10,6 +10,17 @@ vi.mock("@/lib/live-api", () => ({
   reauthLive: vi.fn(),
 }));
 
+const replace = vi.fn();
+vi.mock("next/navigation", () => ({ useRouter: () => ({ replace }) }));
+
+/** Confirm the plan, then fill in the password form the button now opens. */
+async function confirmWith(buttonPattern: RegExp) {
+  fireEvent.click(await screen.findByRole("button", { name: buttonPattern }));
+  const field = await screen.findByLabelText(/your password/i);
+  fireEvent.change(field, { target: { value: "hunter2hunter2" } });
+  fireEvent.click(screen.getByRole("button", { name: /continue to payment/i }));
+}
+
 const PLANS = [
   { slug: "starter", name: "Starter", amount_paise: 199900, included_active_invoices: 100, included_seats: 1, features: [] },
   { slug: "growth", name: "Growth", amount_paise: 599900, included_active_invoices: 500, included_seats: 5, features: [] },
@@ -32,7 +43,8 @@ describe("activation page", () => {
     window.localStorage.setItem("vasooli_pending_plan", "growth");
     vi.mocked(reauthLive).mockResolvedValue({ status: "ok", reauth_token: "t" } as never);
     vi.mocked(livePost).mockResolvedValue({ checkout_url: null } as never);
-    vi.spyOn(window, "prompt").mockReturnValue("hunter2hunter2");
+    // The password is collected by a real form now, not a browser dialog.
+    vi.spyOn(window, "open").mockReturnValue({ closed: false, close: vi.fn() } as never);
   });
 
   afterEach(() => {
@@ -51,8 +63,7 @@ describe("activation page", () => {
   it("offers the trial at ₹2, not the plan amount", async () => {
     mockLoad(NEW_MERCHANT);
     render(<StartPage />);
-    const trial = await screen.findByRole("button", { name: /Start 7-day trial — pay ₹2 now/ });
-    fireEvent.click(trial);
+    await confirmWith(/Start 7-day trial — pay ₹2 now/);
     await waitFor(() => expect(livePost).toHaveBeenCalled());
     expect(vi.mocked(livePost).mock.calls[0][2]).toEqual({ plan_slug: "growth", start_trial: true });
   });
@@ -60,7 +71,7 @@ describe("activation page", () => {
   it("charges the full plan when the merchant starts immediately", async () => {
     mockLoad(NEW_MERCHANT);
     render(<StartPage />);
-    fireEvent.click(await screen.findByRole("button", { name: /Start now — pay ₹5,999/ }));
+    await confirmWith(/Start now — pay ₹5,999/);
     await waitFor(() => expect(livePost).toHaveBeenCalled());
     expect(vi.mocked(livePost).mock.calls[0][2]).toEqual({ plan_slug: "growth", start_trial: false });
   });
@@ -74,17 +85,29 @@ describe("activation page", () => {
     expect(screen.queryByRole("button", { name: /Start 7-day trial/ })).toBeNull();
   });
 
-  it("sends the merchant to Razorpay when a checkout url comes back", async () => {
+  it("opens Razorpay in its own tab rather than navigating away", async () => {
     mockLoad(NEW_MERCHANT);
-    const assign = vi.fn();
-    Object.defineProperty(window, "location", { value: { ...window.location, assign }, writable: true });
+    const open = vi.spyOn(window, "open").mockReturnValue({ closed: false, close: vi.fn() } as never);
     vi.mocked(livePost).mockResolvedValue({ checkout_url: "https://rzp.io/x" } as never);
 
     render(<StartPage />);
-    fireEvent.click(await screen.findByRole("button", { name: /Start 7-day trial/ }));
-    await waitFor(() => expect(assign).toHaveBeenCalledWith("https://rzp.io/x"));
-    // The pending choice is spent once it has been acted on, or a later visit would
-    // silently reopen on a plan the merchant already paid for.
-    expect(window.localStorage.getItem("vasooli_pending_plan")).toBeNull();
+    await confirmWith(/Start 7-day trial/);
+
+    // A new tab, not `location.assign`. Navigating away meant an abandoned payment
+    // dropped the merchant on Razorpay's page with no route back to their plan.
+    await waitFor(() => expect(open).toHaveBeenCalledWith("https://rzp.io/x", "_blank", expect.anything()));
+    // This page stays put and waits, so a cancelled payment returns to the choice.
+    expect(await screen.findByText(/waiting for your payment/i)).toBeInTheDocument();
+  });
+
+  it("tells the merchant when the browser blocks the payment window", async () => {
+    mockLoad(NEW_MERCHANT);
+    vi.spyOn(window, "open").mockReturnValue(null);
+    vi.mocked(livePost).mockResolvedValue({ checkout_url: "https://rzp.io/x" } as never);
+
+    render(<StartPage />);
+    await confirmWith(/Start 7-day trial/);
+    // Silence here looked like a broken button.
+    expect(await screen.findByRole("alert")).toHaveTextContent(/pop-ups/i);
   });
 });

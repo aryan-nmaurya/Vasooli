@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { liveGet, livePost, reauthLive } from "@/lib/live-api";
@@ -48,11 +49,20 @@ function inr(paise: number | null | undefined) {
 }
 
 export default function StartPage() {
+  const router = useRouter();
   const [merchant, setMerchant] = useState("");
   const [plans, setPlans] = useState<PlanSummary[]>([]);
   const [subscription, setSubscription] = useState<SubscriptionState | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  // The password is collected by a real form, not `window.prompt`. The browser dialog
+  // could not be styled, showed the bare origin as if it were a system prompt, and is
+  // exactly the shape a phishing page imitates — a poor place to ask for a password
+  // immediately before taking money.
+  const [pendingTrial, setPendingTrial] = useState<boolean | null>(null);
+  const [password, setPassword] = useState("");
+  // Set while the merchant is away on Razorpay's hosted page.
+  const [awaitingPayment, setAwaitingPayment] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
 
@@ -97,16 +107,67 @@ export default function StartPage() {
   const mandatePaise = subscription?.mandate_verification_paise ?? 200;
   const plan = plans.find((item) => item.slug === selected) ?? null;
 
-  async function pay(startTrial: boolean) {
+  /**
+   * Wait for the subscription to go live, then finish the journey.
+   *
+   * Razorpay's hosted page is opened in its own tab, so this tab stays exactly where
+   * it was. Two things follow from that, and both are what a merchant expects:
+   * a completed payment lands them in the workspace and the payment tab is closed for
+   * them, and an abandoned one leaves them on this page with their plan still chosen
+   * — no dead end, nothing to re-enter.
+   *
+   * Polling rather than a provider redirect: the checkout tab is on Razorpay's origin,
+   * so it cannot talk to this one, and the subscription only becomes active when the
+   * webhook arrives — which can land after the redirect either way.
+   */
+  function waitForActivation(checkoutTab: Window | null) {
+    // Computed on the first tick rather than here: `Date.now()` in the function body
+    // is read during render, which the purity rule correctly rejects.
+    let deadline = 0;
+    const timer = window.setInterval(async () => {
+      if (deadline === 0) deadline = Date.now() + 15 * 60 * 1000;
+      // Merchant closed the payment tab themselves: stop waiting, leave them here.
+      if (checkoutTab && checkoutTab.closed) {
+        window.clearInterval(timer);
+        setAwaitingPayment(false);
+        return;
+      }
+      // Fifteen minutes is longer than any hosted page stays useful.
+      if (Date.now() > deadline) {
+        window.clearInterval(timer);
+        setAwaitingPayment(false);
+        setError("Checkout timed out. If you completed the payment, reload this page.");
+        return;
+      }
+      try {
+        const state = await liveGet<SubscriptionState>(
+          "/api/live/billing/subscription",
+          merchant,
+        );
+        if (!state.is_active) return;
+        window.clearInterval(timer);
+        window.localStorage.removeItem("vasooli_pending_plan");
+        // Close the tab this page opened, then move to the workspace.
+        try {
+          checkoutTab?.close();
+        } catch {
+          /* Blocked by the browser: the merchant closes it, which is harmless. */
+        }
+        router.replace("/live");
+      } catch {
+        /* A transient failure here is not a payment failure; keep waiting. */
+      }
+    }, 3000);
+  }
+
+  async function pay(startTrial: boolean, confirmPassword: string) {
     if (!plan || !merchant) return;
     setBusy(plan.slug);
     setError(null);
     try {
       // Checkout is a sensitive action and requires a fresh re-auth proof, exactly as
       // the billing page does. Without it the request is refused with 428.
-      const challenge = await reauthLive(
-        window.prompt("Confirm your password to authorise this payment") ?? "",
-      );
+      const challenge = await reauthLive(confirmPassword);
       const result = await livePost<CheckoutResult>(
         "/api/live/billing/checkout",
         merchant,
@@ -114,9 +175,18 @@ export default function StartPage() {
         { "X-Reauth-Token": challenge.reauth_token },
       );
       if (result.checkout_url) {
-        window.localStorage.removeItem("vasooli_pending_plan");
-        // Razorpay's hosted page is where the mandate is authorised and money moves.
-        window.location.assign(result.checkout_url);
+        setPassword("");
+        setPendingTrial(null);
+        setAwaitingPayment(true);
+        const tab = window.open(result.checkout_url, "_blank", "noopener=false");
+        if (!tab) {
+          setAwaitingPayment(false);
+          setError(
+            "Your browser blocked the payment window. Allow pop-ups for this site and try again.",
+          );
+          return;
+        }
+        waitForActivation(tab);
         return;
       }
       setError(
@@ -196,31 +266,94 @@ export default function StartPage() {
         </p>
       ) : null}
 
-      {plan ? (
+      {plan && awaitingPayment ? (
+        <div className="flex flex-col gap-2 rounded-lg border border-line bg-panel px-4 py-4">
+          <p className="text-sm font-medium text-ink">Waiting for your payment…</p>
+          <p className="text-sm leading-6 text-ink-2">
+            Finish the payment in the tab that just opened. This page will take you into your
+            workspace as soon as it clears, and close that tab for you.
+          </p>
+          <p className="text-xs leading-5 text-ink-3">
+            Changed your mind? Close the payment tab and you will come straight back here with
+            your plan still selected. Nothing is charged.
+          </p>
+        </div>
+      ) : null}
+
+      {plan && !awaitingPayment && pendingTrial !== null ? (
+        <form
+          className="flex flex-col gap-3 rounded-lg border border-line bg-panel px-4 py-4"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void pay(pendingTrial, password);
+          }}
+        >
+          <p className="text-sm font-medium text-ink">
+            {pendingTrial
+              ? `Confirm to start your ${TRIAL_DAYS}-day trial`
+              : `Confirm to start ${plan.name} now`}
+          </p>
+          <p className="text-sm leading-6 text-ink-2">
+            {pendingTrial
+              ? `${inr(mandatePaise)} is taken now and refunded automatically.`
+              : `${inr(plan.amount_paise)} plus applicable taxes is authorised today.`}
+          </p>
+          <label className="flex flex-col gap-1.5 text-sm text-ink-2">
+            Your password
+            <input
+              type="password"
+              autoComplete="current-password"
+              required
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              className="rounded-md border border-line bg-surface px-3 py-2 text-sm text-ink outline-none focus:border-accent"
+            />
+          </label>
+          <div className="flex flex-wrap gap-2">
+            <button
+              disabled={busy !== null}
+              className="rounded-md bg-invert px-4 py-2 text-sm font-medium text-invert-ink transition hover:opacity-90 disabled:opacity-50"
+            >
+              {busy ? "Opening checkout…" : "Continue to payment"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setPendingTrial(null);
+                setPassword("");
+                setError(null);
+              }}
+              className="rounded-md px-4 py-2 text-sm text-ink-2 ring-1 ring-inset ring-line transition hover:bg-panel-2 hover:text-ink"
+            >
+              Back
+            </button>
+          </div>
+        </form>
+      ) : null}
+
+      {plan && !awaitingPayment && pendingTrial === null ? (
         <div className="flex flex-col gap-3">
           {trialAvailable ? (
             <button
               type="button"
               disabled={busy !== null}
-              onClick={() => pay(true)}
+              onClick={() => setPendingTrial(true)}
               className="w-full rounded-md bg-invert px-4 py-2.5 text-sm font-medium text-invert-ink transition hover:opacity-90 disabled:opacity-50"
             >
-              {busy ? "Starting checkout…" : `Start ${TRIAL_DAYS}-day trial — pay ${inr(mandatePaise)} now`}
+              {`Start ${TRIAL_DAYS}-day trial — pay ${inr(mandatePaise)} now`}
             </button>
           ) : null}
           <button
             type="button"
             disabled={busy !== null}
-            onClick={() => pay(false)}
+            onClick={() => setPendingTrial(false)}
             className={`w-full rounded-md px-4 py-2.5 text-sm font-medium transition disabled:opacity-50 ${
               trialAvailable
                 ? "text-ink-2 ring-1 ring-inset ring-line hover:bg-panel-2 hover:text-ink"
                 : "bg-invert text-invert-ink hover:opacity-90"
             }`}
           >
-            {busy
-              ? "Starting checkout…"
-              : `Start now — pay ${inr(plan.amount_paise)} + applicable taxes`}
+            {`Start now — pay ${inr(plan.amount_paise)} + applicable taxes`}
           </button>
 
           <p className="text-xs leading-relaxed text-ink-3">
