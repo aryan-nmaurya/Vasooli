@@ -105,7 +105,7 @@
     },
     {
       "path": "frontend/app/api/proxy/[...path]/route.ts",
-      "sha256": "41c069085803ffe0aaece41bbc7969a07137d88e0cae3865bc90fb11067c5e60"
+      "sha256": "0e6d35435e9f83a284357d8942cc3cc5c36cc0709953ca4dbfb76d0e9fde783d"
     },
     {
       "path": "frontend/app/api/upload/route.ts",

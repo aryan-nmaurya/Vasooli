@@ -27,6 +27,11 @@ const ALLOWED = [
   /^dashboard\/invoices\/[0-9a-f-]{36}$/,
   /^invoices$/,
   /^invoices\/[0-9a-f-]{36}$/,
+  // The demo shell asks the backend whether the demo controls exist at all, so the
+  // Workspace settings entry can be absent on a deployment that has none rather than
+  // linking to a page that only says so. Read-only, and the demo router still
+  // requires the operator session on top of the check above.
+  /^demo\/clock$/,
 ];
 
 export async function GET(request: Request, ctx: { params: Promise<{ path: string[] }> }) {
