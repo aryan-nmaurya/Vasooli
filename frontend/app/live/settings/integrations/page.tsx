@@ -57,6 +57,11 @@ export default function LiveIntegrationsPage() {
   const [merchant, setMerchant] = useState("");
   const [zoho, setZoho] = useState<Integration | null>(null);
   const [payment, setPayment] = useState<PaymentConnection>(null);
+  // Razorpay Partner OAuth needs credentials Razorpay issues to an approved partner.
+  // Without them `oauth/start` answers 503, so the button spends the merchant's
+  // password and returns an error they can do nothing about. Assume unavailable
+  // until the backend says otherwise, so it is never briefly offered.
+  const [oauthAvailable, setOauthAvailable] = useState(false);
   const [runs, setRuns] = useState<SyncRun[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -74,11 +79,16 @@ export default function LiveIntegrationsPage() {
     Promise.all([
       liveGet<Integration[]>("/api/live/integrations", value),
       liveGet<PaymentConnection>("/api/live/payment-connections", value),
+      liveGet<{ oauth_available: boolean }>(
+        "/api/live/payment-connections/capabilities",
+        value,
+      ).catch(() => ({ oauth_available: false })),
     ])
-      .then(([rows, connection]) => {
+      .then(([rows, connection, capabilities]) => {
         setMerchant(value);
         setZoho(rows.find((r) => r.provider === "zoho") ?? null);
         setPayment(connection);
+        setOauthAvailable(capabilities.oauth_available);
       })
       .catch((cause) => {
         setMerchant(value);
@@ -318,23 +328,25 @@ export default function LiveIntegrationsPage() {
           </div>
         ) : null}
 
-        <form onSubmit={connectRazorpay} className="mt-4 flex flex-wrap items-end gap-2">
-          <label className={`min-w-52 flex-1 ${labelClass}`}>
-            Confirm current password
-            <input
-              name="password"
-              type="password"
-              required
-              autoComplete="current-password"
-              className={fieldClass}
-            />
-          </label>
-          <button disabled={busy !== null} className={primaryButtonClass}>
-            {busy === "razorpay" ? "Redirecting…" : payment ? "Reconnect" : "Connect securely"}
-          </button>
-        </form>
+        {oauthAvailable ? (
+          <form onSubmit={connectRazorpay} className="mt-4 flex flex-wrap items-end gap-2">
+            <label className={`min-w-52 flex-1 ${labelClass}`}>
+              Confirm current password
+              <input
+                name="password"
+                type="password"
+                required
+                autoComplete="current-password"
+                className={fieldClass}
+              />
+            </label>
+            <button disabled={busy !== null} className={primaryButtonClass}>
+              {busy === "razorpay" ? "Redirecting…" : payment ? "Reconnect" : "Connect securely"}
+            </button>
+          </form>
+        ) : null}
 
-        <div className="mt-4 border-t border-line-2 pt-4">
+        <div className={oauthAvailable ? "mt-4 border-t border-line-2 pt-4" : "mt-4"}>
           {showKeys ? (
             <form onSubmit={connectWithKeys} className="space-y-3">
               <p className="text-xs leading-5 text-ink-4">

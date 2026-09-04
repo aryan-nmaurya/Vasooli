@@ -159,6 +159,21 @@ def oauth_refresh(
     }
 
 
+@router.get("/capabilities")
+def capabilities(
+    context: Annotated[LiveContext, Depends(require_live_permission("erp.read"))],
+) -> dict:
+    """Which ways of connecting this deployment can actually offer.
+
+    Razorpay Partner OAuth needs client credentials Razorpay issues to an approved
+    partner. Without them `oauth/start` answers 503, so offering "Connect securely"
+    is offering a button that cannot work — the merchant spends their password on it
+    and gets an error with nothing to do about it. The panel asks first and shows
+    only the routes that exist.
+    """
+    return {"oauth_available": bool(settings.razorpay_oauth_client_id)}
+
+
 @router.get("")
 def get_connection(
     session: SessionDep,
