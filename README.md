@@ -61,7 +61,7 @@ Stated up front, because a judge should not have to work it out.
 | Reconciliation | Deterministic, integer paise, running-total semantics |
 | Direct Razorpay sync | Recovered a Razorpay test-mode ₹9,500 payment whose webhook never arrived |
 | Delivery retry, closure retry, webhook reprocessing | Bounded backoff, all tested |
-| Policy engine | Pure functions, 89 tests |
+| Policy engine | Pure functions, 118 tests |
 | AI cannot invent a figure | Required figures must be present *and* nothing else money-shaped may be — every amount, link, and reference in a draft is matched against an allowlist, and a draft with an extra one is discarded for the template |
 | Authentication | Named DB accounts, roles, lockout/revocation, every endpoint verified unauthenticated |
 | Outbound email | Durable leased outbox; the Resend key authenticates and `vasooli.space` is verified for sending. **Demo** mail is always redirected. **Live** mail is direct only once `ALLOW_DIRECT_CUSTOMER_EMAIL=true`; until then its actual destination is recorded. Each live merchant registers a domain with Resend, publishes the returned DNS records, chooses a local part, and sends from that verified identity rather than the platform `EMAIL_FROM` |
@@ -135,7 +135,7 @@ If you have ten minutes and want to check the central claim rather than the inte
 | `backend/eval/` + `backend/eval/out/results.csv` | The three-arm evaluation, including the arm where a naive chaser beats us |
 
 ```bash
-cd backend && uv run pytest -q          # 894 tests
+cd backend && uv run pytest -q          # 1,097 tests
 uv run python -m scripts.preflight      # every integration, live
 ```
 
