@@ -265,3 +265,76 @@ def test_an_inbound_reply_is_processed_under_the_production_role(
         outcome = handle_reply(restricted, live_invoice, "We will pay on the 15th.", use_llm=False)
 
     assert outcome.invoice_number == live_invoice.invoice_number
+
+
+def test_the_razorpay_sweep_can_record_what_it_finds(session, restricted_engine, merchant):
+    """The safety net for a missed webhook, which could never write anything down.
+
+    `sync_payment_links` reads across tenants under `service_scope` — correct, since
+    it has to find links before it knows whose they are — and then INSERTED a
+    reconciliation event and an audit row while still in that scope. The grant is
+    read-only by construction: every policy's WITH CHECK demands a real
+    `app.merchant_id`, so Postgres refused the write with "new row violates row-level
+    security policy", and the failed flush poisoned the session so the first
+    unreconciled link killed every link after it in the same sweep.
+
+    A payment made while a webhook was undeliverable therefore stayed unrecorded
+    forever, which is the exact case this job exists to cover.
+    """
+    from app.core.clock import utcnow
+    from app.models import PaymentLink
+    from app.services.authorization import service_scope
+    from app.services.sync import sync_payment_links
+
+    customer = Customer(merchant_id=merchant.id, name="Sweep Co", email="ap@sweep.example.invalid")
+    session.add(customer)
+    session.flush()
+    invoice = Invoice(
+        merchant_id=merchant.id,
+        customer_id=customer.id,
+        invoice_number=f"INV-S{uuid.uuid4().hex[:6]}",
+        amount_paise=3_340_000,
+        issued_at=utcnow(),
+        due_at=utcnow(),
+    )
+    session.add(invoice)
+    session.flush()
+    link_id = f"plink_{uuid.uuid4().hex[:12]}"
+    session.add(
+        PaymentLink(
+            invoice_id=invoice.id,
+            razorpay_payment_link_id=link_id,
+            reference_id=f"vsl-{invoice.invoice_number}",
+            short_url="https://rzp.io/rzp/sweeptest",
+            status="created",
+            amount_expected_paise=invoice.amount_paise,
+            amount_paid_paise=0,
+            accept_partial=True,
+            raw_response={},
+        )
+    )
+    session.commit()
+    invoice_id = invoice.id
+    paid = invoice.amount_paise
+
+    class _PaidAtRazorpay:
+        """Razorpay reporting the link as paid, which is what the sweep is for."""
+
+        status = "paid"
+        amount_paid_paise = paid
+        # The real link id: reconciliation matches on it, so a placeholder here would
+        # make the test pass the write and fail the match for an unrelated reason.
+        raw = {"id": link_id, "status": "paid", "amount_paid": paid}
+
+        def fetch_payment_link(self, _link_id):
+            return self
+
+    # Exactly how the job runs it: cross-tenant read scope, restricted role.
+    with Session(restricted_engine) as restricted, service_scope(restricted):
+        report = sync_payment_links(restricted, client=_PaidAtRazorpay())
+
+    assert report["errors"] == 0, "the sweep could not write down what it found"
+    assert report["recovered"] == 1
+
+    session.expire_all()
+    assert session.get(Invoice, invoice_id).is_fully_paid

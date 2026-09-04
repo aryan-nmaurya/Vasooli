@@ -32,6 +32,7 @@ from app.models import (
     ReconciliationEvent,
 )
 from app.models.reconciliation_event import EventStatus
+from app.services.authorization import merchant_scope
 from app.services.payment_connections import (
     PaymentConnectionRequiredError,
     razorpay_client_for_merchant,
@@ -160,27 +161,45 @@ def sync_payment_links(
             signature_verified=False,
             status=EventStatus.RECEIVED,
         )
-        session.add(event)
-        session.add(
-            AuditLog(
-                invoice_id=invoice.id,
-                actor=AuditActor.RAZORPAY,
-                action=AuditAction.RECONCILIATION_SYNCED,
-                detail={
-                    "reason": "payment found by direct sync — no webhook was received",
-                    "payment_link_id": link.razorpay_payment_link_id,
-                    "amount_paid_paise": remote.amount_paid_paise,
-                    "remote_status": remote.status,
-                },
-            )
-        )
-        session.commit()
-        session.refresh(event)
+        # `service_scope` is read-only by construction: every policy's WITH CHECK
+        # still demands a real `app.merchant_id`, so the inserts below are refused
+        # without one. They were, on every live payment — "new row violates row-level
+        # security policy" — and the failed flush poisoned the session, so the first
+        # unreconciled link also killed every link after it in the same sweep. The
+        # safety net for a missed webhook has therefore never caught one under the
+        # role production actually runs as.
+        try:
+            with merchant_scope(session, invoice.merchant_id):
+                session.add(event)
+                session.add(
+                    AuditLog(
+                        invoice_id=invoice.id,
+                        actor=AuditActor.RAZORPAY,
+                        action=AuditAction.RECONCILIATION_SYNCED,
+                        detail={
+                            "reason": "payment found by direct sync — no webhook was received",
+                            "payment_link_id": link.razorpay_payment_link_id,
+                            "amount_paid_paise": remote.amount_paid_paise,
+                            "remote_status": remote.status,
+                        },
+                    )
+                )
+                session.commit()
+                session.refresh(event)
 
-        process_event(session, event)
-        session.refresh(invoice)
-        if invoice.is_fully_paid:
-            recovered += 1
+                process_event(session, event)
+                session.refresh(invoice)
+                if invoice.is_fully_paid:
+                    recovered += 1
+        except Exception as exc:  # noqa: BLE001 - one link must not end the sweep
+            session.rollback()
+            errors += 1
+            log.exception(
+                "sync.reconcile_failed",
+                invoice_number=invoice.invoice_number,
+                error=str(exc)[:200],
+            )
+            continue
 
         log.info(
             "sync.reconciled",
