@@ -135,7 +135,7 @@ If you have ten minutes and want to check the central claim rather than the inte
 | `backend/eval/` + `backend/eval/out/results.csv` | The three-arm evaluation, including the arm where a naive chaser beats us |
 
 ```bash
-cd backend && uv run pytest -q          # 1,097 tests
+cd backend && uv run pytest -q          # 1,103 tests
 uv run python -m scripts.preflight      # every integration, live
 ```
 
@@ -484,7 +484,7 @@ uv run --with pip-audit pip-audit
 cd frontend
 npm run lint                     # eslint
 npx tsc --noEmit                 # type check
-npm test
+npm test                         # 171 tests
 npm run build
 npm audit --audit-level=high
 ```
