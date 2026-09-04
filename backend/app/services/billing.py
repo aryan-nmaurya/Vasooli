@@ -16,7 +16,11 @@ from app.core.clock import utcnow
 from app.core.config import settings
 from app.core.constants import TERMINAL_STATUSES
 from app.core.logging import get_logger
-from app.integrations.razorpay_client import get_billing_client
+from app.integrations.razorpay_client import (
+    RazorpayError,
+    RazorpayPermanentError,
+    get_billing_client,
+)
 from app.integrations.razorpay_signature import verify_signature
 from app.models import (
     BillingEntitlement,
@@ -57,6 +61,15 @@ PROVIDER_STATUS_MAP = {
 
 class BillingEntitlementError(ValueError):
     """The merchant cannot perform a billable live operation."""
+
+
+class BillingProviderError(RuntimeError):
+    """The payment provider refused an operation this service asked it to perform.
+
+    Raised so routers can report a provider refusal without importing the Razorpay
+    layer themselves — translating the integration's errors into the domain's is this
+    service's job, and `test_api_does_not_call_integrations_directly` enforces it.
+    """
 
 
 def verify_billing_signature(raw_body: bytes, signature: str | None) -> bool:
@@ -775,9 +788,30 @@ def cancel_subscription(
         raise BillingEntitlementError("There is no active subscription to cancel")
 
     if row.razorpay_subscription_id and settings.razorpay_subscriptions_enabled:
-        get_billing_client().cancel_subscription(
-            row.razorpay_subscription_id, cancel_at_cycle_end=not immediate
-        )
+        try:
+            get_billing_client().cancel_subscription(
+                row.razorpay_subscription_id, cancel_at_cycle_end=not immediate
+            )
+        except RazorpayPermanentError as exc:
+            # Cancel-at-cycle-end needs a cycle to end. A subscription that has not
+            # started billing — `created`, or `authenticated` for the whole of a
+            # trial — has none, and Razorpay refuses with "Subscription cannot be
+            # cancelled since no billing cycle is going on". That refusal escaped as
+            # a bare 500, so cancelling during a trial simply did not work: exactly
+            # the window the activation screen promises you can leave in.
+            #
+            # There is nothing to preserve in that state. No period has been paid
+            # for, so ending it now costs the merchant nothing and is what they
+            # asked for.
+            if immediate or "billing cycle" not in str(exc).casefold():
+                raise BillingProviderError(str(exc)) from exc
+            try:
+                get_billing_client().cancel_subscription(
+                    row.razorpay_subscription_id, cancel_at_cycle_end=False
+                )
+            except RazorpayError as inner:
+                raise BillingProviderError(str(inner)) from inner
+            immediate = True
 
     if immediate:
         row.status = "cancelled"

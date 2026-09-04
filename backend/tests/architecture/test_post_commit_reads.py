@@ -52,7 +52,11 @@ SAFE_ATTRS = frozenset(
         "format",
         "commit",
         "rollback",
-        "to_dict",
+        # `to_dict` is NOT here. It was, and that is how the billing cancel endpoint
+        # shipped a bare 500: `SubscriptionState.to_dict()` looks like a plain
+        # serializer but reaches into the BillingSubscription row it holds, so
+        # calling it after commit re-SELECTs with no tenant. A method name cannot
+        # tell you whether it touches ORM state; only the receiver can.
         "refresh",
         "add",
         "exec",

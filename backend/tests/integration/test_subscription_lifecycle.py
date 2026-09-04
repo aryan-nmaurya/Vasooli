@@ -14,6 +14,7 @@ from app.core.config import settings
 from app.models import BillingSubscription, Merchant
 from app.services.billing import (
     BillingEntitlementError,
+    BillingProviderError,
     assert_feature_entitled,
     assert_seat_entitled,
     assert_write_allowed,
@@ -316,3 +317,105 @@ def test_an_existing_trial_stamp_is_honoured_over_the_default(session, live_merc
     set_trial(session, live_merchant, days_from_now=30)
     subscribe(session, live_merchant, "starter", status="authenticated")
     assert subscription_state(session, live_merchant.id).days_remaining == 30
+
+
+# ===========================================================================
+# Cancellation against the provider
+# ===========================================================================
+#
+# The tests above cancel rows that carry no `razorpay_subscription_id`, so they never
+# reach the provider — which is how a real cancellation failure shipped. Razorpay
+# refuses cancel-at-cycle-end when no cycle is running, and a merchant on a trial is
+# in exactly that state for the whole of the window the activation screen says they
+# can leave in.
+
+
+class _RefusingClient:
+    """A billing client that refuses the way Razorpay actually refuses."""
+
+    def __init__(self, message: str, *, refuse_immediate: bool = False) -> None:
+        self.message = message
+        self.refuse_immediate = refuse_immediate
+        self.calls: list[bool] = []
+
+    def cancel_subscription(self, subscription_id: str, *, cancel_at_cycle_end: bool = True):
+        from app.integrations.razorpay_client import RazorpayPermanentError
+
+        self.calls.append(cancel_at_cycle_end)
+        if cancel_at_cycle_end or self.refuse_immediate:
+            raise RazorpayPermanentError(self.message)
+        return {"id": subscription_id, "status": "cancelled"}
+
+
+@pytest.fixture
+def provider(monkeypatch):
+    """Route cancellation through a stub and turn the provider call on."""
+
+    def _install(client):
+        monkeypatch.setattr(settings, "razorpay_subscriptions_enabled", True, raising=False)
+        monkeypatch.setattr("app.services.billing.get_billing_client", lambda: client)
+        return client
+
+    return _install
+
+
+NO_CYCLE = "Subscription cannot be cancelled since no billing cycle is going on"
+
+
+def test_a_trial_can_be_cancelled_even_though_no_cycle_has_started(
+    session, live_merchant, provider
+):
+    client = provider(_RefusingClient(NO_CYCLE))
+    subscribe(
+        session,
+        live_merchant,
+        "growth",
+        status="authenticated",
+        razorpay_subscription_id="sub_trial",
+    )
+
+    state = cancel_subscription(session, live_merchant.id)
+    session.commit()
+
+    # Asked for cycle-end first, then fell back once the provider said there was none.
+    assert client.calls == [True, False]
+    # Nothing was paid for, so there is no period to preserve — it ends now.
+    assert state.status == "cancelled"
+    assert state.is_active is False
+
+
+def test_a_refusal_we_do_not_understand_leaves_the_subscription_alone(
+    session, live_merchant, provider
+):
+    provider(_RefusingClient("Subscription is in an invalid state"))
+    row = subscribe(
+        session,
+        live_merchant,
+        "growth",
+        status="active",
+        razorpay_subscription_id="sub_live",
+    )
+
+    with pytest.raises(BillingProviderError):
+        cancel_subscription(session, live_merchant.id)
+    session.rollback()
+
+    # A workspace that believes it is cancelled while Razorpay keeps charging is the
+    # one failure here that costs the merchant money.
+    session.refresh(row)
+    assert row.status == "active"
+    assert row.cancel_at_period_end is False
+
+
+def test_a_provider_that_refuses_outright_does_not_report_success(session, live_merchant, provider):
+    provider(_RefusingClient(NO_CYCLE, refuse_immediate=True))
+    subscribe(
+        session,
+        live_merchant,
+        "growth",
+        status="authenticated",
+        razorpay_subscription_id="sub_trial",
+    )
+
+    with pytest.raises(BillingProviderError):
+        cancel_subscription(session, live_merchant.id)

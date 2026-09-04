@@ -21,6 +21,7 @@ from app.services.authorization import (
 )
 from app.services.billing import (
     BillingEntitlementError,
+    BillingProviderError,
     apply_subscription_event,
     cancel_subscription,
     checkout_url_for,
@@ -263,8 +264,31 @@ def cancel(
         state = cancel_subscription(session, context.merchant.id)
     except BillingEntitlementError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
-    session.commit()
-    return state.to_dict()
+    except BillingProviderError as exc:
+        # The provider refused. Say so plainly: a 500 here reads as "cancelling is
+        # broken" and leaves the merchant believing they are still being charged,
+        # which is the one thing this endpoint exists to settle.
+        session.rollback()
+        log.error(
+            "billing.cancel_provider_refused",
+            merchant_id=str(context.merchant.id),
+            error=str(exc),
+        )
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            "Your payment provider refused the cancellation. Nothing has changed on "
+            "your subscription. Please try again, or contact support.",
+        ) from exc
+    # `state` holds the BillingSubscription row, and `to_dict()` reads its attributes.
+    # `commit()` expires them, so those reads re-SELECT in a NEW transaction — where
+    # the transaction-local `app.merchant_id` set for this request no longer exists.
+    # Under the restricted role production actually runs as, RLS then matches no rows
+    # and SQLAlchemy reports the row it just wrote as deleted: a bare 500 on the one
+    # endpoint whose whole job is to reassure a merchant they will not be charged
+    # again. Holding the tenant across the commit is what `merchant_scope` is for.
+    with merchant_scope(session, context.merchant.id):
+        session.commit()
+        return state.to_dict()
 
 
 @router.post("/webhook")
