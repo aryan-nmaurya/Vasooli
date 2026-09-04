@@ -12,6 +12,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field, model_validator
+from sqlalchemy import or_
 from sqlmodel import select
 
 from app.api.dashboard import (
@@ -116,6 +117,7 @@ def queue(
     context: Annotated[LiveContext, Depends(require_live_permission("invoice.read"))],
     status_filter: str | None = Query(None, alias="status"),
     reason: str | None = None,
+    q: str | None = Query(None, max_length=120, description="Invoice number or customer name."),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ) -> list[QueueRow]:
@@ -124,6 +126,25 @@ def queue(
         query = query.where(Invoice.status == status_filter)
     if reason:
         query = query.where(Invoice.reason_category == reason)
+    if q and q.strip():
+        # Matched here rather than in the browser so the search covers the whole
+        # ledger. The page holds a few hundred rows at most, and a merchant looking
+        # for one invoice number is usually looking for one the page did not load.
+        #
+        # The customer match is a subquery scoped to this merchant, so a name common
+        # to two tenants cannot widen the result past the caller's own invoices.
+        term = f"%{q.strip()}%"
+        query = query.where(
+            or_(
+                Invoice.invoice_number.ilike(term),  # type: ignore[attr-defined]
+                Invoice.customer_id.in_(  # type: ignore[attr-defined]
+                    select(Customer.id).where(
+                        Customer.merchant_id == context.merchant.id,
+                        Customer.name.ilike(term),  # type: ignore[attr-defined]
+                    )
+                ),
+            )
+        )
     invoices = sorted(
         session.exec(query).all(), key=lambda invoice: invoice.outstanding_paise, reverse=True
     )[offset : offset + limit]

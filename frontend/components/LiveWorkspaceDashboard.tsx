@@ -47,6 +47,11 @@ export function LiveWorkspaceDashboard() {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [queue, setQueue] = useState<QueueRow[]>([]);
   const [exceptions, setExceptions] = useState<Exceptions | null>(null);
+  // Two values, because they change at different speeds. `search` is what the box
+  // shows and must update on every keystroke; `query` is what the server is asked
+  // for, and lags behind it so typing an invoice number is one request, not twelve.
+  const [search, setSearch] = useState("");
+  const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
   const [reasonFilter, setReasonFilter] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -55,13 +60,24 @@ export function LiveWorkspaceDashboard() {
   const lastRecovered = useRef(0);
 
   useEffect(() => {
+    const timer = window.setTimeout(() => setQuery(search.trim()), 250);
+    return () => window.clearTimeout(timer);
+  }, [search]);
+
+  useEffect(() => {
     const id = window.localStorage.getItem("vasooli_live_merchant") || "";
     let alive = true;
     let interval: number | undefined;
     async function load() {
       const results = await Promise.allSettled([
         liveGet<Overview>("/api/live/workspace/overview", id),
-        liveGet<QueueRow[]>("/api/live/workspace/queue?limit=200", id),
+        liveGet<QueueRow[]>(
+          // Searched server-side so it reaches the whole ledger. The page holds a
+          // few hundred rows, and the invoice someone is hunting for is usually one
+          // of the ones it did not load.
+          `/api/live/workspace/queue?limit=200${query ? `&q=${encodeURIComponent(query)}` : ""}`,
+          id,
+        ),
         liveGet<Exceptions>("/api/live/workspace/exceptions", id),
       ]);
       if (!alive) return;
@@ -86,7 +102,7 @@ export function LiveWorkspaceDashboard() {
       interval = window.setInterval(load, POLL_MS);
     });
     return () => { alive = false; if (interval !== undefined) window.clearInterval(interval); };
-  }, []);
+  }, [query]);
 
   const visible = useMemo(() => queue.filter((row) => (!statusFilter || row.status === statusFilter) && (!reasonFilter || row.reason_category === reasonFilter)), [queue, reasonFilter, statusFilter]);
   if (!merchant) return <div className="mx-auto max-w-6xl py-8"><LiveSignInPrompt what="Your recovery workspace" /></div>;
@@ -109,9 +125,23 @@ export function LiveWorkspaceDashboard() {
     </>}
 
     <section className="rounded-xl border border-line bg-panel p-3 sm:p-5">
-      <div className="mb-4 flex flex-wrap items-start gap-3"><div><h2 className="text-base font-semibold">Recovery queue</h2><p className="mt-0.5 text-xs text-ink-3">Prioritized invoices ready for the next collection step.</p></div><span className="rounded-full bg-panel-2 px-2.5 py-1 text-[11px] font-medium text-ink-3">{visible.length} of {queue.length} shown</span>{statusFilter || reasonFilter ? <button onClick={() => { setStatusFilter(null); setReasonFilter(null); }} className="text-xs text-accent hover:underline">Clear filters</button> : null}</div>
+      <div className="mb-4 flex flex-wrap items-start gap-3"><div><h2 className="text-base font-semibold">Recovery queue</h2><p className="mt-0.5 text-xs text-ink-3">Prioritized invoices ready for the next collection step.</p></div><div className="ml-auto flex flex-wrap items-center gap-2">
+          <label className="relative">
+            <span className="sr-only">Search invoices</span>
+            <span aria-hidden className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-4">⌕</span>
+            <input
+              type="search"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search invoice or customer"
+              className="w-56 rounded-md border border-line bg-surface py-1.5 pl-7 pr-2.5 text-xs text-ink outline-none placeholder:text-ink-4 focus:border-accent"
+            />
+          </label>
+          <span className="rounded-full bg-panel-2 px-2.5 py-1 text-[11px] font-medium text-ink-3">{visible.length} of {queue.length} shown</span>
+          {statusFilter || reasonFilter || search ? <button onClick={() => { setStatusFilter(null); setReasonFilter(null); setSearch(""); }} className="text-xs text-accent hover:underline">Clear filters</button> : null}
+        </div></div>
       {statuses.length || reasons.length ? <div className="rounded-lg border border-line-2 bg-surface p-3">{statuses.length ? <div className="flex flex-wrap items-center gap-1.5"><span className="mr-1 text-[11px] uppercase tracking-wider text-ink-4">Status</span>{statuses.map(([status, count]) => <button key={status} onClick={() => setStatusFilter(statusFilter === status ? null : status)} className={`rounded-md px-2.5 py-1 text-xs ring-1 ring-inset ring-line ${statusFilter === status ? "bg-panel-2 font-medium text-ink" : "text-ink-3 hover:bg-panel-2"}`}>{status.replaceAll("_", " ")} ({count})</button>)}</div> : null}{reasons.length ? <div className="mt-2.5 flex flex-wrap items-center gap-1.5"><span className="mr-1 text-[11px] uppercase tracking-wider text-ink-4">Reason</span><button onClick={() => setReasonFilter(null)} className={`rounded-md px-2.5 py-1 text-xs ring-1 ring-inset ring-line ${reasonFilter === null ? "bg-panel-2 font-medium text-ink" : "text-ink-3"}`}>All</button>{reasons.map(([reason, count]) => <button key={reason} onClick={() => setReasonFilter(reasonFilter === reason ? null : reason)} className={`rounded-md px-2.5 py-1 text-xs ring-1 ring-inset ring-line ${reasonFilter === reason ? "bg-panel-2 font-medium text-ink" : "text-ink-3 hover:bg-panel-2"}`}>{reason.replaceAll("_", " ")} ({count})</button>)}</div> : null}</div> : null}
-      <div className="scroll-x mt-3 rounded-lg border border-line"><table className="w-full min-w-[860px] text-sm"><thead className="border-b border-line text-left text-xs uppercase tracking-wider text-ink-3"><tr><th className="px-4 py-2.5 font-medium">Invoice</th><th className="px-4 py-2.5 font-medium">Customer</th><th className="px-4 py-2.5 text-right font-medium">Amount</th><th className="px-4 py-2.5 text-right font-medium">Overdue</th><th className="px-4 py-2.5 font-medium">Tier</th><th className="px-4 py-2.5 font-medium">Reason</th><th className="px-4 py-2.5 font-medium">Status</th><th className="px-4 py-2.5 font-medium">Why</th></tr></thead><tbody className="divide-y divide-line-2">{visible.map((row) => <tr key={row.id} className="transition hover:bg-panel-2"><td className="px-4 py-2.5"><Link href={`/live/invoices/${row.id}`} className="font-mono text-[13px] text-accent hover:underline">{row.invoice_number}</Link></td><td className="px-4 py-2.5 text-ink-2">{row.customer_name}</td><td className="px-4 py-2.5 text-right font-medium tabular-nums">{row.amount_display}</td><td className="px-4 py-2.5 text-right tabular-nums text-ink-3">{row.days_overdue}d</td><td className="px-4 py-2.5"><TierBadge label={row.tier_label} /></td><td className="px-4 py-2.5"><ReasonBadge reason={row.reason_category} /></td><td className="px-4 py-2.5"><div className="flex flex-wrap gap-1.5"><StatusBadge status={row.status} />{row.dispute_open ? <span className="rounded bg-rose-50 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-rose-700 ring-1 ring-inset ring-rose-200 dark:bg-rose-500/15 dark:text-rose-300 dark:ring-rose-500/30">Disputed</span> : null}</div></td><td className="max-w-[300px] px-4 py-2.5 text-xs text-ink-3">{row.why}</td></tr>)}{visible.length === 0 ? <tr><td colSpan={8} className="px-4 py-10 text-center text-sm text-ink-3">No invoices in this view. Import a CSV or sync your ERP to begin.</td></tr> : null}</tbody></table></div>
+      <div className="scroll-x mt-3 rounded-lg border border-line"><table className="w-full min-w-[860px] text-sm"><thead className="border-b border-line text-left text-xs uppercase tracking-wider text-ink-3"><tr><th className="px-4 py-2.5 font-medium">Invoice</th><th className="px-4 py-2.5 font-medium">Customer</th><th className="px-4 py-2.5 text-right font-medium">Amount</th><th className="px-4 py-2.5 text-right font-medium">Overdue</th><th className="px-4 py-2.5 font-medium">Tier</th><th className="px-4 py-2.5 font-medium">Reason</th><th className="px-4 py-2.5 font-medium">Status</th><th className="px-4 py-2.5 font-medium">Why</th></tr></thead><tbody className="divide-y divide-line-2">{visible.map((row) => <tr key={row.id} className="transition hover:bg-panel-2"><td className="px-4 py-2.5"><Link href={`/live/invoices/${row.id}`} className="font-mono text-[13px] text-accent hover:underline">{row.invoice_number}</Link></td><td className="px-4 py-2.5 text-ink-2">{row.customer_name}</td><td className="px-4 py-2.5 text-right font-medium tabular-nums">{row.amount_display}</td><td className="px-4 py-2.5 text-right tabular-nums text-ink-3">{row.days_overdue}d</td><td className="px-4 py-2.5"><TierBadge label={row.tier_label} /></td><td className="px-4 py-2.5"><ReasonBadge reason={row.reason_category} /></td><td className="px-4 py-2.5"><div className="flex flex-wrap gap-1.5"><StatusBadge status={row.status} />{row.dispute_open ? <span className="rounded bg-rose-50 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-rose-700 ring-1 ring-inset ring-rose-200 dark:bg-rose-500/15 dark:text-rose-300 dark:ring-rose-500/30">Disputed</span> : null}</div></td><td className="max-w-[300px] px-4 py-2.5 text-xs text-ink-3">{row.why}</td></tr>)}{visible.length === 0 ? <tr><td colSpan={8} className="px-4 py-10 text-center text-sm text-ink-3">{query ? <>Nothing matches <span className="font-medium text-ink-2">“{query}”</span>. The whole ledger was searched, not just this page.</> : "No invoices in this view. Import a CSV or sync your ERP to begin."}</td></tr> : null}</tbody></table></div>
     </section>
 
     <section className="rounded-xl border border-line bg-panel p-4 sm:p-5"><div className="flex items-start justify-between gap-4"><div><h2 className="text-base font-semibold">Operational exceptions</h2><p className="mt-0.5 text-xs text-ink-3">Failures remain visible until they are resolved or retried.</p></div><Link href="/live/exceptions" className="text-xs font-semibold text-accent">Open exception queue →</Link></div><div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{[["Payment reconciliation", exceptions?.reconciliation.length ?? 0], ["Communication", exceptions?.communication.length ?? 0], ["Payment-link closure", exceptions?.unclosed_links.length ?? 0], ["Inbound replies", exceptions?.inbound.length ?? 0]].map(([label, count]) => <div key={String(label)} className="rounded-lg border border-line-2 bg-surface px-4 py-3"><p className="text-xs text-ink-3">{label}</p><p className={`mt-1 text-xl font-semibold ${Number(count) ? "text-rose-700 dark:text-rose-300" : "text-ink"}`}>{count}</p></div>)}</div></section>
