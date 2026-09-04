@@ -338,3 +338,69 @@ def test_the_razorpay_sweep_can_record_what_it_finds(session, restricted_engine,
 
     session.expire_all()
     assert session.get(Invoice, invoice_id).is_fully_paid
+
+
+def test_recording_an_inbound_reply_is_allowed_to_write_it_down(
+    session, restricted_engine, merchant
+):
+    """Storing the message, which is the write BEFORE any processing.
+
+    The test above covers `handle_reply` re-reading the invoice past a commit. It
+    could not catch this, because it never exercised `_record_inbound` itself: the
+    endpoint correlates under `service_scope` — a read grant — and then INSERTED the
+    InboundMessage while still inside it. Every policy's WITH CHECK demands a real
+    `app.merchant_id`, so Postgres refused with "new row violates row-level security
+    policy for table inbound_messages" and the webhook 500'd.
+
+    Seen in production: a customer's reply arrived with a valid signature, resolved to
+    the right invoice by its per-invoice alias, and was thrown away.
+    """
+    from sqlmodel import select
+
+    from app.api.webhooks import _record_inbound
+    from app.core.clock import utcnow
+    from app.models import InboundMessage
+    from app.services.authorization import service_scope
+
+    customer = Customer(
+        merchant_id=merchant.id, name="Replier Ltd", email="ap@replier.example.invalid"
+    )
+    session.add(customer)
+    session.flush()
+    invoice = Invoice(
+        merchant_id=merchant.id,
+        customer_id=customer.id,
+        invoice_number=f"INV-W{uuid.uuid4().hex[:6]}",
+        amount_paise=1_000_000,
+        issued_at=utcnow(),
+        due_at=utcnow(),
+    )
+    session.add(invoice)
+    session.commit()
+    invoice_id = invoice.id
+    event_id = f"msg_{uuid.uuid4().hex[:12]}"
+
+    # Exactly the endpoint's own shape: correlate under the read scope, then record.
+    with Session(restricted_engine) as restricted, service_scope(restricted):
+        live_invoice = restricted.get(Invoice, invoice_id)
+        outcome = _record_inbound(
+            restricted,
+            invoice=live_invoice,
+            event_id=event_id,
+            message_id="<gmail-message-id>",
+            sender=customer.email,
+            recipient=f"reply-{uuid.uuid4().hex}@vasooli.space",
+            subject="Re: your invoice",
+            body="i'll pay by monday",
+            in_reply_to=None,
+            raw_payload={"event": {"type": "email.received"}},
+            received_at=utcnow(),
+        )
+
+    assert outcome["status"] != "recorded_for_retry", outcome
+    session.expire_all()
+    stored = session.exec(
+        select(InboundMessage).where(InboundMessage.provider_event_id == event_id)
+    ).first()
+    assert stored is not None, "the reply reached us and was not written down"
+    assert stored.body_text == "i'll pay by monday"

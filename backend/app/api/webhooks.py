@@ -246,23 +246,27 @@ def _record_inbound(
         signature_verified=True,
         received_at=received_at,
     )
-    session.add(message)
-    try:
-        session.commit()
-    except IntegrityError:
-        session.rollback()
-        return {"status": "duplicate_ignored", "event_id": event_id}
-
-    # Everything below reads and writes tenant-scoped rows across several commits, so
-    # the tenant has to be held for the whole block rather than set once.
+    # The tenant is held from the INSERT onwards, not merely around `handle_reply`.
     #
-    # Without this the failure was silent rather than loud: `handle_reply` re-reads the
-    # invoice after the commit above, which under the NOBYPASSRLS role production uses
-    # matches no rows and raises. The `except Exception` below then catches it, marks
-    # the message for retry and answers 200 — so the provider is told everything is
-    # fine, the retry hits the identical bug, and the customer's reply is never
-    # processed. No promise extracted, no dispute opened, no pause. Green all the way.
+    # Correlation runs under `service_scope`, which is a read grant: every policy's
+    # WITH CHECK still demands a real `app.merchant_id`. So storing the message —
+    # the first write, before any processing — was refused outright with "new row
+    # violates row-level security policy for table inbound_messages", and the
+    # endpoint 500'd. A customer's reply reached us, verified, correlated to the
+    # right invoice, and was thrown away.
+    #
+    # The rest of the block needs the same tenant for a different reason:
+    # `handle_reply` re-reads the invoice after the commit below, and a
+    # transaction-local setting would not survive it. Holding one scope over both
+    # covers the write and the re-read together.
     with merchant_scope(session, invoice.merchant_id):
+        session.add(message)
+        try:
+            session.commit()
+        except IntegrityError:
+            session.rollback()
+            return {"status": "duplicate_ignored", "event_id": event_id}
+
         try:
             # The complete body remains evidence; AI/policy gets a bounded working copy.
             handle_reply(session, invoice, body[:20_000], inbound_message_id=str(message.id))
