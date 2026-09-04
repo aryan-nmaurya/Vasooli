@@ -153,7 +153,7 @@
     },
     {
       "path": "frontend/app/settings/page.tsx",
-      "sha256": "91521b4390f0ce203004e3029e79220daa6d612679a0bec908bcd7f2ba29487f"
+      "sha256": "a29c48304aac6fd3fb78358d9c414802574be969dd55de2c6973caea7171c4b2"
     },
     {
       "path": "frontend/components/AutomationHealth.tsx",

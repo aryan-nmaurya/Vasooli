@@ -14,6 +14,7 @@ import { DemoExitGuard } from "@/components/DemoExitGuard";
 import { LiveExitGuard } from "@/components/LiveExitGuard";
 import { PaymentGate } from "@/components/PaymentGate";
 import { SubscriptionBanner } from "@/components/SubscriptionBanner";
+import { getDemoClock } from "@/lib/api";
 import { liveGet } from "@/lib/live-api";
 
 const DEMO_ROUTES = ["/recovered", "/promises", "/audit", "/invoices", "/settings"];
@@ -63,7 +64,35 @@ export function AppShell({ children, guidedSignedIn }: { children: React.ReactNo
   return <PublicShell>{children}</PublicShell>;
 }
 
+/**
+ * Whether this deployment has the demo controls switched on.
+ *
+ * Asked of the backend rather than inferred from the hostname, because the flag is
+ * the backend's — `DEMO_CONTROLS_ENABLED`, which production refuses to boot with.
+ * Starts false so the control never flashes into view on a deployment that does not
+ * have it: the entry appears once the answer comes back yes, and on production the
+ * answer never does.
+ */
+function useDemoControls() {
+  const [enabled, setEnabled] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    getDemoClock()
+      .then(() => {
+        if (alive) setEnabled(true);
+      })
+      .catch(() => {
+        /* Disabled, or unreachable. Either way there is nothing to link to. */
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  return enabled;
+}
+
 function DashboardShell({ children }: { children: React.ReactNode }) {
+  const demoControls = useDemoControls();
   return <div className="dashboard-shell">
     <DemoExitGuard />
     <aside className="dashboard-sidebar">
@@ -72,14 +101,14 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
         <p className="px-3 pb-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-ink-4">Demo workspace</p>
         <Nav />
         <div className="mt-auto space-y-3 pt-6">
-          <SettingsLink />
+          {demoControls ? <SettingsLink /> : null}
           <Link href="/guide" className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-xs text-ink-3 transition hover:bg-panel-2 hover:text-ink"><span aria-hidden className="grid size-6 place-items-center rounded-md border border-line text-[11px] font-semibold">?</span>Reviewer guide</Link>
           <div className="rounded-xl border border-line bg-panel-2/65 p-3"><div className="flex items-center justify-between gap-2"><span className="text-xs font-medium text-ink">Razorpay</span><span className="rounded-full bg-amber-500/12 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-300">Test mode</span></div><p className="mt-1.5 text-[11px] leading-4 text-ink-4">Guided single-merchant demo</p></div>
         </div>
       </div>
     </aside>
     <div className="dashboard-content">
-      <header className="dashboard-topbar"><div className="lg:hidden"><Brand href="/" compact /></div><div className="ml-auto flex items-center gap-2"><SettingsLink compact /><ThemeToggle /><SignOutButton signedIn /></div></header>
+      <header className="dashboard-topbar"><div className="lg:hidden"><Brand href="/" compact /></div><div className="ml-auto flex items-center gap-2">{demoControls ? <SettingsLink compact /> : null}<ThemeToggle /><SignOutButton signedIn /></div></header>
       <RuntimeBanner />
       <main className="w-full flex-1 px-4 py-6 sm:px-6 lg:px-8 lg:py-8">{children}</main>
       <footer className="border-t border-line px-4 py-4 text-[11px] text-ink-4 sm:px-6 lg:px-8"><div className="flex flex-wrap items-center gap-x-4 gap-y-1"><span>Vasooli · Guided product demo</span><span className="ml-auto">No live customer contact</span></div></footer>

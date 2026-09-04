@@ -1,3 +1,5 @@
+import { notFound } from "next/navigation";
+
 import { DemoSettingsPanel } from "@/components/DemoSettings";
 import { getDemoClock } from "@/lib/api";
 
@@ -10,6 +12,12 @@ export const metadata = {
 
 export default async function SettingsPage() {
   const clock = await getDemoClock().catch(() => null);
+  // This page is the demo controls and nothing else. Where they are switched off —
+  // production, always — there is no page here to show. It used to render "Demo
+  // controls are unavailable in this environment", which is a dead end reachable
+  // from the sidebar: a merchant on a live deployment could click Workspace settings
+  // and land on a screen that exists only to say it does not apply to them.
+  if (!clock) notFound();
 
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
@@ -25,13 +33,7 @@ export default async function SettingsPage() {
         </p>
       </header>
 
-      {clock ? (
-        <DemoSettingsPanel initial={clock} />
-      ) : (
-        <div className="rounded-xl border border-line bg-panel p-5 text-sm text-ink-3">
-          Demo controls are unavailable in this environment.
-        </div>
-      )}
+      <DemoSettingsPanel initial={clock} />
     </div>
   );
 }
