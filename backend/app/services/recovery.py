@@ -59,6 +59,8 @@ from app.services.messaging import (
     redeliver_reminder,
     retry_failed_deliveries,
 )
+from app.services.payment_connections import PaymentConnectionRequiredError
+from app.services.provisioning import provision_for_invoice
 from app.services.reconciliation import retry_failed_events
 
 log = get_logger("recovery")
@@ -450,6 +452,38 @@ def run_recovery_cycle(
     return report
 
 
+def _provision_link(session: Session, invoice: Invoice) -> PaymentLink | None:
+    """Give this invoice a payment link, if the merchant can issue one.
+
+    Nothing else does it. Provisioning had exactly one live caller — the per-invoice
+    endpoint a merchant would have to click for every invoice they own — so an
+    imported ledger got no links at all and every reminder went out without a way to
+    pay. The cycle read `PaymentLink`, found none, and sent anyway.
+
+    Best effort on purpose. A merchant who has not connected Razorpay, or a provider
+    that refuses, must not stop the reminder: a chase without a link is worth much
+    more than no chase. The failure is logged and, for a provider error,
+    `provision_for_invoice` writes its own audit row.
+
+    Called inside the per-invoice `merchant_scope`, so the commit it performs keeps
+    the tenant and the writes after it are still accepted.
+    """
+    try:
+        return provision_for_invoice(session, invoice.id)
+    except PaymentConnectionRequiredError:
+        # Expected until a merchant connects their account. Their own dashboard says
+        # so; repeating it per invoice per cycle would bury everything else.
+        log.info("recovery.no_payment_connection", invoice_number=invoice.invoice_number)
+    except Exception as exc:  # noqa: BLE001 - a link is an improvement, never a gate
+        session.rollback()
+        log.warning(
+            "recovery.provisioning_failed",
+            invoice_number=invoice.invoice_number,
+            error=str(exc),
+        )
+    return None
+
+
 def _process_invoice(
     session: Session,
     invoice: Invoice,
@@ -597,6 +631,8 @@ def _process_invoice(
         return
 
     link = session.exec(select(PaymentLink).where(PaymentLink.invoice_id == invoice.id)).first()
+    if link is None and not dry_run:
+        link = _provision_link(session, invoice)
 
     draft_inputs = DraftInputs(
         merchant_name=merchant_name,
