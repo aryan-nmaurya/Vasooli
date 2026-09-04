@@ -120,7 +120,40 @@ jobs:
         # `npm audit` locally but do not block: the npm advisory database carries a
         # long tail of low-severity findings in build-time tooling that never reaches
         # production, and failing on those trains people to ignore the check.
-        run: npm audit --audit-level=high
+        #
+        # Read from --json rather than trusting the exit code, because `npm audit`
+        # exits non-zero for a REGISTRY FAILURE exactly as it does for a finding.
+        # Two runs of the identical lockfile in the same minute went red and green
+        # on commits that touched no dependency, which is how a check stops meaning
+        # anything. A transport error is retried; if it persists the step still
+        # fails, because a check that could not run is not a check that passed.
+        run: |
+          set -uo pipefail
+          report=$(mktemp); err=$(mktemp)
+          for attempt in 1 2 3; do
+            npm audit --json > "$report" 2> "$err" || true
+            if python3 -c "
+          import json, sys
+          try: report = json.load(open('$report'))
+          except Exception: sys.exit(1)
+          counts = (report.get('metadata') or {}).get('vulnerabilities')
+          sys.exit(0 if isinstance(counts, dict) else 1)
+          "; then break; fi
+            echo "::warning::npm audit returned no usable report (attempt $attempt)"
+            cat "$err"
+            if [ "$attempt" = 3 ]; then
+              echo "::error::npm audit could not reach the registry after 3 attempts"
+              exit 1
+            fi
+            sleep $((attempt * 10))
+          done
+          python3 -c "
+          import json
+          counts = json.load(open('$report'))['metadata']['vulnerabilities']
+          print('npm audit:', ', '.join(f'{k}={v}' for k, v in counts.items()))
+          blocking = counts.get('high', 0) + counts.get('critical', 0)
+          raise SystemExit(f'{blocking} high/critical advisories' if blocking else 0)
+          "
 
       - name: Secret scan
         working-directory: .
