@@ -108,7 +108,13 @@ class Settings(BaseSettings):
     email_from: str = "Vasooli <onboarding@resend.dev>"
     #: Account lifecycle mail has a stable platform identity and must never inherit a
     #: merchant's collections sender. The domain must be verified in Resend.
-    auth_email_from: str = "Vasooli <noreply@vasooli.com>"
+    #: Sender for verification and password-reset mail.
+    #:
+    #: Must be a domain verified in Resend, and it is NOT automatically the same as
+    #: EMAIL_FROM. It defaulted to a `.com` that was never verified, so Resend
+    #: refused every identity email with a 403 and no one could finish signing up or
+    #: reset a password — while reminders, which use EMAIL_FROM, kept sending.
+    auth_email_from: str = "Vasooli <noreply@vasooli.space>"
     email_reply_to_domain: str = "example.com"
     resend_inbound_webhook_secret: str = ""
     #: Each Resend webhook endpoint is issued its own signing secret — Resend does not

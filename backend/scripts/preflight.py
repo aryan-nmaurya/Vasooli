@@ -384,6 +384,32 @@ def check_resend() -> None:
             "DNS records are not fully propagated yet. Re-check in Resend.",
         )
 
+    # Identity mail leaves from AUTH_EMAIL_FROM, which is a DIFFERENT setting from
+    # EMAIL_FROM and can name a different domain. When that domain is unverified,
+    # Resend answers 403 and the merchant sees "We could not send the verification
+    # email" — so nobody can finish signing up or reset a password, while reminders
+    # keep sending perfectly and every other check here passes. It stayed hidden
+    # because the default in config.py names a domain that was never verified.
+    auth_domain = settings.auth_email_from.rsplit("@", 1)[-1].strip(" >").casefold()
+    if auth_domain and auth_domain != reply_domain:
+        auth_match = next(
+            (d for d in domains if str(d.get("name", "")).casefold() == auth_domain), None
+        )
+        status = (auth_match or {}).get("status")
+        if status == "verified":
+            report("PASS", "identity-email domain verified", f"{auth_domain} — verified")
+        else:
+            report(
+                "FAIL",
+                "identity-email domain verified",
+                f"{auth_domain} — {status or 'not in Resend'}",
+                "AUTH_EMAIL_FROM sends from a domain Resend will refuse, so email "
+                "verification and password reset both fail. Point it at a verified "
+                f"domain (e.g. noreply@{reply_domain}) or verify {auth_domain}.",
+            )
+    else:
+        report("PASS", "identity-email domain verified", f"{auth_domain} — same as sending domain")
+
 
 def check_ai() -> None:
     section("AI — Gemini")

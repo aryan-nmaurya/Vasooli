@@ -451,7 +451,7 @@ npm run dev
 | `RAZORPAY_WEBHOOK_SECRET` | Signature verification | From the dashboard webhook |
 | `GOOGLE_API_KEY` | Gemini | Free tier is **20 requests/day per model** — see the warning above |
 | `RESEND_API_KEY` | Email | |
-| `AUTH_EMAIL_FROM` | OTP and password-recovery sender | `Vasooli <noreply@vasooli.com>`; domain verified in Resend |
+| `AUTH_EMAIL_FROM` | OTP and password-recovery sender | `Vasooli <noreply@vasooli.space>`. Must be a domain **verified** in Resend, and it is not automatically the one `EMAIL_FROM` uses — an unverified sender here means signup and password reset both fail while reminders keep working. `scripts.preflight` checks it separately |
 | `EMAIL_DRY_RUN` | Record without sending | `true` unless demoing |
 | `EMAIL_REDIRECT_TO` | Send everything here instead | **Required** to send live |
 | `ADMIN_API_KEY` | Service credential | Never exposed to the browser |
