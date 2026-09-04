@@ -79,18 +79,53 @@ export function isPaymentRequired(cause: unknown): boolean {
   return cause instanceof LiveApiError && cause.status === 402;
 }
 
+/**
+ * One refresh at a time.
+ *
+ * Several components poll at once, so an expired access cookie produces a burst of
+ * 401s within the same tick. Without this they would each rotate the refresh token,
+ * and rotation invalidates the previous one — the stampede would log the merchant
+ * out rather than keep them in.
+ */
+let refreshing: Promise<boolean> | null = null;
+
+function refreshSession(): Promise<boolean> {
+  refreshing ??= fetch(`${API_BASE}/api/live/auth/refresh`, {
+    method: "POST",
+    credentials: "include",
+  })
+    .then((r) => r.ok)
+    .catch(() => false)
+    .finally(() => {
+      refreshing = null;
+    });
+  return refreshing;
+}
+
+async function send(path: string, init: RequestInit): Promise<Response> {
+  const headers = new Headers(init.headers);
+  if (!(init.body instanceof FormData) && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+  return fetch(`${API_BASE}${path}`, { ...init, credentials: "include", headers });
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   let response: Response;
   try {
-    const headers = new Headers(init.headers);
-    if (!(init.body instanceof FormData) && !headers.has("Content-Type")) {
-      headers.set("Content-Type", "application/json");
+    response = await send(path, init);
+    // The access cookie lasts fifteen minutes; the refresh cookie lasts thirty days
+    // and the browser has been carrying it the whole time. Nothing ever spent it, so
+    // a merchant was silently signed out a quarter of an hour into their session —
+    // the workspace still looked signed in and every action answered "Live
+    // authentication required". Long forms lost their contents to it, including the
+    // one asking for Razorpay API keys.
+    //
+    // Refreshing the auth call itself would recurse, and a 401 from sign-in means a
+    // wrong password rather than an expired session.
+    if (response.status === 401 && !path.startsWith("/api/live/auth/")) {
+      if (await refreshSession()) response = await send(path, init);
     }
-    response = await fetch(`${API_BASE}${path}`, {
-      ...init,
-      credentials: "include",
-      headers,
-    });
   } catch {
     // Same-origin now, so this is a genuine network failure rather than a blocked
     // preflight — the page itself could not be reached.
